@@ -1122,7 +1122,9 @@ export default function StockMaxxingDashboard() {
       if (!data?.ok) throw new Error(data?.error || "Failed to load");
       setPublishedIndexes(data.indexes || []);
       setIndexesStatus(
-        data.deployed ? `${data.total} index${data.total === 1 ? "" : "es"} published` : "Registry not deployed yet"
+        data.deployed
+          ? `${(data.indexes || []).length} index${(data.indexes || []).length === 1 ? "" : "es"} published`
+          : "Registry not deployed yet"
       );
     } catch (e) {
       setIndexesStatus(e instanceof Error ? e.message : "Failed to load");
@@ -2916,15 +2918,15 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                 </div>
 
                 {/* Sliders for all 10 Coinbase B20 Tokenized Stocks with Official Logos */}
-                <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
+                <div className={`grid grid-cols-1 gap-3 ${hasRegistry ? "" : "xl:grid-cols-2"}`}>
                   {stocks.map((stock) => {
                     const weightBps = customWeights[stock.symbol] || 0;
                     return (
                       <div
                         key={stock.symbol}
-                        className="rounded-xl border border-slate-800/80 bg-[#070b14] p-3 flex items-center justify-between gap-4"
+                        className="rounded-xl border border-slate-800/80 bg-[#070b14] p-3 flex items-center justify-between gap-3 sm:gap-4"
                       >
-                        <div className="flex items-center gap-2.5 w-44 shrink-0">
+                        <div className="flex items-center gap-2.5 w-28 sm:w-44 shrink-0">
                           <img
                             src={stock.logoUrl}
                             alt={stock.companyName}
@@ -2957,13 +2959,14 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                               [stock.symbol]: Number(e.target.value),
                             }))
                           }
-                          className="flex-1 accent-[#4C6FFF] cursor-pointer"
+                          className="flex-1 min-w-0 accent-[#4C6FFF] cursor-pointer"
+                          aria-label={`${stock.symbol} weight`}
                         />
 
-                        <div className="w-24 text-right font-mono text-xs font-bold text-white">
-                          {(weightBps / 100).toFixed(1)}%{" "}
-                          <span className="text-[10px] font-normal text-slate-400">
-                            ({weightBps} bps)
+                        <div className="w-14 sm:w-24 shrink-0 text-right font-mono text-xs font-bold text-white">
+                          {(weightBps / 100).toFixed(1)}%
+                          <span className="hidden sm:inline text-[10px] font-normal text-slate-400">
+                            {" "}({weightBps} bps)
                           </span>
                         </div>
                       </div>
@@ -2983,7 +2986,7 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                       {(totalCustomWeightBps / 100).toFixed(2)}%)
                     </strong>
                   </span>
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
                     <a
                       href={`https://x.com/intent/tweet?text=${encodeURIComponent(
                         `My tokenized stock index [${customIndexTicker}] (${customIndexName}) on @base, built with MAXXAGENT:\n${Object.entries(
@@ -3057,7 +3060,7 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
 
               {/* Onchain index registry: published indexes anyone can buy (hidden until the registry is deployed) */}
               {hasRegistry && (
-              <div className="lg:col-span-5 rounded-2xl border border-slate-800 bg-[#0b1120] p-6 space-y-4">
+              <div className="lg:col-span-5 self-start rounded-2xl border border-slate-800 bg-[#0b1120] p-6 space-y-4">
                 <div className="flex items-center justify-between gap-2">
                   <div className="flex items-center gap-2 text-cyan-400 text-xs font-bold uppercase tracking-wider">
                     <Layers className="h-4 w-4" />
@@ -3074,12 +3077,16 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                 <p className="text-xs text-slate-300 leading-relaxed">
                   <code className="text-cyan-300">StockMaxxIndexRegistry</code> stores only index names
                   and weights. It never holds funds, charges no fees, and only an index&apos;s creator can
-                  change its weights. Buying an index swaps USDC into its stocks from your own wallet.
+                  change its weights. Buying an index swaps USDC or ETH into its stocks from your own wallet.
                 </p>
 
                 {publishedIndexes.length === 0 ? (
                   <div className="rounded-xl border border-dashed border-slate-800 p-4 text-center text-xs text-slate-400">
-                    {hasRegistry ? "No indexes published yet — publish the first one." : "Registry not deployed yet."}
+                    {indexesStatus === "Loading…"
+                      ? "Loading published indexes…"
+                      : indexesStatus && !/published/.test(indexesStatus)
+                      ? `Could not load indexes: ${indexesStatus}`
+                      : "No indexes published yet — publish the first one."}
                   </div>
                 ) : (
                   <div className="space-y-2.5 max-h-[520px] overflow-y-auto pr-1">
