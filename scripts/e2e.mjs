@@ -15,7 +15,14 @@ const URL_BASE = arg("url", "http://localhost:3000").replace(/\/$/, "");
 const WALLET = arg("wallet", "0xD986C711F575C71dA22Bd08742b9DB2091Ba9e33");
 const BROWSER =
   process.env.CHROME_PATH ||
-  ["C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe", "C:/Program Files/Google/Chrome/Application/chrome.exe", "/usr/bin/google-chrome", "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"].find((p) => fs.existsSync(p));
+  // Chrome first: Edge can refuse automation after an auto-update ("Target closed" at launch)
+  [
+    `${process.env.LOCALAPPDATA || ""}/Google/Chrome/Application/chrome.exe`,
+    "C:/Program Files/Google/Chrome/Application/chrome.exe",
+    "C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe",
+    "/usr/bin/google-chrome",
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+  ].find((p) => fs.existsSync(p));
 if (!BROWSER) {
   console.log("No Chrome/Edge found. Set CHROME_PATH.");
   process.exit(1);
@@ -183,6 +190,8 @@ const buyOneDollar = async () => {
   await tab("Market");
   await page.waitForSelector("#swap-panel input", { timeout: 30000 });
   await page.evaluate(() => [...document.querySelectorAll("#swap-panel button")].find((b) => /^buy /i.test(b.textContent.trim()))?.click());
+  // Always pay with USDC here: an earlier step may have left the panel on ETH (the test wallet's ETH is tiny)
+  await page.evaluate(() => [...document.querySelectorAll("#swap-panel button")].find((b) => /^usdc$/i.test(b.textContent.trim()))?.click());
   // Clear the field reliably: a triple-click doesn't always select on touch emulation, and typing then
   // appends ("1" -> "11", above the test wallet's balance), which made buy steps fail at random
   const input = await page.$("#swap-panel input");
@@ -298,6 +307,13 @@ await step("Pay with ETH: review shows ETH, no approval, one wallet request afte
   await input.type("1");
   const typed = await page.$eval("#swap-panel input", (e) => e.value);
   assert(typed === "1", `amount field holds "${typed}" instead of "1"`);
+  // The test wallet's ETH can run below $1 + gas reserve: then the app correctly refuses, and there is nothing to review
+  await sleep(1500);
+  const ethPanel = await page.$eval("#swap-panel", (e) => e.innerText);
+  if (/Not enough ETH on Base/i.test(ethPanel)) {
+    await click("#swap-panel button", /^usdc$/i);
+    return "skipped: test wallet holds under $1 of ETH (the app shows 'Not enough ETH on Base', as it should)";
+  }
   assert(await click("#swap-panel button", /^Buy \$1\.00 of \w+ with ETH/, 15000), "Buy with ETH button");
   await page.waitForSelector('[role="dialog"]', { timeout: 60000 });
   const d = await page.$eval('[role="dialog"]', (e) => e.innerText);

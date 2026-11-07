@@ -1,8 +1,8 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ArrowLeft, ExternalLink } from "lucide-react";
-import { MaxxAgentLogo } from "@/components/BrandLogo";
+import { ExternalLink } from "lucide-react";
+import { SiteNav } from "@/components/SiteNav";
 import { IndexBuyBox } from "@/components/IndexBuyBox";
 import { REGISTRY, readIndex } from "@/lib/indexRegistry";
 import { BASE_TOKENIZED_STOCKS } from "@/lib/tokenizedStocks";
@@ -43,14 +43,7 @@ export default async function IndexPage({ params }: { params: Promise<{ id: stri
   return (
     <main className="min-h-screen bg-[#03060e] px-4 py-8">
       <div className="mx-auto max-w-3xl space-y-6">
-        <div className="flex items-center justify-between gap-3">
-          <Link href="/" className="inline-block">
-            <MaxxAgentLogo size={32} />
-          </Link>
-          <Link href="/" className="inline-flex items-center gap-1 text-xs text-slate-400 hover:text-white">
-            <ArrowLeft className="h-3.5 w-3.5" /> All indexes
-          </Link>
-        </div>
+        <SiteNav />
 
         <div className="space-y-1">
           <div className="font-mono text-xs text-cyan-300">

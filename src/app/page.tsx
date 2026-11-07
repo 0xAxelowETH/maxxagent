@@ -230,8 +230,8 @@ function PortfolioDonutChart({
         </div>
       </div>
 
-      {/* auto-fill keeps each legend item at least 140px wide so tickers never truncate */}
-      <div className="grid grid-cols-[repeat(auto-fill,minmax(140px,1fr))] gap-2 flex-1 w-full min-w-0">
+      {/* auto-fill keeps each legend item at least 150px wide so tickers never truncate */}
+      <div className="grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-2 flex-1 w-full min-w-0">
         {items.map((item) => (
           <div
             key={item.symbol}
@@ -1321,9 +1321,9 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
 
       {/* Main Header */}
       <header className="sticky top-0 z-30 border-b border-slate-800/80 bg-[#040814]/90 backdrop-blur-xl shadow-2xl shadow-black/50">
-        <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-3 px-4 py-3">
-          <div className="flex items-center gap-3.5">
-            <MaxxAgentLogo size={40} tagline="Tokenized stock baskets on Base" />
+        <div className="mx-auto flex max-w-7xl items-center justify-between gap-3 px-4 py-3">
+          <div className="flex min-w-0 items-center gap-3.5">
+            <MaxxAgentLogo size={40} tagline="Tokenized stock indexes on Base" />
             <span className="hidden 2xl:inline-flex items-center gap-1.5 rounded-full bg-emerald-500/10 px-2.5 py-0.5 font-mono text-[10px] font-bold text-emerald-300 border border-emerald-500/30">
               <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
               LIVE · BASE MAINNET
@@ -1377,14 +1377,14 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                     aria-haspopup="menu"
                     aria-expanded={accountMenuOpen}
                     aria-label="Wallet menu"
-                    className="flex items-center gap-2 rounded-xl border border-[#4C6FFF]/60 bg-gradient-to-r from-[#4C6FFF]/25 to-cyan-500/15 px-3.5 py-2 font-mono text-xs font-bold text-blue-100 shadow-md shadow-[#4C6FFF]/20 hover:brightness-110 cursor-pointer"
+                    className="flex items-center gap-2 rounded-xl border border-[#4C6FFF]/60 bg-gradient-to-r from-[#4C6FFF]/25 to-cyan-500/15 px-2.5 sm:px-3.5 py-2 font-mono text-xs font-bold text-blue-100 shadow-md shadow-[#4C6FFF]/20 hover:brightness-110 cursor-pointer whitespace-nowrap"
                   >
-                    <span className="h-2 w-2 rounded-full bg-emerald-400" />
+                    <span className="h-2 w-2 shrink-0 rounded-full bg-emerald-400" />
                     <span title={connectedWalletName || "Wallet"}>
                       {walletAddress.slice(0, 6)}...{walletAddress.slice(-4)}
                     </span>
-                    <span className="text-slate-500">|</span>
-                    <span className={usdcBalance !== null && usdcBalance < basketUsd ? "text-amber-300" : "text-emerald-300"}>
+                    <span className="hidden sm:inline text-slate-500">|</span>
+                    <span className={`hidden sm:inline ${usdcBalance !== null && usdcBalance < basketUsd ? "text-amber-300" : "text-emerald-300"}`}>
                       {usdcBalance === null ? "… USDC" : `${usdcBalance.toFixed(2)} USDC`}
                     </span>
                     <ChevronDown className={`h-3 w-3 text-slate-400 transition ${accountMenuOpen ? "rotate-180" : ""}`} />
@@ -1599,8 +1599,8 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
 
       {/* Main Content Container */}
       <main className="relative z-10 mx-auto w-full max-w-7xl flex-1 px-3 sm:px-4 pt-4 sm:pt-6 pb-28 md:pb-10 space-y-5 sm:space-y-6">
-        {/* 3-step quick start (Market tab only) */}
-        {activeTab === "terminal" && (
+        {/* 3-step quick start (Market tab, until a wallet is connected) */}
+        {activeTab === "terminal" && !walletAddress && (
           <GuidedQuickStartBar
             activeTab={activeTab}
             setActiveTab={setActiveTab}
@@ -1612,7 +1612,7 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
         )}
 
         {/* Eligibility attestation & index registry status */}
-        <div className="glass-panel rounded-2xl px-4 py-3 flex flex-row flex-wrap items-center justify-between gap-2 sm:gap-3">
+        <div className="glass-panel rounded-2xl px-4 py-3 hidden md:flex flex-row flex-wrap items-center justify-between gap-2 sm:gap-3">
           <div className="flex flex-wrap items-center gap-3">
             <span className="inline-flex items-center gap-2 rounded-xl border border-emerald-500/35 bg-emerald-500/10 px-3 py-1.5 text-xs text-emerald-200">
               <ShieldCheck className="h-4 w-4 text-emerald-400 shrink-0" />
@@ -1943,13 +1943,11 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                         Trade {stock.symbol}
                       </button>
                       <a
-                        href={stock.basescanUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="rounded-lg border border-slate-700 bg-slate-800/80 px-2.5 py-1.5 font-mono text-[10px] text-slate-300 hover:text-white transition"
-                        title="View B20 Contract on BaseScan"
+                        href={`/stock/${stock.symbol}`}
+                        className="rounded-lg border border-slate-700 bg-slate-800/80 px-2.5 py-1.5 text-[11px] font-semibold text-slate-300 hover:text-white transition"
+                        title={`${stock.symbol}: live NAV, DEX price, chart and token details`}
                       >
-                        B20
+                        Details
                       </a>
                     </div>
                   </div>
@@ -2050,7 +2048,54 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                 </div>
               </div>
 
-              <div className="overflow-x-auto">
+              {/* Phones: one compact row per stock (the full table needs a wide screen) */}
+              <div className="md:hidden divide-y divide-slate-800/60">
+                {filteredStocks.map((stock) => {
+                  const bal = walletBalances[stock.symbol];
+                  const gap = stock.weekendGapPct ?? 0;
+                  return (
+                    <div key={stock.symbol} className="flex items-center gap-3 px-4 py-3">
+                      <img src={stock.logoUrl} alt="" className="h-9 w-9 shrink-0 rounded-full border border-slate-700 bg-slate-900 object-cover" />
+                      <a href={`/stock/${stock.symbol}`} className="min-w-0 flex-1">
+                        <div className="flex items-baseline gap-1.5">
+                          <span className="font-mono text-sm font-bold text-white">{stock.symbol}</span>
+                          <span className="truncate text-[11px] text-slate-400">{stock.companyName}</span>
+                        </div>
+                        <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px]">
+                          <span className={`font-mono ${stock.change24hPct >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
+                            {stock.change24hPct >= 0 ? "+" : ""}
+                            {stock.change24hPct.toFixed(2)}%
+                          </span>
+                          <span
+                            className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${
+                              gap <= -0.05 ? "bg-emerald-500/15 text-emerald-300" : gap >= 0.05 ? "bg-amber-500/15 text-amber-300" : "bg-slate-800 text-slate-400"
+                            }`}
+                          >
+                            {gap <= -0.05 ? `${Math.abs(gap).toFixed(2)}% below NAV` : gap >= 0.05 ? `${gap.toFixed(2)}% above NAV` : "at NAV"}
+                          </span>
+                          {(bal?.rawTokens ?? 0) > 0 && <span className="text-cyan-300">You: ${(bal?.usdValue ?? 0).toFixed(2)}</span>}
+                        </div>
+                      </a>
+                      <div className="shrink-0 text-right">
+                        <div className="font-mono text-sm font-bold text-white">${stock.navPrice.toFixed(2)}</div>
+                        <button
+                          onClick={() => {
+                            setChartSelectedSymbol(stock.symbol);
+                            document.getElementById("swap-panel")?.scrollIntoView({ behavior: "smooth", block: "center" });
+                          }}
+                          className="mt-1 inline-flex items-center gap-1 rounded-md border border-[#4C6FFF]/50 bg-[#4C6FFF]/20 px-2.5 py-1 text-[11px] font-bold text-blue-200 cursor-pointer"
+                          aria-label={`Buy or sell ${stock.symbol}`}
+                        >
+                          <Zap className="h-3 w-3" />
+                          Trade
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              <div className="hidden md:block overflow-x-auto">
                 <table className="w-full text-left border-collapse">
                   <thead>
                     <tr className="border-b border-slate-800/80 bg-[#070b14] text-[11px] font-semibold uppercase tracking-wider text-slate-400">
@@ -2285,7 +2330,7 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
         {activeTab === "agent" && (
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
             {/* Left Column: Agent Configuration & Strategy Prompt */}
-            <div className="lg:col-span-5 space-y-5">
+            <div className="lg:col-span-5 space-y-5 lg:sticky lg:top-24 lg:self-start">
               <div className="rounded-2xl border border-slate-800 bg-[#0b1120] p-6 space-y-5">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-3">
@@ -2426,7 +2471,7 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                 </div>
               )}
               {agentReport && (
-                <div className="rounded-2xl border border-slate-800 bg-[#0b1120] p-6 space-y-6">
+                <div className="rounded-2xl border border-slate-800 bg-[#0b1120] p-4 sm:p-6 space-y-6">
                   <div className="flex flex-wrap items-start justify-between gap-4 border-b border-slate-800 pb-4">
                     <div>
                       <div className="flex items-center gap-2">
@@ -2434,9 +2479,7 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                         <span className="rounded-md bg-[#4C6FFF]/20 border border-[#4C6FFF]/40 px-2.5 py-0.5 font-mono text-xs font-semibold text-blue-300">
                           {agentReport.strategyName}
                         </span>
-                        <span className="font-mono text-xs text-slate-400">
-                          Hash: {agentReport.researchHash.slice(0, 12)}...
-                        </span>
+                        <span className="text-[11px] text-slate-500">{agentReport.allocations.length} stocks</span>
                       </div>
                       <p className="mt-2 text-xs text-slate-300 leading-relaxed">
                         {agentReport.executiveSummary}
@@ -2452,7 +2495,7 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                         </div>
                       )}
                     </div>
-                    <div className="flex flex-wrap items-center gap-2 shrink-0">
+                    <div className="flex flex-wrap items-center gap-2">
                       <a
                         href={`https://x.com/intent/tweet?text=${encodeURIComponent(
                           `My MAXXAGENT basket of tokenized stocks on @base:\n${agentReport.allocations
@@ -2655,7 +2698,7 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                   {/* Allocations Table with Official Stock Logos */}
                   <div>
                     <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-3">
-                      Target B20 Tokenized Equity Allocations (10,000 bps = 100.0%)
+                      Allocation and why each stock was picked
                     </h3>
                     <div className="space-y-3">
                       {agentReport.allocations.map((alloc) => (
@@ -2675,7 +2718,7 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                                   <span className="font-mono text-sm font-bold text-white">
                                     {alloc.symbol}
                                   </span>
-                                  <span className="text-xs text-slate-400">
+                                  <span className="hidden sm:inline text-xs text-slate-400">
                                     {alloc.companyName}
                                   </span>
                                   <span
@@ -2687,24 +2730,20 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                                         : "bg-slate-800 text-slate-300"
                                     }`}
                                   >
-                                    {alloc.action} ({alloc.deltaBps >= 0 ? "+" : ""}
-                                    {(alloc.deltaBps / 100).toFixed(1)}%)
+                                    {alloc.action === "ACCUMULATE" ? "BUY" : alloc.action === "TRIM" ? "TRIM" : "HOLD"}{" "}
+                                    {alloc.deltaBps >= 0 ? "+" : ""}
+                                    {(alloc.deltaBps / 100).toFixed(1)}%
                                   </span>
                                 </div>
                               </div>
                             </div>
 
-                            <div className="flex items-center gap-4 font-mono text-xs">
-                              <span className="text-slate-400">
-                                Score:{" "}
-                                <strong className="text-cyan-400">{alloc.quantScore}/99</strong>
+                            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 font-mono text-xs">
+                              <span className="text-slate-400" title="Rule score relative to the other candidates: the best one is 99, the weakest 50">
+                                Score <strong className="text-cyan-400">{alloc.quantScore}</strong>
                               </span>
                               <span className="text-white font-bold">
-                                {(alloc.targetWeightBps / 100).toFixed(2)}% ($
-                                {alloc.usdAllocation.toLocaleString("en-US", {
-                                  maximumFractionDigits: 0,
-                                })}
-                                )
+                                {(alloc.targetWeightBps / 100).toFixed(1)}% · ${alloc.usdAllocation.toFixed(2)}
                               </span>
                               <span className="text-emerald-400">
                                 ≈ {alloc.estimatedSharesUI.toFixed(3)} share-equivalent
@@ -3378,9 +3417,15 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                             {usdcBalance === null ? "—" : `$${usdcBalance.toFixed(2)}`}
                           </div>
                         </div>
-                        <div className="rounded-xl border border-slate-800 bg-[#070b14] p-3">
-                          <div className="text-[10px] font-sans text-slate-400">Positions</div>
-                          <div className="text-lg font-extrabold text-cyan-300">{rows.length}</div>
+                        <div className="rounded-xl border border-slate-800 bg-[#070b14] p-3" title="Stocks at NAV + USDC + ETH in this wallet">
+                          <div className="text-[10px] font-sans text-slate-400">Total balance</div>
+                          <div className="text-lg font-extrabold text-cyan-300">
+                            ${(totalUsd + (usdcBalance ?? 0) + (ethBalance !== null && ethUsd ? ethBalance * ethUsd : 0)).toFixed(2)}
+                          </div>
+                          <div className="text-[10px] font-sans text-slate-500">
+                            {rows.length} stock{rows.length === 1 ? "" : "s"}
+                            {ethBalance !== null ? ` · ${ethBalance.toFixed(4)} ETH` : ""}
+                          </div>
                         </div>
                         <div className="rounded-xl border border-slate-800 bg-[#070b14] p-3" title="Live value minus what you paid (average cost)">
                           <div className="text-[10px] font-sans text-slate-400">Unrealized P/L{anyEst ? " (est.)" : ""}</div>
@@ -3408,31 +3453,54 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                         </div>
                       ) : (
                         <div className="overflow-x-auto">
+                          {totalUsd > 0 && (
+                            <div className="mb-3 space-y-2">
+                              <div className="flex h-2.5 w-full overflow-hidden rounded-full bg-slate-800">
+                                {rows.map(({ st, bal }) => (
+                                  <div
+                                    key={st.symbol}
+                                    style={{ width: `${((bal?.usdValue ?? 0) / totalUsd) * 100}%`, backgroundColor: STOCK_COLOR_MAP[st.symbol] || "#4C6FFF" }}
+                                    title={`${st.symbol} ${(((bal?.usdValue ?? 0) / totalUsd) * 100).toFixed(1)}%`}
+                                  />
+                                ))}
+                              </div>
+                              <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px]">
+                                {rows.map(({ st, bal }) => (
+                                  <span key={st.symbol} className="inline-flex items-center gap-1.5 text-slate-300">
+                                    <span className="h-2 w-2 rounded-full" style={{ backgroundColor: STOCK_COLOR_MAP[st.symbol] || "#4C6FFF" }} />
+                                    <span className="font-mono">{st.symbol}</span>
+                                    <span className="font-mono text-slate-500">{(((bal?.usdValue ?? 0) / totalUsd) * 100).toFixed(0)}%</span>
+                                  </span>
+                                ))}
+                              </div>
+                            </div>
+                          )}
                           <table className="w-full text-xs">
                             <thead>
                               <tr className="text-left text-[10px] uppercase tracking-wider text-slate-500 border-b border-slate-800">
                                 <th className="py-2 pr-3">Stock</th>
-                                <th className="hidden sm:table-cell py-2 pr-3 text-right">Tokens</th>
-                                <th className="hidden sm:table-cell py-2 pr-3 text-right">Share-equivalent</th>
+                                <th className="hidden sm:table-cell py-2 pr-3 text-right">Amount</th>
                                 <th className="hidden sm:table-cell py-2 pr-3 text-right">NAV</th>
                                 <th className="py-2 pr-3 text-right">Value</th>
                                 <th className="hidden sm:table-cell py-2 pr-3 text-right">Avg cost</th>
                                 <th className="py-2 pr-3 text-right">P/L</th>
                                 <th className="hidden sm:table-cell py-2 pr-3 text-right">Weight</th>
-                                <th className="py-2 text-right">Sell</th>
+                                <th className="py-2 text-right">Trade</th>
                               </tr>
                             </thead>
                             <tbody>
                               {rows.map(({ st, bal }, ri) => (
                                 <tr key={st.symbol} className="border-b border-slate-800/60 font-mono">
                                   <td className="py-2.5 pr-3">
-                                    <span className="inline-flex items-center gap-2 whitespace-nowrap font-sans font-semibold text-white">
+                                    <a href={`/stock/${st.symbol}`} className="inline-flex items-center gap-2 whitespace-nowrap font-sans font-semibold text-white hover:text-cyan-300">
                                       <img src={st.logoUrl} alt="" className="h-5 w-5 shrink-0 rounded-full" />
                                       {st.symbol}
-                                    </span>
+                                    </a>
                                   </td>
-                                  <td className="hidden sm:table-cell py-2.5 pr-3 text-right text-slate-300">{(bal?.rawTokens ?? 0).toFixed(6)}</td>
-                                  <td className="hidden sm:table-cell py-2.5 pr-3 text-right text-slate-300">{(bal?.sharesUI ?? 0).toFixed(6)}</td>
+                                  <td className="hidden sm:table-cell py-2.5 pr-3 text-right text-slate-300" title="Token amount; the share-equivalent includes reinvested dividends">
+                                    {(bal?.rawTokens ?? 0).toFixed(6)}
+                                    <span className="block text-[10px] text-slate-500">≈ {(bal?.sharesUI ?? 0).toFixed(6)} sh</span>
+                                  </td>
                                   <td className="hidden sm:table-cell py-2.5 pr-3 text-right text-slate-300">${st.navPrice.toFixed(2)}</td>
                                   <td className="py-2.5 pr-3 text-right font-bold text-white">${(bal?.usdValue ?? 0).toFixed(2)}</td>
                                   <td className="hidden sm:table-cell py-2.5 pr-3 text-right text-slate-300">
@@ -3457,8 +3525,20 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                                   <td className="hidden sm:table-cell py-2.5 pr-3 text-right text-cyan-300">
                                     {totalUsd > 0 ? (((bal?.usdValue ?? 0) / totalUsd) * 100).toFixed(1) : "0.0"}%
                                   </td>
-                                  <td className="py-2.5 text-right font-sans">
-                                    <div className="inline-flex gap-1.5">
+                                  <td className="py-2.5 text-right font-sans w-[6.75rem] sm:w-auto">
+                                    {/* phones: Buy on top, 50% / All below, so the row fits a 390px screen */}
+                                    <div className="inline-flex flex-wrap justify-end gap-1.5">
+                                      <button
+                                        onClick={() => {
+                                          setChartSelectedSymbol(st.symbol);
+                                          setActiveTab("terminal");
+                                          setTimeout(() => document.getElementById("swap-panel")?.scrollIntoView({ behavior: "smooth", block: "center" }), 350);
+                                        }}
+                                        title={`Buy more ${st.symbol}`}
+                                        className="rounded-lg border border-[#4C6FFF]/50 bg-[#4C6FFF]/15 px-2.5 py-1.5 text-[11px] font-bold text-blue-200 hover:bg-[#4C6FFF]/30 cursor-pointer"
+                                      >
+                                        Buy
+                                      </button>
                                       {[
                                         { label: "50%", pct: 0.5 },
                                         { label: "All", pct: 1 },

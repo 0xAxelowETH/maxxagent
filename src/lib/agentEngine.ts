@@ -204,6 +204,13 @@ export function runAutonomousStockAgent(params: {
   });
 
   scored.sort((a, b) => b.rawScore - a.rawScore);
+  // Display score relative to the candidates (best 99, weakest 50): raw scores usually exceed 99, so a
+  // capped value showed "99/99" for every pick and told the user nothing
+  if (scored.length > 1) {
+    const hi = scored[0].rawScore;
+    const lo = scored[scored.length - 1].rawScore;
+    for (const x of scored) x.quantScore = Math.round(50 + (49 * (x.rawScore - lo)) / (hi - lo || 1));
+  } else if (scored.length === 1) scored[0].quantScore = 99;
   // Named stocks always make it in; the rest is filled by score
   const wanted = Math.min(pool.length, Math.max(mandate.count ?? 5, mandate.count ? 0 : mandate.include.length));
   const named = scored.filter((x) => mandate.include.includes(x.stock.symbol));

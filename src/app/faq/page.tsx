@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { MaxxAgentLogo } from "@/components/BrandLogo";
+import { SiteNav } from "@/components/SiteNav";
 
 export const metadata: Metadata = {
   title: "FAQ — MAXXAGENT",
@@ -190,9 +190,7 @@ export default function FaqPage() {
   return (
     <main className="min-h-screen bg-[#03060e] px-4 py-10">
       <div className="mx-auto max-w-2xl space-y-8">
-        <Link href="/" className="inline-block">
-          <MaxxAgentLogo size={36} />
-        </Link>
+        <SiteNav current="faq" />
         <div>
           <h1 className="text-2xl font-extrabold text-white">Frequently asked questions</h1>
           <p className="text-sm text-slate-400">How MAXXAGENT works, what it costs, and what to watch out for.</p>

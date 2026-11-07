@@ -304,7 +304,8 @@ export function InteractiveB20TradingChart({
   const hasData = all.length >= 2;
 
   const svgWidth = 760;
-  const svgHeight = 230;
+  // Taller plot: the card is as tall as the Swap panel next to it, so a short chart left a big empty band
+  const svgHeight = 330;
   const padX = 16;
   const padY = 20;
   const plotW = svgWidth - padX * 2;
@@ -450,7 +451,7 @@ export function InteractiveB20TradingChart({
             {hasData ? (
               <svg
                 viewBox={`0 0 ${svgWidth} ${svgHeight}`}
-                className="w-full h-52 overflow-visible cursor-crosshair"
+                className="w-full h-auto overflow-visible cursor-crosshair"
                 onMouseMove={onMove}
                 onMouseLeave={() => setHoverT(null)}
               >

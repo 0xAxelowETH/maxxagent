@@ -18,7 +18,8 @@ const fmtTime = (t: number | null) =>
   t === null
     ? "—"
     : new Date(t * 1000).toLocaleString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
-const fmtUsd = (n: number) => `$${n.toFixed(n < 10 ? 4 : 2)}`;
+const fmtUsd = (n: number) => `$${n.toFixed(n < 1 ? 4 : 2)}`;
+const viaLabel = (v: TradeHistoryEntry["via"]) => (v === "usdc" ? "USDC" : v === "eth" ? "in ETH" : "est.");
 
 /** Buys and sells of tokenized stocks, read from the wallet's onchain history (works across devices). */
 export function TradeHistoryPanel({
@@ -50,7 +51,36 @@ export function TradeHistoryPanel({
       ) : entries.length === 0 ? (
         <p className="text-xs text-slate-400">No stock trades found for this wallet yet.</p>
       ) : (
-        <div className="overflow-x-auto">
+        <>
+        <div className="sm:hidden divide-y divide-slate-800/60">
+          {entries.map((e, i) => (
+            <div key={`m-${e.hash}-${e.symbol}-${e.side}-${i}`} className="flex items-center justify-between gap-3 py-2">
+              <div className="min-w-0">
+                <div className="flex items-center gap-1.5 text-xs">
+                  <span className={`font-bold ${e.side === "buy" ? "text-emerald-300" : "text-rose-300"}`}>{e.side === "buy" ? "Buy" : "Sell"}</span>
+                  <span className="font-semibold text-white">{e.symbol}</span>
+                  <span className="font-mono text-[10px] text-slate-500">{e.tokens.toFixed(6)}</span>
+                </div>
+                <div className="text-[10px] text-slate-500">{fmtTime(e.time)}</div>
+              </div>
+              <div className="shrink-0 text-right">
+                <div className="font-mono text-xs text-slate-200">
+                  {fmtUsd(e.usd)} <span className="font-sans text-[10px] text-slate-500">{viaLabel(e.via)}</span>
+                </div>
+                <a
+                  href={`https://basescan.org/tx/${e.hash}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1 text-[10px] text-cyan-300"
+                  aria-label={`View ${e.side} of ${e.symbol} on BaseScan`}
+                >
+                  BaseScan <ExternalLink className="h-2.5 w-2.5" />
+                </a>
+              </div>
+            </div>
+          ))}
+        </div>
+        <div className="hidden sm:block overflow-x-auto">
           <table className="w-full text-xs">
             <thead>
               <tr className="text-left text-[10px] uppercase tracking-wider text-slate-500 border-b border-slate-800">
@@ -73,9 +103,7 @@ export function TradeHistoryPanel({
                   <td className="py-1.5 text-right text-slate-300 hidden sm:table-cell">{e.tokens.toFixed(6)}</td>
                   <td className="py-1.5 text-right text-slate-300 whitespace-nowrap">
                     {fmtUsd(e.usd)}
-                    <span className="ml-1 font-sans text-[10px] text-slate-500">
-                      {e.via === "usdc" ? "USDC" : e.via === "eth" ? "in ETH" : "est."}
-                    </span>
+                    <span className="ml-1 font-sans text-[10px] text-slate-500">{viaLabel(e.via)}</span>
                   </td>
                   <td className="py-1.5 text-right">
                     <a
@@ -92,8 +120,9 @@ export function TradeHistoryPanel({
               ))}
             </tbody>
           </table>
-          {entries.length >= 50 && <p className="mt-2 text-[10px] text-slate-500">Showing the 50 most recent trades.</p>}
         </div>
+        {entries.length >= 50 && <p className="mt-2 text-[10px] text-slate-500">Showing the 50 most recent trades.</p>}
+        </>
       )}
     </div>
   );

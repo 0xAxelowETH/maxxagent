@@ -1,8 +1,8 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ArrowLeft, ExternalLink, FileText } from "lucide-react";
-import { MaxxAgentLogo } from "@/components/BrandLogo";
+import { ExternalLink, FileText } from "lucide-react";
+import { SiteNav } from "@/components/SiteNav";
 import { StockLive } from "@/components/StockLive";
 import { BASE_TOKENIZED_STOCKS } from "@/lib/tokenizedStocks";
 import { miniappEmbedTags } from "@/lib/miniappEmbed";
@@ -61,14 +61,7 @@ export default async function StockPage({ params }: { params: Promise<{ symbol: 
   return (
     <main className="min-h-screen bg-[#03060e] px-4 py-8">
       <div className="mx-auto max-w-3xl space-y-6">
-        <div className="flex items-center justify-between gap-3">
-          <Link href="/" className="inline-block">
-            <MaxxAgentLogo size={32} />
-          </Link>
-          <Link href="/" className="inline-flex items-center gap-1 text-xs text-slate-400 hover:text-white">
-            <ArrowLeft className="h-3.5 w-3.5" /> All stocks
-          </Link>
-        </div>
+        <SiteNav />
 
         <div className="flex items-center gap-4">
           <img src={s.logoUrl} alt="" className="h-14 w-14 rounded-2xl bg-white/5 object-contain p-1.5" />

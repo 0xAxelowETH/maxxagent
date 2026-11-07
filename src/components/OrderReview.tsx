@@ -9,6 +9,9 @@ const fmtUsd = (n: number) => `$${n.toLocaleString("en-US", { minimumFractionDig
 // Small USDC amounts need more decimals, or the guaranteed minimum looks identical to the estimate
 const fmtUsdc = (n: number) => `${n.toFixed(n < 10 ? 4 : 2)} USDC`;
 const fmtPct = (n: number) => `${n >= 0 ? "" : "−"}${Math.abs(n).toFixed(2)}%`;
+// A negative route cost means the route pays more than the NAV value: say so instead of "−0.35%"
+const CostText = ({ pct }: { pct: number }) =>
+  pct < 0 ? <span className="text-emerald-300">none · {Math.abs(pct).toFixed(2)}% better than NAV</span> : <>{fmtPct(pct)}</>;
 
 /**
  * Order review shown BEFORE the wallet opens: what is paid, the estimate, the guaranteed minimum,
@@ -106,7 +109,7 @@ export function OrderReview({
                   )}
                   {typeof q.costPct === "number" && (
                     <span>
-                      Cost: <span className="font-mono text-slate-200">{fmtPct(q.costPct)}</span>
+                      Cost: <span className="font-mono text-slate-200"><CostText pct={q.costPct} /></span>
                     </span>
                   )}
                   {navDev !== null && (
@@ -156,7 +159,7 @@ export function OrderReview({
           </div>
           <div className="rounded-xl border border-slate-800 bg-[#070b14] p-3">
             <div className="font-sans text-[10px] text-slate-400">Total cost (impact + fees)</div>
-            <div className="text-sm font-bold text-slate-200">{fmtPct(order.costPct)}</div>
+            <div className="text-sm font-bold text-slate-200"><CostText pct={order.costPct} /></div>
           </div>
           <div className="rounded-xl border border-slate-800 bg-[#070b14] p-3">
             <div className="font-sans text-[10px] text-slate-400">Max slippage</div>

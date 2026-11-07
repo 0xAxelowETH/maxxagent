@@ -23,10 +23,11 @@ export function MarketStatus({ showDetail = false, className = "" }: { showDetai
   }, []);
   if (!status) return null;
   return (
-    <span className={`inline-flex items-center gap-1.5 ${className}`} title={status.detail} data-testid="market-status">
-      <span className={`h-1.5 w-1.5 rounded-full ${DOT[status.state]} ${status.state === "open" ? "animate-pulse" : ""}`} />
+    <span className={`inline-flex flex-wrap items-center gap-x-1.5 ${className}`} title={status.detail} data-testid="market-status">
+      <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${DOT[status.state]} ${status.state === "open" ? "animate-pulse" : ""}`} />
       <span className="font-semibold text-slate-200 whitespace-nowrap">{status.label}</span>
-      {showDetail && <span className="text-slate-400">· {status.detail}</span>}
+      {/* the explanation goes on its own line instead of squeezing into a second column */}
+      {showDetail && <span className="basis-full pl-3 text-slate-400">{status.detail}</span>}
     </span>
   );
 }

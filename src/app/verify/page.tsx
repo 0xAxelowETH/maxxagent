@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { MaxxAgentLogo } from "@/components/BrandLogo";
+import { SiteNav } from "@/components/SiteNav";
 import { toErc8021DataSuffix } from "@/lib/builderCode";
 
 export const metadata: Metadata = {
@@ -36,9 +36,7 @@ export default function VerifyPage() {
   return (
     <main className="min-h-screen bg-[#03060e] px-4 py-10">
       <div className="mx-auto max-w-3xl space-y-6">
-        <Link href="/" className="inline-block">
-          <MaxxAgentLogo size={36} />
-        </Link>
+        <SiteNav current="verify" />
         <div className="space-y-2">
           <h1 className="text-2xl font-extrabold text-white">How to verify MAXXAGENT</h1>
           <p className="text-sm text-slate-400">

@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { ExternalLink, RefreshCw } from "lucide-react";
-import { MaxxAgentLogo } from "@/components/BrandLogo";
+import { SiteNav } from "@/components/SiteNav";
 
 interface Stats {
   ok: boolean;
@@ -40,9 +40,7 @@ export default function StatsPage() {
   return (
     <main className="min-h-screen bg-[#03060e] px-4 py-10">
       <div className="mx-auto max-w-3xl space-y-6">
-        <Link href="/" className="inline-block">
-          <MaxxAgentLogo size={36} />
-        </Link>
+        <SiteNav current="stats" />
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div>
             <h1 className="text-2xl font-extrabold text-white">Live onchain stats</h1>
@@ -64,6 +62,9 @@ export default function StatsPage() {
             {[0, 1, 2, 3].map((i) => (
               <div key={i} className="h-20 rounded-2xl border border-slate-800 bg-[#0b1120] animate-pulse" />
             ))}
+            <p className="col-span-2 sm:col-span-4 text-xs text-slate-400">
+              Reading every MAXXAGENT trade from Base… the first load can take up to 30 seconds.
+            </p>
           </div>
         )}
 

@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { MaxxAgentLogo } from "@/components/BrandLogo";
+import { SiteNav } from "@/components/SiteNav";
 
 export const metadata: Metadata = {
   title: "Terms of Use & Risk Disclosure — MAXXAGENT",
@@ -22,9 +22,7 @@ export default function TermsPage() {
   return (
     <main className="min-h-screen bg-[#03060e] px-4 py-10">
       <div className="mx-auto max-w-2xl space-y-8">
-        <Link href="/" className="inline-block">
-          <MaxxAgentLogo size={36} />
-        </Link>
+        <SiteNav current="terms" />
         <div>
           <h1 className="text-2xl font-extrabold text-white">Terms of Use &amp; Risk Disclosure</h1>
           <p className="text-xs text-slate-500">Last updated: {LAST_UPDATED}</p>
