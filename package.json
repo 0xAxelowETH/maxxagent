@@ -22,10 +22,12 @@
     "verify:trades": "node scripts/verify-trades.mjs",
     "test:e2e": "node scripts/e2e.mjs",
     "test:rebalance": "node scripts/test-rebalance.mjs",
-    "verify:registry": "node scripts/verify-registry.mjs"
+    "verify:registry": "node scripts/verify-registry.mjs",
+    "test:agent": "node scripts/test-agent.mjs"
   },
   "dependencies": {
     "@coinbase/wallet-sdk": "^4.4.0",
+    "@farcaster/miniapp-sdk": "0.3.0",
     "@vercel/analytics": "^1.6.1",
     "@walletconnect/ethereum-provider": "^2.26.0",
     "lucide-react": "^0.468.0",

@@ -61,6 +61,7 @@ import { MaxxAgentLogo, MaxxAgentMark } from "@/components/BrandLogo";
 import { OrderReview } from "@/components/OrderReview";
 import { TradeHistoryPanel, type TradeHistoryEntry } from "@/components/TradeHistoryPanel";
 import { MarketStatus } from "@/components/MarketStatus";
+import { detectMiniApp } from "@/lib/miniApp";
 import { RebalancePanel } from "@/components/RebalancePanel";
 import { TermsGate, TERMS_STORAGE_KEY } from "@/components/TermsGate";
 import {
@@ -853,7 +854,7 @@ export default function StockMaxxingDashboard() {
       localStorage.removeItem("maxxagent_wallet");
     } catch {}
     await disconnectExternalWallets();
-    providerRef.current = null;
+    if (!inMiniApp) providerRef.current = null; // in a mini app the host wallet stays the provider
     setWalletAddress("");
     setInspectAddress("");
     setWalletBalances({});
@@ -905,8 +906,33 @@ export default function StockMaxxingDashboard() {
     }
   };
 
-  // Silent reconnect after a refresh. Never opens a popup: eth_accounts / stored SDK sessions only.
+  // Opened as a mini app (Farcaster / Base App): use the host's wallet, already authorised by the user there
   const restoreTried = useRef(false);
+  const [inMiniApp, setInMiniApp] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    detectMiniApp().then(async (found) => {
+      if (!found || cancelled) return;
+      restoreTried.current = true; // the host wallet replaces any saved browser wallet
+      const eth = found.provider as EthereumProvider;
+      providerRef.current = eth;
+      setInMiniApp(true);
+      setConnectedWalletName("Mini app wallet");
+      try {
+        const accounts = (await eth.request({ method: "eth_requestAccounts" })) as string[];
+        const chainId = (await eth.request({ method: "eth_chainId" }).catch(() => "")) as string;
+        if (!cancelled && accounts?.[0]) attachWallet(eth, accounts[0], chainId);
+      } catch {
+        // The user can still connect from the Connect button (it uses the host wallet)
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Silent reconnect after a refresh. Never opens a popup: eth_accounts / stored SDK sessions only.
   useEffect(() => {
     if (restoreTried.current || walletAddress) return;
     let saved: SavedWallet | null = null;
@@ -1384,6 +1410,7 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                       >
                         <Wallet className="h-3.5 w-3.5 text-slate-400" /> My portfolio
                       </button>
+                      {!inMiniApp && (
                       <button
                         role="menuitem"
                         onClick={async () => {
@@ -1394,6 +1421,7 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                       >
                         <RefreshCw className="h-3.5 w-3.5 text-slate-400" /> Switch wallet
                       </button>
+                      )}
                       <button
                         role="menuitem"
                         onClick={disconnectWallet}
@@ -1409,7 +1437,8 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
             ) : (
               <div className="relative">
                 <button
-                  onClick={() => setShowWalletMenu((v) => !v)}
+                  // Inside a mini app the host wallet is the only option: connect to it directly
+                  onClick={() => (inMiniApp ? connectWallet() : setShowWalletMenu((v) => !v))}
                   className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-[#4C6FFF] to-[#2563eb] px-4 py-2.5 text-xs font-bold text-white shadow-lg shadow-[#4C6FFF]/35 hover:brightness-110 transition cursor-pointer border border-blue-400/30"
                 >
                   <Wallet className="h-3.5 w-3.5" />
@@ -2274,6 +2303,11 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                         prompt:
                           "Defensive, lower-beta mega-caps (AAPLc, MSFTc, AMZNc, GOOGLc)",
                       },
+                      {
+                        label: "Big tech, no crypto",
+                        logo: "/logos/stocks/MSFTc.png",
+                        prompt: "Big tech, equal weight, 4 stocks, no crypto",
+                      },
                     ].map((preset) => (
                       <button
                         key={preset.label}
@@ -2293,7 +2327,7 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                 {/* Natural Language Mandate Input */}
                 <div className="space-y-1.5">
                   <label className="text-xs font-semibold uppercase tracking-wider text-slate-400">
-                    What do you want? (keywords like AI, space, defensive, weekend)
+                    What do you want? e.g. &quot;AI and cloud, no Tesla, 3 stocks, equal weight&quot;
                   </label>
                   <textarea
                     rows={3}
@@ -2382,6 +2416,16 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                       <p className="mt-2 text-xs text-slate-300 leading-relaxed">
                         {agentReport.executiveSummary}
                       </p>
+                      {agentReport.interpretation?.length > 0 && (
+                        <div className="mt-3 rounded-xl border border-cyan-500/30 bg-cyan-500/5 px-3 py-2" data-testid="agent-interpretation">
+                          <div className="text-[10px] font-bold uppercase tracking-wider text-cyan-300">How I read your request</div>
+                          <ul className="mt-1 space-y-0.5 text-[11px] text-slate-300 list-disc pl-4">
+                            {agentReport.interpretation.map((line) => (
+                              <li key={line}>{line}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
                     </div>
                     <div className="flex flex-wrap items-center gap-2 shrink-0">
                       <a
@@ -2651,7 +2695,14 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                             />
                           </div>
 
-                          <p className="text-[11px] text-slate-400">{alloc.rationale}</p>
+                          {alloc.reasons?.length ? (
+                            <p className="text-[11px] text-slate-400">
+                              <span className="text-slate-300">Why: </span>
+                              {alloc.reasons.join(" · ")}. DEX ${alloc.dexPrice24_7.toFixed(2)} vs NAV ${alloc.navPrice.toFixed(2)}.
+                            </p>
+                          ) : (
+                            <p className="text-[11px] text-slate-400">{alloc.rationale}</p>
+                          )}
                         </div>
                       ))}
                     </div>

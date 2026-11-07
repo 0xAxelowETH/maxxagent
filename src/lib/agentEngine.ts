@@ -2,6 +2,7 @@ import { LiveTokenizedStock } from "./tokenizedStocks";
 import { appendBuilderCodeToCalldata, toErc8021DataSuffix } from "./builderCode";
 import { INDEX_REGISTRY_ABI } from "./contracts/StockMaxxIndexRegistryABI";
 import { encodeFunctionData, keccak256, toHex } from "viem";
+import { THEMES, parseMandate } from "./mandate";
 
 export interface AgentAllocationRecommendation {
   symbol: string;
@@ -26,6 +27,8 @@ export interface AgentAllocationRecommendation {
   action: "ACCUMULATE" | "TRIM" | "HOLD";
   quantScore: number;
   rationale: string;
+  /** short reasons this stock was picked, most important first */
+  reasons: string[];
 }
 
 export interface AgentAnalysisReport {
@@ -39,6 +42,8 @@ export interface AgentAnalysisReport {
   erc8021Suffix: `0x${string}`;
   researchHash: `0x${string}`;
   executiveSummary: string;
+  /** how the agent read the user's request (themes, exclusions, count, weighting, risk) */
+  interpretation: string[];
   marketRegimeNote: string;
   b20MultiplierInsight: string;
   allocations: AgentAllocationRecommendation[];
@@ -113,69 +118,111 @@ export function runAutonomousStockAgent(params: {
   builderCode: string;
   currentWeights?: Record<string, number>;
 }): AgentAnalysisReport {
-  const { stocks, userPrompt, riskProfile, capitalUsd, builderCode, currentWeights = {} } = params;
-  const promptLower = userPrompt.toLowerCase();
-  const hasWord = (...words: string[]) => words.some((w) => new RegExp(`\\b${w}\\b`).test(promptLower));
+  const { stocks, userPrompt, capitalUsd, builderCode, currentWeights = {} } = params;
+  const mandate = parseMandate(userPrompt);
+  // Words in the request ("safe", "aggressive") refine the selected profile only when it was left on Balanced
+  const riskProfile = params.riskProfile === "Balanced" && mandate.riskHint ? mandate.riskHint : params.riskProfile;
+  const interpretation = mandate.notes.filter((n) => !n.startsWith("Risk read"));
+  if (mandate.riskHint && riskProfile === mandate.riskHint && riskProfile !== params.riskProfile)
+    interpretation.push(`Risk profile: ${riskProfile.toLowerCase()}, from your words.`);
+  else if (mandate.riskHint && riskProfile !== mandate.riskHint)
+    interpretation.push(`Your words suggest ${mandate.riskHint.toLowerCase()}, but the selected ${riskProfile} profile was kept.`);
 
-  const scored = stocks.map((stock) => {
+  const themeOf = (sym: string) => mandate.themes.filter((t) => THEMES.find((x) => x.id === t)!.symbols.includes(sym));
+  // Pool: everything except exclusions; "only …" narrows it to the named themes / stocks
+  let pool = stocks.filter((st) => !mandate.exclude.includes(st.symbol));
+  if (mandate.only) {
+    const narrowed = pool.filter((st) => mandate.include.includes(st.symbol) || themeOf(st.symbol).length > 0);
+    if (narrowed.length) pool = narrowed;
+  }
+  if (pool.length === 0) {
+    pool = stocks;
+    interpretation.push("Every stock was excluded, so the exclusions were ignored.");
+  }
+
+  const scored = pool.map((stock) => {
     let score = stock.aiScoreBase;
+    const reasons: string[] = [];
+    const themes = themeOf(stock.symbol);
 
-    // 1. Mandate keywords
-    if (
-      promptLower.includes(stock.symbol.toLowerCase()) ||
-      hasWord(stock.tickerUnderlying.toLowerCase(), stock.companyName.toLowerCase().split(" ")[0])
-    ) {
-      score += 32;
+    // 1. Mandate
+    if (mandate.include.includes(stock.symbol)) {
+      score += 35;
+      reasons.push("you asked for it");
     }
-    if (
-      hasWord("ai", "chip", "chips", "gpu", "compute") &&
-      (stock.sector === "AI & Semiconductors" || ["MSFTc", "GOOGLc", "METAc"].includes(stock.symbol))
-    ) {
-      score += 18;
+    if (themes.length) {
+      score += Math.min(30, 18 * themes.length);
+      reasons.push(`fits your ${themes.map((t) => THEMES.find((x) => x.id === t)!.label).join(" + ")} theme`);
     }
-    if (hasWord("space", "frontier", "bitcoin", "btc", "moon") && stock.sector === "Frontier & Crypto") {
-      score += 22;
-    }
-    if (
-      hasWord("safe", "dividend", "defensive", "bluechip", "cloud") &&
-      (stock.sector === "Big Tech Cloud" || stock.symbol === "AAPLc")
-    ) {
-      score += 18;
-    }
-    if (hasWord("discount", "weekend", "gap") && stock.weekendGapPct < 0) {
-      score += Math.min(25, Math.abs(stock.weekendGapPct) * 35);
-    }
+    if (mandate.prefersDiscount && stock.weekendGapPct < 0) score += Math.min(25, Math.abs(stock.weekendGapPct) * 35);
+    if (mandate.prefersDividends && stock.uiMultiplier > 1.0001) score += 12;
+    if (mandate.prefersLiquidity) score += Math.min(12, ((stock.dexLiquidityUsd ?? 0) / 1_000_000) * 8);
 
     // 2. Live market factors
     // A: DEX trading below Chainlink NAV (cheaper entry), penalise premiums
-    if (stock.weekendGapPct < -0.05) score += Math.min(8, Math.abs(stock.weekendGapPct) * 12);
-    else if (stock.weekendGapPct > 0.5) score -= Math.min(6, stock.weekendGapPct * 4);
+    if (stock.weekendGapPct < -0.05) {
+      score += Math.min(8, Math.abs(stock.weekendGapPct) * 12);
+      reasons.push(`${Math.abs(stock.weekendGapPct).toFixed(2)}% below NAV on DEX (cheaper entry)`);
+    } else if (stock.weekendGapPct > 0.5) {
+      score -= Math.min(6, stock.weekendGapPct * 4);
+      reasons.push(`${stock.weekendGapPct.toFixed(2)}% above NAV on DEX (premium)`);
+    }
     // B: reinvested dividends reflected in the multiplier
-    if (stock.uiMultiplier > 1.0001) score += 4;
+    if (stock.uiMultiplier > 1.0001) {
+      score += 4;
+      reasons.push(`dividends reinvested (multiplier ${stock.uiMultiplier.toFixed(4)}x)`);
+    }
     // C: liquidity depth (execution quality); unknown liquidity gets no bonus
     const liq = stock.dexLiquidityUsd ?? 0;
-    if (liq > 500_000) score += 5;
-    else if (liq > 200_000) score += 3;
-    else if (liq < 50_000) score -= 6;
+    if (liq > 500_000) {
+      score += 5;
+      reasons.push(`deep liquidity ($${(liq / 1e6).toFixed(1)}M)`);
+    } else if (liq > 200_000) score += 3;
+    else if (liq < 50_000) {
+      score -= 6;
+      reasons.push(`thin liquidity ($${(liq / 1e3).toFixed(0)}K): higher swap cost`);
+    }
 
     // 3. Risk profile vs beta
-    if (riskProfile === "Conservative") score += (2.2 - stock.beta) * 14;
-    else if (riskProfile === "Aggressive") score += (stock.beta - 1.0) * 16;
-    else score += 10 - Math.abs(1.45 - stock.beta) * 8;
+    if (riskProfile === "Conservative") {
+      score += (2.2 - stock.beta) * 14;
+      if (stock.beta <= 1.3) reasons.push(`lower volatility (beta ${stock.beta.toFixed(2)}) for a conservative profile`);
+    } else if (riskProfile === "Aggressive") {
+      score += (stock.beta - 1.0) * 16;
+      if (stock.beta >= 1.6) reasons.push(`higher volatility (beta ${stock.beta.toFixed(2)}) for an aggressive profile`);
+    } else score += 10 - Math.abs(1.45 - stock.beta) * 8;
 
     // 4. Stale oracle penalty
-    if (stock.isOracleStale) score -= 8;
+    if (stock.isOracleStale) {
+      score -= 8;
+      reasons.push("NAV oracle is stale");
+    }
 
     // rawScore drives ranking & weights (uncapped, so strong preferences stay distinguishable);
     // quantScore is the capped 55–99 display value.
-    return { stock, rawScore: score, quantScore: Math.min(99, Math.max(55, Math.round(score))) };
+    return { stock, rawScore: score, quantScore: Math.min(99, Math.max(55, Math.round(score))), reasons };
   });
 
   scored.sort((a, b) => b.rawScore - a.rawScore);
-  const selected = scored.slice(0, 5);
-  // Weight strength relative to the weakest selected stock keeps weights differentiated
-  const floor = Math.min(...selected.map((s) => s.rawScore)) - 20;
-  const weights = scoresToWeightsBps(selected.map((s) => s.rawScore - floor + 45));
+  // Named stocks always make it in; the rest is filled by score
+  const wanted = Math.min(pool.length, Math.max(mandate.count ?? 5, mandate.count ? 0 : mandate.include.length));
+  const named = scored.filter((x) => mandate.include.includes(x.stock.symbol));
+  const others = scored.filter((x) => !mandate.include.includes(x.stock.symbol));
+  const selected = [...named, ...others].slice(0, Math.max(1, wanted)).sort((a, b) => b.rawScore - a.rawScore);
+  const added = selected.filter((x) => !mandate.include.includes(x.stock.symbol) && !themeOf(x.stock.symbol).length).length;
+  if (added > 0 && (mandate.include.length || mandate.themes.length) && !mandate.only)
+    interpretation.push(`Added ${added} more by score to diversify (say "only" to keep just what you named).`);
+  if (mandate.count && mandate.count > pool.length) interpretation.push(`Only ${pool.length} stock${pool.length > 1 ? "s" : ""} match, so the basket has ${pool.length}.`);
+  let weights: number[];
+  if (mandate.equalWeight) {
+    const base = Math.floor(10000 / selected.length / 50) * 50;
+    weights = selected.map(() => base);
+    weights[0] += 10000 - base * selected.length;
+  } else {
+    // Weight strength relative to the weakest selected stock keeps weights differentiated
+    const floor = Math.min(...selected.map((x) => x.rawScore)) - 20;
+    weights = scoresToWeightsBps(selected.map((x) => x.rawScore - floor + 45));
+  }
 
   const allocations: AgentAllocationRecommendation[] = selected.map((item, idx) => {
     const s = item.stock;
@@ -191,13 +238,8 @@ export function runAutonomousStockAgent(params: {
     if (deltaBps >= 150) action = "ACCUMULATE";
     else if (deltaBps <= -150) action = "TRIM";
 
-    const gapNote =
-      s.weekendGapPct <= -0.05
-        ? `trades ${Math.abs(s.weekendGapPct).toFixed(2)}% below Chainlink NAV on DEX ($${s.dexPrice24_7.toFixed(2)} vs $${s.navPrice.toFixed(2)})`
-        : `trades at $${s.dexPrice24_7.toFixed(2)} on DEX vs $${s.navPrice.toFixed(2)} Chainlink NAV (${s.weekendGapPct >= 0 ? "+" : ""}${s.weekendGapPct.toFixed(2)}%)`;
-    const liqNote = s.dexLiquidityUsd
-      ? `$${(s.dexLiquidityUsd / 1e3).toFixed(0)}K DEX liquidity`
-      : "DEX liquidity unknown";
+    const reasons = item.reasons.length ? item.reasons : ["strong overall rule score"];
+    const priceNote = `DEX $${s.dexPrice24_7.toFixed(2)} vs NAV $${s.navPrice.toFixed(2)}`;
 
     return {
       symbol: s.symbol,
@@ -221,19 +263,27 @@ export function runAutonomousStockAgent(params: {
       estimatedSharesUI,
       action,
       quantScore: item.quantScore,
-      rationale: `${s.companyName} (${s.symbol}) ${gapNote}, multiplier ${s.uiMultiplier.toFixed(6)}x, ${liqNote}, beta ${s.beta.toFixed(2)}. Rule score ${item.quantScore}/99.`,
+      reasons,
+      rationale: `${s.companyName} (${s.symbol}): ${reasons.join("; ")}. ${priceNote}. Rule score ${item.quantScore}/99.`,
     };
   });
 
   const topTickers = allocations.map((a) => `${a.symbol} ${(a.targetWeightBps / 100).toFixed(1)}%`).join(", ");
-  const isFrontier = hasWord("frontier", "space");
-  const isSafe = hasWord("safe", "defensive");
-  const strategyName = isFrontier
-    ? "MAXX Frontier Basket"
-    : isSafe
-    ? "MAXX Fortress Basket"
-    : "MAXX Agentic Stock Basket";
-  const strategyTicker = isFrontier ? "MAXX-FRNT" : isSafe ? "MAXX-SAFE" : "MAXX-AI";
+  const NAMES: Record<string, [string, string]> = {
+    ai: ["MAXX AI Basket", "MAXX-AI"],
+    chips: ["MAXX Chips Basket", "MAXX-CHIP"],
+    cloud: ["MAXX Cloud Basket", "MAXX-CLOUD"],
+    bigtech: ["MAXX Big Tech Basket", "MAXX-MEGA"],
+    consumer: ["MAXX Consumer Basket", "MAXX-CONS"],
+    social: ["MAXX Social & Ads Basket", "MAXX-ADS"],
+    ev: ["MAXX EV & Robotics Basket", "MAXX-EV"],
+    space: ["MAXX Space Basket", "MAXX-SPACE"],
+    crypto: ["MAXX Bitcoin Proxy Basket", "MAXX-BTC"],
+    storage: ["MAXX Storage Basket", "MAXX-MEM"],
+    frontier: ["MAXX Frontier Basket", "MAXX-FRNT"],
+  };
+  const [strategyName, strategyTicker] =
+    NAMES[mandate.themes[0]] ?? (riskProfile === "Conservative" ? ["MAXX Fortress Basket", "MAXX-SAFE"] : ["MAXX Agentic Stock Basket", "MAXX-MIX"]);
 
   const executiveSummary = `Proposed ${riskProfile.toLowerCase()} basket from live Chainlink NAV, DEX prices, liquidity and B20 multipliers across all 10 Coinbase tokenized stocks: ${topTickers}. Not financial advice — review before buying.`;
 
@@ -268,6 +318,7 @@ export function runAutonomousStockAgent(params: {
     erc8021Suffix: dataSuffix,
     researchHash,
     executiveSummary,
+    interpretation,
     marketRegimeNote:
       "Chainlink total-return feeds update 24/5 (frozen on weekends/holidays); DEX pools trade 24/7. Stale feeds are penalised.",
     b20MultiplierInsight:
