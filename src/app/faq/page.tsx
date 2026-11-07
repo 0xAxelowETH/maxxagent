@@ -94,10 +94,45 @@ const FAQ: { q: string; a: React.ReactNode }[] = [
     q: "How is my P/L calculated?",
     a: (
       <>
-        From your own onchain history: the USDC you actually paid for each stock gives an average cost, and the live
-        Chainlink NAV gives the current value. Realized P/L comes from the USDC you received when selling. If a stock arrived
-        without a USDC payment (bought with another token, sent from another wallet), its cost is valued at the NAV at that
-        moment and marked <em>est.</em>
+        From your own onchain history: the USDC you actually paid for each stock (or the ETH you paid, valued with Chainlink
+        ETH/USD at that block) gives an average cost, and the live Chainlink NAV gives the current value. Realized P/L comes
+        from the USDC you received when selling. If a stock arrived without a payment (bought with another token, sent from
+        another wallet), its cost is valued at the NAV at that moment and marked <em>est.</em> The same history powers the{" "}
+        <em>Trade history</em> list in the Portfolio tab, with a BaseScan link for every trade.
+      </>
+    ),
+  },
+  {
+    q: "How does Rebalance work?",
+    a: (
+      <>
+        In the Agent tab, once you hold stocks, MAXXAGENT compares your portfolio with the agent&apos;s basket weights. Step 1
+        sells what is overweight; step 2 buys what is underweight with the USDC that came back (you can add extra USDC).
+        Moves under 2% are skipped to save fees, and if your portfolio is too small for every stock to reach the $1
+        minimum, it tells you how much to add instead of selling. Each step goes through the normal review screen.
+      </>
+    ),
+  },
+  {
+    q: "Can I share a basket?",
+    a: (
+      <>
+        Yes. <em>Copy share link</em> creates a link like <code>/?basket=NVDAc-40,MSFTc-30&amp;amount=50</code>. Whoever opens
+        it sees the same basket loaded, ready to review. It only fills in the form: nothing is bought until they confirm in
+        their own wallet.
+      </>
+    ),
+  },
+  {
+    q: "Where can I see MAXXAGENT's usage?",
+    a: (
+      <>
+        The{" "}
+        <Link href="/stats" className="text-cyan-300 underline">
+          Live stats
+        </Link>{" "}
+        page counts trades, volume and wallets routed through MAXXAGENT, read directly from onchain swap events, with each
+        transaction linked so anyone can verify it. The team&apos;s own test wallet is excluded.
       </>
     ),
   },

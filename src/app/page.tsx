@@ -56,6 +56,7 @@ import {
 } from "@/lib/basketExecutor";
 import { MaxxAgentLogo, MaxxAgentMark } from "@/components/BrandLogo";
 import { OrderReview } from "@/components/OrderReview";
+import { TradeHistoryPanel, type TradeHistoryEntry } from "@/components/TradeHistoryPanel";
 import { RebalancePanel } from "@/components/RebalancePanel";
 import { TermsGate, TERMS_STORAGE_KEY } from "@/components/TermsGate";
 import {
@@ -357,6 +358,7 @@ export default function StockMaxxingDashboard() {
       complete: boolean;
       realizedUsd: number;
       positions: { symbol: string; avgCostUsd: number | null; realizedUsd: number; estimated: boolean }[];
+      activity?: TradeHistoryEntry[];
     } | null;
   }>({ for: "", error: "", data: null });
 
@@ -1767,12 +1769,6 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
               pendingLabel={basketStatus || "Working…"}
             />
 
-            {/* Plain-English Glossary Strip (Demystifying Key Base B20 Concepts) */}
-            <PlainEnglishGlossaryStrip />
-
-            {/* Interactive B20 Dividend & Stock-Split Multiplier Simulator (ERC-8056) */}
-            <B20DividendSplitSimulator stocks={stocks} />
-
             {/* Live Tokenized Stocks Table with Official Stock Logos */}
             <div className="glass-panel rounded-3xl overflow-hidden">
               <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 px-6 py-4">
@@ -2068,6 +2064,23 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                 </table>
               </div>
             </div>
+
+            {/* Learning material kept out of the way: glossary + dividend/split multiplier simulator */}
+            <details className="group glass-panel rounded-3xl p-4 sm:p-5" id="learn-more">
+              <summary className="cursor-pointer list-none flex items-center justify-between gap-3 text-sm font-bold text-white">
+                <span>
+                  Learn more: glossary &amp; dividend / split simulator
+                  <span className="block text-[11px] font-normal text-slate-400">
+                    NAV, multiplier, B20 and how dividends and splits change what one token is worth.
+                  </span>
+                </span>
+                <span className="text-slate-500 transition group-open:rotate-45 text-lg">+</span>
+              </summary>
+              <div className="mt-4 space-y-6">
+                <PlainEnglishGlossaryStrip />
+                <B20DividendSplitSimulator stocks={stocks} />
+              </div>
+            </details>
           </div>
         )}
 
@@ -3151,7 +3164,7 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                             </tbody>
                           </table>
                           <p className="mt-2 text-[10px] leading-relaxed text-slate-500">
-                            P/L uses the USDC you actually paid, read from your onchain history, against the live Chainlink NAV.
+                            P/L uses the USDC or ETH you actually paid, read from your onchain history, against the live Chainlink NAV.
                             {anyEst ? " est. = part of the cost is valued at the Chainlink NAV when the stock arrived (bought with another token, sent from another wallet, or bought before the history scanned so far)." : ""}
                             {pnl.for === walletAddress.toLowerCase() && pnl.error ? ` ${pnl.error}` : ""}
                           </p>
@@ -3162,6 +3175,18 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                 })()
               )}
             </div>
+
+            {/* Trade history rebuilt from the wallet's onchain transfers (same scan as P/L) */}
+            {walletAddress && (
+              <div className="lg:col-span-12">
+                <TradeHistoryPanel
+                  entries={pnl.for === walletAddress.toLowerCase() ? pnl.data?.activity ?? [] : []}
+                  loading={pnl.for !== walletAddress.toLowerCase()}
+                  error={pnl.for === walletAddress.toLowerCase() ? pnl.error : ""}
+                  since={pnl.for === walletAddress.toLowerCase() ? pnl.data?.since ?? null : null}
+                />
+              </div>
+            )}
 
             {/* Activity from this browser */}
             <div className="lg:col-span-12">

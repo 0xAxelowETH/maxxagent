@@ -233,7 +233,31 @@ interface Position {
   sells: number;
 }
 
+/** One stock movement of the wallet, newest first in the response (shown as trade history) */
+interface Activity {
+  hash: string;
+  block: bigint;
+  side: "buy" | "sell";
+  symbol: string;
+  tokens: number;
+  usd: number;
+  /** what was paid / received: usdc, eth, or other (transfer, another token: value at NAV) */
+  via: "usdc" | "eth" | "other";
+}
+
+const blockTimes = new Map<bigint, number>();
+async function blockTime(block: bigint) {
+  if (!blockTimes.has(block)) {
+    const b = await client.getBlock({ blockNumber: block }).catch(() => null);
+    if (!b) return null;
+    if (blockTimes.size > 5000) blockTimes.clear();
+    blockTimes.set(block, Number(b.timestamp));
+  }
+  return blockTimes.get(block)!;
+}
+
 async function computePositions(history: WalletHistory) {
+  const activity: Activity[] = [];
   const pos = new Map<string, Position>();
   const get = (token: string) => {
     let p = pos.get(token);
@@ -270,13 +294,16 @@ async function computePositions(history: WalletHistory) {
       const p = get(m.token);
       if (m.dir === 1) {
         let cost: number;
+        let via: Activity["via"] = "other";
         if (usdcOut > 0n) {
           cost = Number(usdcOut) / 1e6;
           usdcOut = 0n;
+          via = "usdc";
         } else if (ethPaid > 0n && (await navAt(ETH_USD_FEED, tx.block))) {
           // ETH actually paid x Chainlink ETH/USD at that block (exact enough, not an estimate)
           cost = (Number(ethPaid) / 1e18) * (await navAt(ETH_USD_FEED, tx.block))!;
           ethPaid = 0n;
+          via = "eth";
         } else {
           const nav = await navAt(STOCKS.get(m.token)!.chainlinkFeed, tx.block);
           cost = (nav ?? 0) * tokensOf(m.amount, m.token);
@@ -285,6 +312,7 @@ async function computePositions(history: WalletHistory) {
         p.raw += m.amount;
         p.costUsd += cost;
         p.buys++;
+        activity.push({ hash: tx.hash, block: tx.block, side: "buy", symbol: p.symbol, tokens: tokensOf(m.amount, m.token), usd: cost, via });
       } else {
         const sold = m.amount > p.raw ? p.raw : m.amount;
         const avg = p.raw > 0n ? p.costUsd / tokensOf(p.raw, m.token) : 0;
@@ -298,6 +326,7 @@ async function computePositions(history: WalletHistory) {
     for (const d of disposals) {
       const p = get(d.token);
       let proceeds: number;
+      const via: Activity["via"] = d.proceeds > 0n ? "usdc" : "other";
       if (d.proceeds > 0n) proceeds = Number(d.proceeds) / 1e6;
       else {
         const nav = await navAt(STOCKS.get(d.token)!.chainlinkFeed, tx.block);
@@ -305,10 +334,11 @@ async function computePositions(history: WalletHistory) {
         p.estimated = true;
       }
       p.realizedUsd += proceeds - d.costRemoved;
+      activity.push({ hash: tx.hash, block: tx.block, side: "sell", symbol: p.symbol, tokens: tokensOf(d.raw, d.token), usd: proceeds, via });
     }
   }
 
-  return [...pos.entries()].map(([token, p]) => {
+  const positions = [...pos.entries()].map(([token, p]) => {
     const tokens = tokensOf(p.raw, token);
     return {
       symbol: p.symbol,
@@ -322,6 +352,14 @@ async function computePositions(history: WalletHistory) {
       sells: p.sells,
     };
   });
+  // newest first, capped: the UI shows recent trades, BaseScan has the rest
+  const recent = activity.reverse().slice(0, 50);
+  const times = await pool([...new Set(recent.map((a) => a.block))], CONCURRENCY, async (b) => [b, await blockTime(b)] as const);
+  const timeOf = new Map(times);
+  return {
+    positions,
+    activity: recent.map((a) => ({ ...a, block: Number(a.block), time: timeOf.get(a.block) ?? null })),
+  };
 }
 
 export async function GET(request: NextRequest) {
@@ -341,7 +379,7 @@ export async function GET(request: NextRequest) {
       if (!inflight.has(key)) inflight.set(key, loadHistory(wallet as `0x${string}`).finally(() => inflight.delete(key)));
       history = await inflight.get(key)!;
     }
-    const positions = await computePositions(history);
+    const { positions, activity } = await computePositions(history);
     const fromBlock = await client.getBlock({ blockNumber: history.scannedFrom }).catch(() => null);
     return NextResponse.json({
       ok: true,
@@ -351,6 +389,7 @@ export async function GET(request: NextRequest) {
       complete: !anyHeld(history.opening),
       trades: history.txs.size,
       positions,
+      activity,
       realizedUsd: positions.reduce((a, p) => a + p.realizedUsd, 0),
     });
   } catch (e) {
