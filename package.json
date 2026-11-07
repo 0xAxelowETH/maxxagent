@@ -15,7 +15,8 @@
     "deploy:mainnet": "node scripts/deploy-mainnet.mjs",
     "test:contracts": "node scripts/test-contracts.mjs",
     "brand": "node scripts/generate-brand.mjs",
-    "shots": "node scripts/capture-posts.mjs"
+    "shots": "node scripts/capture-posts.mjs",
+    "test:buy": "node scripts/test-buy.mjs"
   },
   "dependencies": {
     "@coinbase/wallet-sdk": "^4.4.0",

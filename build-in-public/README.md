@@ -39,3 +39,4 @@ build-in-public/
 | Day | Date | Topic | Posted |
 | --- | --- | --- | --- |
 | 1 | 2026-11-06 | Live market + agent + one-click basket | ✅ |
+| 2 | 2026-11-07 | First mainnet test buy + mobile wallets + open source | ☐ |
