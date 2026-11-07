@@ -276,6 +276,14 @@ export default function StockMaxxingDashboard() {
   const getEthProvider = useCallback((): EthereumProvider | null => {
     return providerRef.current ?? (window as unknown as { ethereum?: EthereumProvider }).ethereum ?? null;
   }, []);
+  /** The account that will actually sign. Swaps send tokens to this address, so never use a stale one. */
+  const resolveSender = useCallback(async (eth: EthereumProvider): Promise<string> => {
+    let accounts = (await eth.request({ method: "eth_accounts" }).catch(() => [])) as string[];
+    if (!accounts?.[0]) accounts = (await eth.request({ method: "eth_requestAccounts" })) as string[];
+    const active = accounts?.[0];
+    if (!active) throw new Error("No wallet account available. Connect your wallet first.");
+    return active;
+  }, []);
 
   // Bumped after a purchase so balances refresh
   const [balanceRefreshNonce, setBalanceRefreshNonce] = useState<number>(0);
@@ -414,12 +422,8 @@ export default function StockMaxxingDashboard() {
       }
       setBasketPending(true);
       try {
-        let sender = walletAddress;
-        if (!sender) {
-          const accounts = (await eth.request({ method: "eth_requestAccounts" })) as string[];
-          sender = accounts[0];
-          setWalletAddress(sender);
-        }
+        const sender = await resolveSender(eth);
+        if (sender.toLowerCase() !== walletAddress.toLowerCase()) setWalletAddress(sender);
         const result = await executeBasket({
           eth,
           sender,
@@ -444,7 +448,7 @@ export default function StockMaxxingDashboard() {
         setBasketPending(false);
       }
     },
-    [nonUsComplianceAccepted, walletAddress, builderCode, recordOnchainActivity, getEthProvider]
+    [nonUsComplianceAccepted, walletAddress, builderCode, recordOnchainActivity, getEthProvider, resolveSender]
   );
 
   // Sell B20 stocks back to USDC from the user's own wallet (exact approval, one batch when supported)
@@ -465,7 +469,14 @@ export default function StockMaxxingDashboard() {
       if (validLegs.length === 0) return;
       setBasketPending(true);
       try {
-        const result = await executeSell({ eth, sender: walletAddress, legs: validLegs, builderCode, onStatus: setBasketStatus });
+        const sender = await resolveSender(eth);
+        if (sender.toLowerCase() !== walletAddress.toLowerCase()) {
+          // The sell amounts came from the balances of the previously shown account: refresh, don't sell
+          setWalletAddress(sender);
+          setBalanceRefreshNonce((n) => n + 1);
+          throw new Error("Your wallet switched to another account. Balances were refreshed: check them and try again.");
+        }
+        const result = await executeSell({ eth, sender, legs: validLegs, builderCode, onStatus: setBasketStatus });
         setBasketResult(result);
         setTimeout(() => setBalanceRefreshNonce((n) => n + 1), 6000);
         const usdc = result.received.find((r) => r.symbol === "USDC");
@@ -481,7 +492,7 @@ export default function StockMaxxingDashboard() {
         setBasketPending(false);
       }
     },
-    [nonUsComplianceAccepted, walletAddress, builderCode, recordOnchainActivity, getEthProvider]
+    [nonUsComplianceAccepted, walletAddress, builderCode, recordOnchainActivity, getEthProvider, resolveSender]
   );
 
   // Build in Public State

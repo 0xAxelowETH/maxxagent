@@ -275,7 +275,20 @@ async function postSwap(body: Record<string, unknown>, fallbackSymbol: string): 
   }
 }
 
-const usable = (q: LegQuote) => !!(q.ok && q.tx && q.routerAddress && q.amountInRaw && q.tokenIn);
+// KyberSwap MetaAggregationRouterV2 on Base: the only address we ever approve or call
+const KYBER_ROUTER = "0x6131b5fae19ea4f9d964eac0408e4408b66337b5";
+const usable = (q: LegQuote) =>
+  !!(
+    q.ok &&
+    q.tx &&
+    q.amountInRaw &&
+    q.tokenIn &&
+    q.routerAddress?.toLowerCase() === KYBER_ROUTER &&
+    q.tx.to.toLowerCase() === KYBER_ROUTER &&
+    BigInt(q.tx.value || "0") === 0n
+  );
+
+const withSkipReason = (q: LegQuote): LegQuote => (q.error ? q : { ...q, error: "Unexpected route, skipped for safety" });
 
 /** Quotes legs one by one (aggregator burst limit), then retries failed legs once after a pause. */
 async function quoteAll<L extends { symbol: string }>(
@@ -324,7 +337,7 @@ export async function executeBasket(params: {
 
   const quotes = await quoteAll(legs, (l) => quoteLeg(l, sender, slippageBps), "for", onStatus);
   const bought = quotes.filter(usable);
-  const skipped = quotes.filter((q) => !bought.includes(q));
+  const skipped = quotes.filter((q) => !bought.includes(q)).map(withSkipReason);
   if (bought.length === 0) throw new Error(skipped.map((s) => `${s.symbol}: ${s.error}`).join(" | ") || "No routes available");
 
   const totalIn = bought.reduce((acc, q) => acc + BigInt(q.amountInRaw!), 0n);
@@ -364,7 +377,7 @@ export async function executeSell(params: {
 
   const quotes = await quoteAll(legs, (l) => quoteSellLeg(l, sender, slippageBps), "to sell", onStatus);
   const sold = quotes.filter(usable);
-  const skipped = quotes.filter((q) => !sold.includes(q));
+  const skipped = quotes.filter((q) => !sold.includes(q)).map(withSkipReason);
   if (sold.length === 0) throw new Error(skipped.map((s) => `${s.symbol}: ${s.error}`).join(" | ") || "No routes available");
 
   for (const q of sold) {
