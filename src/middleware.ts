@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { miniappEmbedTags } from "@/lib/miniappEmbed";
 
 /**
  * Coinbase tokenized stocks are only available to persons in eligible jurisdictions
@@ -12,31 +13,28 @@ const PUBLIC_EVERYWHERE = ["/.well-known/", "/brand/", "/robots.txt", "/sitemap.
 const SITE = (process.env.NEXT_PUBLIC_SITE_URL || "https://maxxagent.xyz").replace(/\/$/, "");
 const esc = (v: string) => v.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
 const PREVIEW_DESC = "Build your own index of Coinbase tokenized stocks on Base, or let an agent propose one, and buy it in one click from your own wallet. Not financial advice.";
-const embed = (type: string) =>
-  JSON.stringify({
-    version: "1",
-    imageUrl: `${SITE}/brand/miniapp-embed-1200x800.png`,
-    button: {
-      title: "Build a stock index",
-      action: { type, name: "MAXXAGENT", url: `${SITE}/`, splashImageUrl: `${SITE}/brand/miniapp-splash-200.png`, splashBackgroundColor: "#03060e" },
-    },
-  });
-const PREVIEW_TAGS = [
-  ["description", PREVIEW_DESC],
-  ["og:type", "website"],
-  ["og:site_name", "MAXXAGENT"],
-  ["og:title", "MAXXAGENT — Tokenized stock indexes on Base"],
-  ["og:description", PREVIEW_DESC],
-  ["og:image", `${SITE}/brand/maxxagent-og.png`],
-  ["twitter:card", "summary_large_image"],
-  ["twitter:title", "MAXXAGENT — Tokenized stock indexes on Base"],
-  ["twitter:description", PREVIEW_DESC],
-  ["twitter:image", `${SITE}/brand/maxxagent-og.png`],
-  ["fc:miniapp", embed("launch_miniapp")],
-  ["fc:frame", embed("launch_frame")],
-]
-  .map(([k, v]) => (k.startsWith("og:") ? `<meta property="${k}" content="${esc(v)}">` : `<meta name="${k}" content="${esc(v)}">`))
-  .join("");
+// Same embed as the real pages (stock pages launch on that stock), because preview crawlers run in the US
+const previewTags = (path: string) => {
+  const stock = path.match(/^\/stock\/([A-Za-z]{2,8}c)$/)?.[1];
+  const tags: [string, string][] = [
+    ["description", PREVIEW_DESC],
+    ["og:type", "website"],
+    ["og:site_name", "MAXXAGENT"],
+    ["og:title", stock ? `${stock} tokenized stock on Base — MAXXAGENT` : "MAXXAGENT — Tokenized stock indexes on Base"],
+    ["og:description", PREVIEW_DESC],
+    ["og:image", `${SITE}/brand/maxxagent-og.png`],
+    ["twitter:card", "summary_large_image"],
+    ["twitter:title", stock ? `${stock} tokenized stock on Base — MAXXAGENT` : "MAXXAGENT — Tokenized stock indexes on Base"],
+    ["twitter:description", PREVIEW_DESC],
+    ["twitter:image", `${SITE}/brand/maxxagent-og.png`],
+    ...Object.entries(
+      miniappEmbedTags(stock ? { siteUrl: SITE, path: `/stock/${stock}`, buttonTitle: `Trade ${stock}` } : { siteUrl: SITE })
+    ),
+  ];
+  return tags
+    .map(([k, v]) => (k.startsWith("og:") ? `<meta property="${k}" content="${esc(v)}">` : `<meta name="${k}" content="${esc(v)}">`))
+    .join("");
+};
 
 /**
  * Best-effort per-IP rate limit for API routes (fixed 60s window, per server instance).
@@ -128,7 +126,7 @@ export function middleware(request: NextRequest) {
   // 200 because preview crawlers ignore tags on error pages; the app itself and every API stay blocked.
   return new NextResponse(
     "<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><title>MAXXAGENT — Tokenized stock indexes on Base</title>" +
-      PREVIEW_TAGS +
+      previewTags(path) +
       "</head><body style='font-family:system-ui;background:#050811;color:#e2e8f0;display:grid;place-items:center;min-height:100vh;margin:0;padding:16px'>" +
       "<div style='max-width:480px'><h1 style='font-size:20px'>Not available in your jurisdiction</h1>" +
       "<p style='color:#94a3b8;font-size:14px;line-height:1.6'>Coinbase tokenized stocks on Base are only available to persons in eligible jurisdictions outside of the United States.</p></div></body></html>",

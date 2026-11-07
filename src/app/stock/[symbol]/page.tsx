@@ -5,6 +5,7 @@ import { ArrowLeft, ExternalLink, FileText } from "lucide-react";
 import { MaxxAgentLogo } from "@/components/BrandLogo";
 import { StockLive } from "@/components/StockLive";
 import { BASE_TOKENIZED_STOCKS } from "@/lib/tokenizedStocks";
+import { miniappEmbedTags } from "@/lib/miniappEmbed";
 
 const find = (symbol: string) => BASE_TOKENIZED_STOCKS.find((s) => s.symbol.toLowerCase() === symbol.toLowerCase());
 
@@ -19,6 +20,12 @@ export async function generateMetadata({ params }: { params: Promise<{ symbol: s
     title: `${s.symbol} (${s.companyName}) tokenized stock on Base — MAXXAGENT`,
     description: `Live Chainlink NAV, Base DEX price and liquidity for ${s.symbol}, Coinbase's tokenized ${s.companyName} stock on Base. Buy or sell from your own wallet.`,
     alternates: { canonical: `/stock/${s.symbol}` },
+    // Shared in Farcaster, the card launches the mini app straight on this stock
+    other: miniappEmbedTags({
+      siteUrl: process.env.NEXT_PUBLIC_SITE_URL || "https://maxxagent.xyz",
+      path: `/stock/${s.symbol}`,
+      buttonTitle: `Trade ${s.symbol}`,
+    }),
   };
 }
 

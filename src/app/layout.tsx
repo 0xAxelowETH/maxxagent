@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Plus_Jakarta_Sans, JetBrains_Mono } from "next/font/google";
 import { Analytics } from "@vercel/analytics/next";
 import { MiniAppReady } from "@/components/MiniAppReady";
+import { miniappEmbedTags } from "@/lib/miniappEmbed";
 import "./globals.css";
 
 const jakarta = Plus_Jakarta_Sans({
@@ -39,25 +40,7 @@ export const metadata: Metadata = {
     images: ["/brand/maxxagent-og.png"],
   },
   // Mini app embed: a shared link renders as a 3:2 card with a launch button in Farcaster clients
-  other: (() => {
-    const base = SITE_URL.replace(/\/$/, "");
-    const embed = (type: string) =>
-      JSON.stringify({
-        version: "1",
-        imageUrl: `${base}/brand/miniapp-embed-1200x800.png`,
-        button: {
-          title: "Build a stock index",
-          action: {
-            type,
-            name: "MAXXAGENT",
-            url: `${base}/`,
-            splashImageUrl: `${base}/brand/miniapp-splash-200.png`,
-            splashBackgroundColor: "#03060e",
-          },
-        },
-      });
-    return { "fc:miniapp": embed("launch_miniapp"), "fc:frame": embed("launch_frame") };
-  })(),
+  other: miniappEmbedTags({ siteUrl: SITE_URL }),
 };
 
 export const viewport = {
