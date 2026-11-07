@@ -26,3 +26,6 @@ JADWAL_POSTING_X.md
 
 # build-in-public drafts & screenshots (internal, kept locally)
 build-in-public/
+
+# Vercel CLI link (project id)
+.vercel/
