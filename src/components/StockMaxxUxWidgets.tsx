@@ -155,10 +155,10 @@ export function GuidedQuickStartBar({
               <Zap className="h-4 w-4 text-emerald-400" />
             </div>
             <div className="text-sm font-bold text-white">
-              Buy the basket with USDC
+              Buy the basket with USDC or ETH
             </div>
             <p className="text-xs text-slate-400 leading-relaxed">
-              One wallet confirmation swaps USDC into each stock on Base. Stocks go straight to your
+              One wallet confirmation swaps your USDC or ETH into each stock on Base. Stocks go straight to your
               wallet — MAXXAGENT never holds funds.
             </p>
           </div>

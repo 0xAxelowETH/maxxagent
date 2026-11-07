@@ -262,6 +262,9 @@ function PortfolioDonutChart({
   );
 }
 
+// Oracle age for compact cells: 12m / 17h / 2d
+const fmtAge = (m: number) => (m < 60 ? `${Math.round(m)}m ago` : m < 48 * 60 ? `${Math.round(m / 60)}h ago` : `${Math.round(m / 1440)}d ago`);
+
 const SLIPPAGE_OPTIONS = [30, 50, 100];
 
 // ---- Shareable basket links: /?basket=NVDAc-40,MSFTc-30&amount=50 --------------------------------
@@ -467,6 +470,26 @@ export default function StockMaxxingDashboard() {
   // One amount drives the agent proposal and the purchase
   const basketUsd = capitalUsd;
   const setBasketUsd = setCapitalUsd;
+  // How baskets are paid (Agent + Indexes): USDC, or ETH sent with each swap
+  const [basketPayWith, setBasketPayWith] = useState<"usdc" | "eth">("usdc");
+  const payToggle = (
+    <span className="inline-flex rounded-lg border border-slate-700 bg-[#040814] p-0.5 text-[11px]" role="group" aria-label="Pay basket with">
+      {(["usdc", "eth"] as const).map((t) => (
+        <button
+          key={t}
+          type="button"
+          onClick={() => setBasketPayWith(t)}
+          aria-pressed={basketPayWith === t}
+          className={`rounded-md px-2.5 py-1 font-bold uppercase transition cursor-pointer ${
+            basketPayWith === t ? "bg-slate-700 text-white" : "text-slate-400 hover:text-white"
+          }`}
+        >
+          {t}
+        </button>
+      ))}
+    </span>
+  );
+  const payLabel = basketPayWith === "eth" ? "in ETH" : "USDC";
   const [basketPending, setBasketPending] = useState<boolean>(false);
   const [basketStatus, setBasketStatus] = useState<string>("");
   const [basketError, setBasketError] = useState<string>("");
@@ -1485,8 +1508,21 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                 </button>
               );
             })}
+            <span className="ml-auto flex items-center gap-1">
+              <a href="/stats" className="whitespace-nowrap rounded-xl px-3 py-2.5 text-xs font-semibold text-slate-400 hover:bg-slate-800/60 hover:text-slate-200">
+                Live stats
+              </a>
+              <a href="/faq" className="whitespace-nowrap rounded-xl px-3 py-2.5 text-xs font-semibold text-slate-400 hover:bg-slate-800/60 hover:text-slate-200">
+                FAQ
+              </a>
+            </span>
           </div>
         </nav>
+        {/* Phones: the bottom bar holds the 4 tabs, so the help links sit under the header */}
+        <div className="md:hidden mx-auto flex max-w-7xl justify-end gap-4 px-4 pb-2 text-[11px] font-semibold text-slate-400">
+          <a href="/stats" className="hover:text-white">Live stats</a>
+          <a href="/faq" className="hover:text-white">FAQ</a>
+        </div>
       </header>
 
       {/* Main Content Container */}
@@ -1619,7 +1655,7 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
 
                   <p className="text-xs sm:text-sm text-slate-300 leading-relaxed max-w-2xl">
                     NVIDIA, Apple, Tesla and 7 more Coinbase tokenized stocks, live on Base. Tell the
-                    agent what you want, check the live data, and buy the whole basket with USDC in one
+                    agent what you want, check the live data, and buy the whole basket with USDC or ETH in one
                     wallet confirmation. Stocks go straight to your wallet.
                   </p>
                 </div>
@@ -1663,48 +1699,37 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
               </div>
 
               {/* Right 2x2 Glassmorphic Telemetry Bento Grid */}
-              <div className="lg:col-span-5 grid grid-cols-1 sm:grid-cols-2 gap-4">
+              {/* Hidden on phones: keeps the chart and swap panel near the top there */}
+              <div className="lg:col-span-5 hidden sm:grid grid-cols-2 gap-4">
                 <div className="glass-panel glass-panel-hover rounded-2xl p-4 flex flex-col justify-between">
                   <div className="flex items-center justify-between">
-                    <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
-                      Base B20 Stock TVL
-                    </span>
-                    <img src="/logos/brands/coinbase-wordmark.svg" alt="Coinbase" className="logo-wordmark h-3 w-auto" />
+                    <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">US market</span>
+                    <span className="text-[10px] font-mono text-slate-500">New York</span>
                   </div>
-                  <div className="my-2">
-                    <div className="font-mono text-2xl font-extrabold text-white">
-                      ${(totalTvlUsd / 1e6).toFixed(2)}M
-                    </div>
-                    <div className="text-[11px] text-emerald-400 font-medium mt-0.5">
-                      ● 100% Verifiable Onchain Supply
-                    </div>
+                  <div className="my-2 text-xs leading-relaxed">
+                    <MarketStatus showDetail className="flex-wrap" />
                   </div>
                   <div className="text-[10px] font-mono text-slate-400 border-t border-slate-800/80 pt-2">
-                    Precompiles: 0xb2000000...
+                    NAV 24/5 · DEX 24/7
                   </div>
                 </div>
 
                 <div className="glass-panel glass-panel-hover rounded-2xl p-4 flex flex-col justify-between">
                   <div className="flex items-center justify-between">
-                    <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
-                      24h Base DEX Volume
-                    </span>
-                    <img src="/logos/partners/base.svg" alt="Base" className="h-5 w-5 rounded-xs" />
+                    <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Verifiable</span>
+                    <img src="/logos/partners/base.svg" alt="" className="h-5 w-5 rounded-xs" />
                   </div>
                   <div className="my-2">
-                    <div className="font-mono text-2xl font-extrabold text-cyan-300">
-                      ${(totalDexVolume24hUsd / 1e6).toFixed(2)}M
-                    </div>
-                    <div className="text-[11px] text-slate-300 font-medium mt-0.5">
-                      Pool Liq:{" "}
-                      <strong className="font-mono text-white">
-                        ${(totalDexLiquidityUsd / 1e6).toFixed(2)}M
-                      </strong>{" "}
-                      (all pools)
+                    <div className="font-mono text-xl font-extrabold text-cyan-300">Open source</div>
+                    <div className="text-[11px] text-slate-300 mt-0.5">
+                      Every trade routed by MAXXAGENT is public onchain and counted on the live stats page.
                     </div>
                   </div>
-                  <div className="text-[10px] font-mono text-cyan-400 border-t border-slate-800/80 pt-2">
-                    Live 24/7 Spot vs 24/5 NAV
+                  <div className="flex gap-3 text-[10px] font-mono border-t border-slate-800/80 pt-2">
+                    <a href="/stats" className="text-cyan-400 hover:underline">Live stats</a>
+                    <a href="https://github.com/0xAxelowETH/maxxagent" target="_blank" rel="noopener noreferrer" className="text-cyan-400 hover:underline">
+                      GitHub
+                    </a>
                   </div>
                 </div>
 
@@ -1742,7 +1767,7 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                   <div className="my-2">
                     <div className="font-mono text-xl font-extrabold text-emerald-300">Non-custodial</div>
                     <div className="text-[11px] text-slate-300 mt-0.5">
-                      USDC → stocks in one confirmation. Cost quoted live; routes over 1.5% refused.
+                      USDC or ETH → stocks in one confirmation. Cost quoted live; routes over 1.5% refused.
                     </div>
                   </div>
                   <div className="text-[10px] font-mono text-slate-400 border-t border-slate-800/80 pt-2">
@@ -1752,8 +1777,8 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
               </div>
             </div>
 
-            {/* Spotlight B20 Equity Bento Cards with Live SVG Sparklines */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            {/* Spotlight B20 Equity Bento Cards with Live SVG Sparklines (phones: the chart's stock picker covers this) */}
+            <div className="hidden sm:grid grid-cols-2 lg:grid-cols-4 gap-4">
               {(stocks.length > 0 ? stocks.slice(0, 4) : []).map((stock) => {
                 const isPos = stock.change24hPct >= 0;
                 const isChartActive = chartSelectedSymbol === stock.symbol;
@@ -2049,7 +2074,7 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                               }`}
                             >
                               {stock.change24hPct >= 0 ? "+" : ""}
-                              {stock.change24hPct.toFixed(2)}% ({stock.oracleAgeMinutes ?? 3}m ago)
+                              {stock.change24hPct.toFixed(2)}% ({fmtAge(stock.oracleAgeMinutes ?? 3)})
                             </div>
                           </td>
                           <td className="py-3.5 px-4 text-right font-mono">
@@ -2312,7 +2337,7 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
 
                   <div>
                     <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
-                      Amount to invest (USDC)
+                      Amount to invest (USD)
                     </label>
                     <input
                       type="number"
@@ -2368,6 +2393,15 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                 </div>
               )}
 
+            </div>
+
+            {/* Right column: the agent's proposed basket */}
+            <div className="lg:col-span-7 space-y-5">
+              {!agentReport && (
+                <div className="rounded-2xl border border-dashed border-slate-700 bg-[#0b1120] p-8 text-center text-sm text-slate-400">
+                  {runningAgent ? "Analysing live onchain data…" : "Run the agent to get a proposed basket from live NAV, DEX prices and liquidity."}
+                </div>
+              )}
               {agentReport && (
                 <div className="rounded-2xl border border-slate-800 bg-[#0b1120] p-6 space-y-6">
                   <div className="flex flex-wrap items-start justify-between gap-4 border-b border-slate-800 pb-4">
@@ -2443,7 +2477,7 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                   <div className="rounded-2xl border border-emerald-500/35 bg-emerald-500/5 p-4 space-y-3">
                     <div className="flex flex-wrap items-end justify-between gap-3">
                       <div>
-                        <h3 className="text-sm font-bold text-white">Buy this basket with USDC</h3>
+                        <h3 className="text-sm font-bold text-white">Buy this basket</h3>
                         <p className="text-[11px] text-slate-400">
                           Best route via DEX aggregator on Base. Stocks go directly to your wallet —
                           MAXXAGENT never holds your funds. Routes costing over 1.5% are skipped.
@@ -2463,7 +2497,7 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                             className="w-28 rounded-xl border border-slate-700 bg-[#050811] py-2 pl-6 pr-2 font-mono text-sm text-white focus:border-emerald-500 focus:outline-none"
                           />
                         </span>
-                        USDC
+                        {payToggle}
                       </label>
                     </div>
 
@@ -2494,6 +2528,7 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                             symbol: a.symbol,
                             b20Address: a.b20Address,
                             usd: Math.floor(((basketUsd * a.targetWeightBps) / 10000) * 100) / 100,
+                            payWith: basketPayWith,
                           })),
                           agentReport.strategyName
                         )
@@ -2502,7 +2537,7 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                       className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-3 text-sm font-bold text-white shadow-lg shadow-emerald-600/25 hover:bg-emerald-500 disabled:opacity-60 transition cursor-pointer"
                     >
                       <Zap className="h-4 w-4" />
-                      {basketPending ? basketStatus || "Working…" : `Buy basket for $${basketUsd.toFixed(2)} USDC`}
+                      {basketPending ? basketStatus || "Working…" : `Buy basket for $${basketUsd.toFixed(2)} ${payLabel}`}
                     </button>
 
                     {basketError && (
@@ -2658,7 +2693,8 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                     </div>
                   </div>
 
-                  {/* Attributed Calldata Preview (Collapsible via Simple/Pro Mode) */}
+                  {/* Attributed calldata preview: developer detail, team studio only (the registry is not deployed) */}
+                  {studioMode && (
                   <div className="rounded-xl border border-slate-800 bg-[#050811] p-4 space-y-2">
                     <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
                       <span className="font-semibold text-slate-300 flex items-center gap-1.5">
@@ -2708,6 +2744,7 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                       </p>
                     )}
                   </div>
+                  )}
                 </div>
               )}
             </div>
@@ -2807,7 +2844,7 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                         Build your own index
                       </h3>
                       <p className="text-xs text-slate-400">
-                        Pick up to 10 stocks, buy the basket now, or publish it onchain for others
+                        Pick up to 10 stocks, set the weights, then buy the basket or share it as a link
                       </p>
                     </div>
                   </div>
@@ -2819,7 +2856,7 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                   </button>
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className={`grid grid-cols-1 gap-3 ${hasRegistry ? "sm:grid-cols-2" : ""}`}>
                   <div>
                     <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">
                       Index Name
@@ -2831,6 +2868,8 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                       className="w-full rounded-xl border border-slate-700 bg-[#050811] px-3 py-2 text-xs text-white"
                     />
                   </div>
+                  {/* The ticker only matters for publishing to the registry */}
+                  {hasRegistry && (
                   <div>
                     <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">
                       Index Ticker Symbol
@@ -2842,6 +2881,7 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                       className="w-full rounded-xl border border-slate-700 bg-[#050811] px-3 py-2 font-mono text-xs text-white"
                     />
                   </div>
+                  )}
                 </div>
 
                 {/* Interactive SVG Donut Chart for Custom Index Basket */}
@@ -2861,7 +2901,7 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                 </div>
 
                 {/* Sliders for all 10 Coinbase B20 Tokenized Stocks with Official Logos */}
-                <div className="space-y-3 max-h-[380px] overflow-y-auto pr-2">
+                <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
                   {stocks.map((stock) => {
                     const weightBps = customWeights[stock.symbol] || 0;
                     return (
@@ -2965,6 +3005,7 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                               b20Address:
                                 BASE_TOKENIZED_STOCKS.find((s) => s.symbol === sym)?.b20Address ?? "",
                               usd: Math.floor(((basketUsd * w) / Math.max(1, totalCustomWeightBps)) * 100) / 100,
+                              payWith: basketPayWith,
                             })),
                           customIndexTicker
                         )
@@ -2973,7 +3014,7 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                       className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2.5 text-xs font-bold text-white shadow-lg shadow-emerald-600/25 hover:bg-emerald-500 disabled:opacity-50 transition cursor-pointer"
                     >
                       <Zap className="h-4 w-4" />
-                      {basketPending ? basketStatus || "Working…" : `Buy for $${basketUsd} USDC`}
+                      {basketPending ? basketStatus || "Working…" : `Buy for $${basketUsd} ${payLabel}`}
                     </button>
                     {hasRegistry && (
                     <button
@@ -3046,6 +3087,7 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                                   symbol: c.symbol,
                                   b20Address: c.b20Address,
                                   usd: Math.floor(((basketUsd * c.weightBps) / 10000) * 100) / 100,
+                                  payWith: basketPayWith,
                                 })),
                                 ix.ticker
                               )
@@ -3117,8 +3159,21 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
               </div>
 
               {!walletAddress ? (
-                <div className="rounded-xl border border-dashed border-slate-800 p-6 text-center text-xs text-slate-400">
-                  Connect a wallet to see your holdings.
+                <div className="rounded-xl border border-dashed border-slate-800 p-6 text-center text-xs text-slate-400 space-y-3">
+                  <p className="text-sm text-slate-200">Connect a wallet to see your holdings.</p>
+                  <ul className="mx-auto max-w-md space-y-1 text-left text-[11px] text-slate-400 list-disc pl-5">
+                    <li>Each tokenized stock you hold, valued at the live Chainlink NAV</li>
+                    <li>Profit / loss since you bought, from the USDC or ETH you actually paid</li>
+                    <li>Your buy and sell history, with a BaseScan link for every trade</li>
+                    <li>One-click sell, and rebalancing toward an agent basket</li>
+                  </ul>
+                  <p className="text-[11px] text-slate-500">Read-only: connecting never moves funds. No stocks yet?</p>
+                  <button
+                    onClick={() => setActiveTab("terminal")}
+                    className="inline-flex items-center gap-1.5 rounded-xl border border-slate-700 px-3.5 py-2 text-xs font-bold text-slate-200 hover:border-cyan-400 hover:text-white cursor-pointer"
+                  >
+                    Browse the 10 stocks
+                  </button>
                 </div>
               ) : (
                 balancesFor !== walletAddress.toLowerCase() ? (
@@ -3314,7 +3369,8 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
               </div>
             )}
 
-            {/* Activity from this browser */}
+            {/* Activity from this browser (only once something was sent from here) */}
+            {activityLog.length > 0 && (
             <div className="lg:col-span-12">
               <OnchainActivityLogPanel
                 entries={activityLog}
@@ -3326,6 +3382,7 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                 }}
               />
             </div>
+            )}
 
             {/* Attribution note (technical details live in the team studio) */}
             <p className="lg:col-span-12 text-[11px] text-slate-500 leading-relaxed">
