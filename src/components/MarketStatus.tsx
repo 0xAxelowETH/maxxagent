@@ -25,7 +25,7 @@ export function MarketStatus({ showDetail = false, className = "" }: { showDetai
   return (
     <span className={`inline-flex items-center gap-1.5 ${className}`} title={status.detail} data-testid="market-status">
       <span className={`h-1.5 w-1.5 rounded-full ${DOT[status.state]} ${status.state === "open" ? "animate-pulse" : ""}`} />
-      <span className="font-semibold text-slate-200">{status.label}</span>
+      <span className="font-semibold text-slate-200 whitespace-nowrap">{status.label}</span>
       {showDetail && <span className="text-slate-400">· {status.detail}</span>}
     </span>
   );

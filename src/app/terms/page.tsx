@@ -104,7 +104,7 @@ export default function TermsPage() {
 
         <Section title="8. Data and privacy">
           <p>
-            We do not ask for your name, email or identity documents, and we do not use analytics or tracking cookies.
+            We do not ask for your name, email or identity documents, and we do not use tracking cookies. We count page views with Vercel Web Analytics, which is cookieless and anonymous (pages visited, referrer, country and device type; no wallet address or personal data).
             Your wallet address and transactions are public on the blockchain. Your acceptance of these terms and your
             local activity log are stored only in your browser.
           </p>

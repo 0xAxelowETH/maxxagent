@@ -1085,6 +1085,14 @@ export default function StockMaxxingDashboard() {
   // Opened from a shared link: load the basket into the index builder (the user still reviews and confirms)
   const [sharedBasketLoaded, setSharedBasketLoaded] = useState<boolean>(false);
   useEffect(() => {
+    // /?stock=NVDAc (from a stock detail page): select it and jump to the Swap panel
+    const wanted = new URLSearchParams(window.location.search).get("stock");
+    const match = BASE_TOKENIZED_STOCKS.find((s) => s.symbol.toLowerCase() === (wanted || "").toLowerCase());
+    if (match) {
+      setChartSelectedSymbol(match.symbol);
+      setActiveTab("terminal");
+      setTimeout(() => document.getElementById("swap-panel")?.scrollIntoView({ behavior: "smooth", block: "center" }), 600);
+    }
     const shared = parseSharedBasket(window.location.search);
     if (!shared) return;
     setCustomWeights(shared.weightsBps);
@@ -2000,9 +2008,14 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                               </div>
                               <div>
                                 <div className="flex items-center gap-2">
-                                  <span className="font-bold text-white text-sm">
+                                  <a
+                                    href={`/stock/${stock.symbol}`}
+                                    onClick={(e) => e.stopPropagation()}
+                                    className="font-bold text-white text-sm hover:text-cyan-300 hover:underline"
+                                    title={`${stock.symbol} details`}
+                                  >
                                     {stock.companyName}
-                                  </span>
+                                  </a>
                                   <span
                                     className="rounded px-1.5 py-0.5 font-mono text-[10px] font-bold text-white"
                                     style={{ backgroundColor: stock.color }}
@@ -3725,6 +3738,21 @@ const walletClient = createWalletClient({
           </div>
         )}
       </main>
+
+      {/* Screen-reader announcements for order progress and outcomes */}
+      <div className="sr-only" role="status" aria-live="polite" aria-atomic="true">
+        {basketPending
+          ? basketStatus || "Working"
+          : basketError
+          ? `Order not completed. ${basketError}`
+          : basketResult
+          ? basketResult.failed?.length
+            ? "Order partly completed."
+            : basketResult.side === "sell"
+            ? "Sale confirmed."
+            : "Purchase confirmed."
+          : txError || ""}
+      </div>
 
       {review && (
         <OrderReview
