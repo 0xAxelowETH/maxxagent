@@ -19,6 +19,9 @@ import { alignedWithSuffix } from "@/lib/builderCode";
 const KYBER_API = "https://aggregator-api.kyberswap.com/base/api/v1";
 const KYBER_HEADERS = { "x-client-id": "maxxagent", "content-type": "application/json" };
 const USDC_BASE = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
+// KyberSwap's placeholder for native ETH. Buying with ETH needs no approval: the ETH is sent as tx value.
+const NATIVE_ETH = "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE";
+const ETH_USD_FEED = "0x71041dddad3595F9CEd3DcCFBe3D1F4b0a16Bb70"; // Chainlink ETH / USD on Base (8 decimals)
 const BUILDER_CODE = process.env.NEXT_PUBLIC_BASE_BUILDER_CODE || "bc_ewm6gcvz";
 
 const MIN_USD = 1;
@@ -77,6 +80,8 @@ export async function POST(request: NextRequest) {
     const sender = String(body?.sender || "");
     const amountUsd = Number(body?.amountUsd);
     const amountTokens = Number(body?.amountTokens);
+    // Buys can be paid in USDC (default) or native ETH (for wallets with no USDC on Base)
+    const payWithEth = side === "buy" && body?.payWith === "eth";
     const slippageBps = Math.min(
       MAX_SLIPPAGE_BPS,
       Math.max(10, Number(body?.slippageBps) || DEFAULT_SLIPPAGE_BPS)
@@ -99,14 +104,24 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ ok: false, error: "Invalid amount of stock tokens to sell." }, { status: 400 });
     }
 
-    // Buy: USDC (6 decimals) in. Sell: stock tokens (B20 decimals) in.
-    const tokenIn = side === "buy" ? USDC_BASE : stock.b20Address;
+    // Buy: USDC (6 decimals) or ETH (18) in. Sell: stock tokens (B20 decimals) in.
+    let ethUsd: number | null = null;
+    if (payWithEth) {
+      ethUsd = await readNav(ETH_USD_FEED as `0x${string}`);
+      if (!ethUsd) {
+        return NextResponse.json({ ok: false, symbol: stock.symbol, error: "ETH price unavailable right now. Pay with USDC or retry." }, { status: 502 });
+      }
+    }
+    const tokenIn = side === "sell" ? stock.b20Address : payWithEth ? NATIVE_ETH : USDC_BASE;
     const tokenOut = side === "buy" ? stock.b20Address : USDC_BASE;
     const amountIn =
-      side === "buy"
-        ? BigInt(Math.floor(amountUsd * 1e6))
-        : // round, not floor: x/1e8*1e8 can land at n-0.0000001 and leave 1 unit of dust on "Sell all"
-          BigInt(Math.round(amountTokens * 10 ** stock.decimals));
+      side === "sell"
+        ? // round, not floor: x/1e8*1e8 can land at n-0.0000001 and leave 1 unit of dust on "Sell all"
+          BigInt(Math.round(amountTokens * 10 ** stock.decimals))
+        : payWithEth
+        ? // USD amount -> wei at the Chainlink ETH/USD price
+          BigInt(Math.floor((amountUsd / ethUsd!) * 1e9)) * 1_000_000_000n
+        : BigInt(Math.floor(amountUsd * 1e6));
     if (amountIn <= 0n) {
       return NextResponse.json({ ok: false, error: "Amount too small." }, { status: 400 });
     }
@@ -209,7 +224,8 @@ export async function POST(request: NextRequest) {
       console.error("swap route: unexpected router", build.data.routerAddress);
       return NextResponse.json({ ok: false, symbol: stock.symbol, error: "Unexpected swap router. Swap refused for your safety." }, { status: 502 });
     }
-    if (BigInt(build.data.transactionValue || "0") !== 0n) {
+    const expectedValue = payWithEth ? amountIn : 0n;
+    if (BigInt(build.data.transactionValue || "0") !== expectedValue) {
       return NextResponse.json({ ok: false, symbol: stock.symbol, error: "Unexpected ETH value in swap. Swap refused for your safety." }, { status: 502 });
     }
 
@@ -220,7 +236,8 @@ export async function POST(request: NextRequest) {
     let navDeviationPct: number | null = null;
     if (nav && amountOutRaw > 0n) {
       const tokens = side === "buy" ? Number(amountOutRaw) / 10 ** stock.decimals : Number(amountIn) / 10 ** stock.decimals;
-      const usdc = side === "buy" ? Number(amountIn) / 1e6 : Number(amountOutRaw) / 1e6;
+      const usdc =
+        side === "sell" ? Number(amountOutRaw) / 1e6 : payWithEth ? (Number(amountIn) / 1e18) * ethUsd! : Number(amountIn) / 1e6;
       const effPrice = usdc / tokens;
       // positive = worse for the user (paying above NAV on a buy, receiving below NAV on a sell)
       navDeviationPct = side === "buy" ? (effPrice / nav - 1) * 100 : (1 - effPrice / nav) * 100;
@@ -259,6 +276,8 @@ export async function POST(request: NextRequest) {
         value: build.data.transactionValue || "0",
       },
       amountInRaw: amountIn.toString(),
+      payWith: side === "buy" ? (payWithEth ? "eth" : "usdc") : undefined,
+      amountInEth: payWithEth ? Number(amountIn) / 1e18 : undefined,
       amountOutRaw: amountOutRaw.toString(),
       minAmountOutRaw: minAmountOutRaw.toString(),
       // buy: stock tokens out · sell: USDC out

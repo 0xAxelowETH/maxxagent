@@ -95,7 +95,7 @@ const MOCK = (wallet) => {
       if (method === "eth_getTransactionReceipt" && window.__fakeTx[params?.[0]]) {
         return { status: window.__fakeTx[params[0]], logs: [], gasUsed: "0x5208", blockNumber: "0x1" };
       }
-      if (["eth_call", "eth_getTransactionReceipt", "eth_blockNumber", "eth_getBalance"].includes(method)) return rpc(method, params);
+      if (["eth_call", "eth_getTransactionReceipt", "eth_blockNumber", "eth_getBalance", "eth_getCode", "eth_getTransactionCount"].includes(method)) return rpc(method, params);
       if (method === "wallet_sendCalls") {
         if (m.sendCalls === "unsupported") return Promise.reject(Object.assign(new Error("Method not supported"), { code: -32601 }));
         if (m.sendCalls === "weird") return Promise.reject(Object.assign(new Error("Internal JSON-RPC error."), { code: -32603 }));
@@ -269,6 +269,27 @@ await step("Wallet with an odd batch error also falls back (after the no-double-
   assert(c.includes("eth_sendTransaction"), "no fallback after an unrecognised batch error");
   await dismissToast();
   await setMock({ sendCalls: "reject" });
+});
+
+await step("Pay with ETH: review shows ETH, no approval, one wallet request after Confirm", async () => {
+  await setMock({ sendCalls: "reject" });
+  await tab("Market");
+  await page.waitForSelector("#swap-panel input", { timeout: 30000 });
+  assert(await click("#swap-panel button", /^eth$/i), "ETH pay-with toggle");
+  const input = await page.$("#swap-panel input");
+  await input.click({ clickCount: 3 });
+  await input.type("1");
+  assert(await click("#swap-panel button", /^Buy \$1\.00 of \w+ with ETH/, 15000), "Buy with ETH button");
+  await page.waitForSelector('[role="dialog"]', { timeout: 60000 });
+  const d = await page.$eval('[role="dialog"]', (e) => e.innerText);
+  assert(/\d\.\d{6} ETH/.test(d), "review does not show the ETH amount");
+  assert(/1 swap\)/.test(d) && !/approval/i.test(d.split("Your wallet will ask")[1] || ""), "ETH buy should need no approval");
+  assert(!(await calls()).includes("wallet_sendCalls"), "sent before confirm");
+  await click('[role="dialog"] button', /Confirm in wallet/);
+  await waitText(/Order not completed/, 30000);
+  assert((await calls()).filter((m) => m === "wallet_sendCalls").length === 1, "wallet not asked exactly once");
+  await dismissToast();
+  await click("#swap-panel button", /^usdc$/i);
 });
 
 await step("Wallet on the wrong network is asked to switch to Base", async () => {

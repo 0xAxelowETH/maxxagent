@@ -299,6 +299,8 @@ export default function StockMaxxingDashboard() {
   // Bumped after a purchase so balances refresh
   const [balanceRefreshNonce, setBalanceRefreshNonce] = useState<number>(0);
   const [usdcBalance, setUsdcBalance] = useState<number | null>(null);
+  const [ethBalance, setEthBalance] = useState<number | null>(null);
+  const [ethUsd, setEthUsd] = useState<number | null>(null);
   const [stocks, setStocks] = useState<LiveTokenizedStock[]>([]);
   const [totalTvlUsd, setTotalTvlUsd] = useState<number>(0);
   const [totalDexLiquidityUsd, setTotalDexLiquidityUsd] = useState<number>(0);
@@ -616,6 +618,8 @@ export default function StockMaxxingDashboard() {
         }
         if (walletToQuery) setBalancesError(data.walletBalances ? "" : data.walletError || "Could not read your balances.");
         if (typeof data.walletUsdc === "number") setUsdcBalance(data.walletUsdc);
+        if (typeof data.walletEth === "number") setEthBalance(data.walletEth);
+        if (typeof data.ethUsd === "number") setEthUsd(data.ethUsd);
       }
     } catch (err) {
       if (walletToQuery) setBalancesError("Could not reach the server. Check your connection.");
@@ -1694,11 +1698,13 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                 setActiveTab("agent");
                 triggerStockAgent(stocks, promptText);
               }}
-              onBuy={(st, usd) => buyStocks([{ symbol: st.symbol, b20Address: st.b20Address, usd }], st.symbol)}
+              onBuy={(st, usd, payWith) => buyStocks([{ symbol: st.symbol, b20Address: st.b20Address, usd, payWith }], st.symbol)}
               onSell={(st, tokens) => sellStocks([{ symbol: st.symbol, b20Address: st.b20Address, tokens }], st.symbol)}
               tradeUsd={tradeUsd}
               onTradeUsdChange={setTradeUsd}
               usdcBalance={usdcBalance}
+              ethBalance={ethBalance}
+              ethUsd={ethUsd}
               holdingTokens={walletBalances[chartSelectedSymbol]?.rawTokens ?? 0}
               walletConnected={Boolean(walletAddress)}
               pending={basketPending}

@@ -203,6 +203,21 @@ async function getMarket(): Promise<LiveTokenizedStock[]> {
   return marketInflight;
 }
 
+// Chainlink ETH / USD on Base, for paying with ETH (cached 30s)
+const ETH_USD_FEED = "0x71041dddad3595F9CEd3DcCFBe3D1F4b0a16Bb70" as const;
+let ethUsdCache: { at: number; v: number | null } | null = null;
+async function getEthUsd(): Promise<number | null> {
+  if (ethUsdCache && Date.now() - ethUsdCache.at < 30_000) return ethUsdCache.v;
+  try {
+    const [, answer] = await publicClient.readContract({ address: ETH_USD_FEED, abi: B20_AND_CHAINLINK_ABI, functionName: "latestRoundData" });
+    const v = Number(answer) > 0 ? Number(answer) / 1e8 : null;
+    ethUsdCache = { at: Date.now(), v };
+    return v;
+  } catch {
+    return ethUsdCache?.v ?? null;
+  }
+}
+
 async function buildMarket(): Promise<LiveTokenizedStock[]> {
   const nowSec = Math.floor(Date.now() / 1000);
 
@@ -355,7 +370,7 @@ async function buildMarket(): Promise<LiveTokenizedStock[]> {
 
 export async function GET(request: NextRequest) {
   const walletParam = request.nextUrl.searchParams.get("wallet");
-  const liveStocks = await getMarket();
+  const [liveStocks, ethUsd] = await Promise.all([getMarket(), getEthUsd()]);
 
   // 3. Optional wallet B20 `balanceOfUI` & policy compliance inspection on Base Mainnet
   const walletBalances: Record<
@@ -365,6 +380,7 @@ export async function GET(request: NextRequest) {
 
   // USDC balance on Base for the connected wallet (needed before buying)
   let walletUsdc: number | undefined;
+  let walletEth: number | undefined;
   let walletError: string | undefined;
 
   if (walletParam && /^0x[a-fA-F0-9]{40}$/.test(walletParam)) {
@@ -418,6 +434,7 @@ export async function GET(request: NextRequest) {
       });
       const usdcRaw = val(perStock.length);
       walletUsdc = usdcRaw !== null ? Number(usdcRaw) / 1e6 : undefined;
+      walletEth = await publicClient.getBalance({ address: walletAddr }).then((w) => Number(w) / 1e18).catch(() => undefined);
       if (Object.keys(walletBalances).length < liveStocks.length) walletError = "Some balances could not be read. Retry in a moment.";
     } catch {
       walletError = "Wallet balances are unavailable right now. Retry in a moment.";
@@ -441,6 +458,8 @@ export async function GET(request: NextRequest) {
     stocks: liveStocks,
     walletBalances: Object.keys(walletBalances).length > 0 ? walletBalances : undefined,
     walletUsdc,
+    walletEth,
+    ethUsd,
     walletError,
   });
 }

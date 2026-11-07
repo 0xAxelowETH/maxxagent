@@ -24,6 +24,7 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
 const USDC = "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913";
+const ETH_USD_FEED = "0x71041dddad3595F9CEd3DcCFBe3D1F4b0a16Bb70" as const; // Chainlink ETH / USD on Base
 // First Coinbase B20 stock supply on Base (NVDAc, 2026-08-12): nothing exists before this
 const START_BLOCK = 49_870_000n;
 // Dedicated RPCs (CDP) accept 100k-block getLogs ranges; the public fallback caps at 50k
@@ -46,7 +47,8 @@ const STOCKS = new Map(BASE_TOKENIZED_STOCKS.map((s) => [s.b20Address.toLowerCas
 const STOCK_ADDRESSES = BASE_TOKENIZED_STOCKS.map((s) => s.b20Address);
 
 type Move = { token: string; amount: bigint; dir: 1 | -1; logIndex: number };
-type TxSummary = { hash: string; block: bigint; moves: Move[] };
+/** ethValue: ETH the wallet itself sent with the tx (a buy paid in ETH has no USDC transfer) */
+type TxSummary = { hash: string; block: bigint; moves: Move[]; ethValue?: bigint };
 interface WalletHistory {
   /** history is complete from this block (inclusive) to scannedTo */
   scannedFrom: bigint;
@@ -148,7 +150,13 @@ async function summarize(hash: `0x${string}`, wallet: string): Promise<TxSummary
     }
   }
   moves.sort((a, b) => a.logIndex - b.logIndex);
-  return { hash, block: r.blockNumber, moves };
+  // Stock received but no USDC paid: maybe paid in ETH. Only then fetch the tx for its value.
+  let ethValue: bigint | undefined;
+  if (moves.some((m) => m.dir === 1 && m.token !== USDC) && !moves.some((m) => m.token === USDC && m.dir === -1)) {
+    const tx = await withRetry(() => client.getTransaction({ hash })).catch(() => null);
+    if (tx && tx.from.toLowerCase() === wallet && tx.value > 0n) ethValue = tx.value;
+  }
+  return { hash, block: r.blockNumber, moves, ethValue };
 }
 
 const anyHeld = (m: Map<string, bigint>) => [...m.values()].some((v) => v > 0n);
@@ -250,6 +258,7 @@ async function computePositions(history: WalletHistory) {
   const ordered = [...history.txs.values()].sort((a, b) => (a.block < b.block ? -1 : a.block > b.block ? 1 : 0));
   for (const tx of ordered) {
     let usdcOut = 0n; // paid but not yet matched to a stock received
+    let ethPaid = tx.ethValue ?? 0n; // a buy paid in ETH: matched to the first stock received
     const disposals: { token: string; raw: bigint; costRemoved: number; proceeds: bigint }[] = [];
     for (const m of tx.moves) {
       if (m.token === USDC) {
@@ -263,6 +272,10 @@ async function computePositions(history: WalletHistory) {
         if (usdcOut > 0n) {
           cost = Number(usdcOut) / 1e6;
           usdcOut = 0n;
+        } else if (ethPaid > 0n && (await navAt(ETH_USD_FEED, tx.block))) {
+          // ETH actually paid x Chainlink ETH/USD at that block (exact enough, not an estimate)
+          cost = (Number(ethPaid) / 1e18) * (await navAt(ETH_USD_FEED, tx.block))!;
+          ethPaid = 0n;
         } else {
           const nav = await navAt(STOCKS.get(m.token)!.chainlinkFeed, tx.block);
           cost = (nav ?? 0) * tokensOf(m.amount, m.token);

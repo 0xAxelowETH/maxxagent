@@ -43,6 +43,7 @@ const CASES = [
   { label: "buy  NVDAc $5", body: { side: "buy", stockAddress: "0xb20000000000000000000078ee7ce2fE4908108C", amountUsd: 5 } },
   { label: "buy  AAPLc $2.37", body: { side: "buy", stockAddress: "0xb200000000000000000000C2e324d24d7eEcd1fb", amountUsd: 2.37 } },
   { label: "sell NVDAc 0.005", body: { side: "sell", stockAddress: "0xb20000000000000000000078ee7ce2fE4908108C", amountTokens: 0.005 } },
+  { label: "buy  NVDAc $2 paid in ETH", body: { side: "buy", payWith: "eth", stockAddress: "0xb20000000000000000000078ee7ce2fE4908108C", amountUsd: 2 } },
 ];
 
 let failures = 0;
@@ -100,11 +101,17 @@ async function routerAccepts(q) {
   const k = (slot, key) => keccak256(encodeAbiParameters([{ type: "address" }, { type: "uint256" }], [key, BigInt(slot)]));
   const allowSlot = keccak256(encodeAbiParameters([{ type: "address" }, { type: "bytes32" }], [q.routerAddress, k(10, SENDER)]));
   const amount = pad(toHex(BigInt(q.amountInRaw) * 2n), { size: 32 });
+  const value = BigInt(q.tx.value || "0");
   await client.call({
     account: SENDER,
     to: q.tx.to,
     data: q.tx.data,
-    stateOverride: [{ address: USDC, stateDiff: [{ slot: k(9, SENDER), value: amount }, { slot: allowSlot, value: amount }] }],
+    value,
+    stateOverride: [
+      { address: USDC, stateDiff: [{ slot: k(9, SENDER), value: amount }, { slot: allowSlot, value: amount }] },
+      // paying in ETH: give the sender enough ETH for the value (gas is not charged in eth_call)
+      ...(value > 0n ? [{ address: SENDER, balance: value * 2n }] : []),
+    ],
   });
 }
 
@@ -127,7 +134,8 @@ for (const [i, c] of CASES.entries()) {
   }
   const data = q.tx.data;
   check(q.routerAddress?.toLowerCase() === KYBER_ROUTER && q.tx.to.toLowerCase() === KYBER_ROUTER, "router is KyberSwap MetaAggregationRouterV2");
-  check(BigInt(q.tx.value || "0") === 0n, "no ETH value");
+  if (c.body.payWith === "eth") check(BigInt(q.tx.value || "0") === BigInt(q.amountInRaw) && BigInt(q.amountInRaw) > 0n, "ETH value equals the amount paid (no approval needed)");
+  else check(BigInt(q.tx.value || "0") === 0n, "no ETH value");
   check(endsWithCode(data), "EOA tx input ends with the Builder Code");
   check(((data.length - 2) / 2) % 32 === 0, `swap calldata is 32-byte aligned (${(data.length - 2) / 2} bytes)`);
 
@@ -136,7 +144,8 @@ for (const [i, c] of CASES.entries()) {
     functionName: "approve",
     args: [q.routerAddress, BigInt(q.amountInRaw)],
   });
-  const calls = [{ to: q.tokenIn, data: approve }, { to: q.tx.to, data }];
+  // ETH-paid buys have no approval: the batch is the swap alone
+  const calls = c.body.payWith === "eth" ? [{ to: q.tx.to, data }] : [{ to: q.tokenIn, data: approve }, { to: q.tx.to, data }];
   for (const [name, wrap] of Object.entries(WRAPPERS)) check(endsWithCode(wrap(calls)), `${name}: outer calldata ends with the Builder Code`);
 
   if (c.body.side === "buy") {

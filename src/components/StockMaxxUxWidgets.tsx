@@ -228,6 +228,8 @@ export function InteractiveB20TradingChart({
   tradeUsd,
   onTradeUsdChange,
   usdcBalance,
+  ethBalance,
+  ethUsd,
   holdingTokens,
   walletConnected,
   pending,
@@ -238,12 +240,14 @@ export function InteractiveB20TradingChart({
   onSelectSymbol: (sym: string) => void;
   onSendToAgent: (sym: string) => void;
   /** Buy `usd` worth of the stock with USDC */
-  onBuy: (stock: TokenizedStockMetadata, usd: number) => void;
+  onBuy: (stock: TokenizedStockMetadata, usd: number, payWith: "usdc" | "eth") => void;
   /** Sell `tokens` of the stock for USDC */
   onSell: (stock: TokenizedStockMetadata, tokens: number) => void;
   tradeUsd: number;
   onTradeUsdChange: (usd: number) => void;
   usdcBalance: number | null;
+  ethBalance: number | null;
+  ethUsd: number | null;
   /** Wallet balance of the selected stock, in stock tokens */
   holdingTokens: number;
   walletConnected: boolean;
@@ -598,6 +602,8 @@ export function InteractiveB20TradingChart({
               tradeUsd={tradeUsd}
               onTradeUsdChange={onTradeUsdChange}
               usdcBalance={usdcBalance}
+              ethBalance={ethBalance}
+              ethUsd={ethUsd}
               holdingTokens={holdingTokens}
               walletConnected={walletConnected}
               pending={pending}
@@ -623,6 +629,8 @@ export function InteractiveB20TradingChart({
 const BUY_MIN_USD = 1;
 const BUY_MAX_USD = 2500;
 const SELL_MIN_USD = 0.25;
+// ETH kept back for network fees when paying with ETH (~$0.2): Max never spends the gas money
+const ETH_GAS_RESERVE = 0.0001;
 
 /** Buy/Sell one stock for any amount (USDC in, or a share of the current holding out). */
 function SwapPanel({
@@ -631,6 +639,8 @@ function SwapPanel({
   tradeUsd,
   onTradeUsdChange,
   usdcBalance,
+  ethBalance,
+  ethUsd,
   holdingTokens,
   walletConnected,
   pending,
@@ -643,14 +653,17 @@ function SwapPanel({
   tradeUsd: number;
   onTradeUsdChange: (usd: number) => void;
   usdcBalance: number | null;
+  ethBalance: number | null;
+  ethUsd: number | null;
   holdingTokens: number;
   walletConnected: boolean;
   pending: boolean;
   pendingLabel: string;
-  onBuy: (stock: TokenizedStockMetadata, usd: number) => void;
+  onBuy: (stock: TokenizedStockMetadata, usd: number, payWith: "usdc" | "eth") => void;
   onSell: (stock: TokenizedStockMetadata, tokens: number) => void;
 }) {
   const [side, setSide] = useState<"buy" | "sell">("buy");
+  const [payWith, setPayWith] = useState<"usdc" | "eth">("usdc");
   const [sellPct, setSellPct] = useState<number>(100);
   const [draft, setDraft] = useState<string>(String(tradeUsd));
   // Follow outside changes (chips, Max) without clobbering what is being typed ("1." → 1)
@@ -665,16 +678,30 @@ function SwapPanel({
   if (side === "buy") {
     if (!(tradeUsd >= BUY_MIN_USD)) problem = `Minimum is $${BUY_MIN_USD}`;
     else if (tradeUsd > BUY_MAX_USD) problem = `Maximum is $${BUY_MAX_USD.toLocaleString("en-US")} per order`;
-    else if (walletConnected && usdcBalance !== null && tradeUsd > usdcBalance) problem = "Not enough USDC on Base";
+    else if (payWith === "usdc" && walletConnected && usdcBalance !== null && tradeUsd > usdcBalance) problem = "Not enough USDC on Base";
+    else if (payWith === "eth" && !ethUsd) problem = "Loading ETH price…";
+    else if (!(price > 0)) problem = "Loading price…";
+    else if (payWith === "eth" && walletConnected && ethBalance !== null && tradeUsd / ethUsd! > ethBalance - ETH_GAS_RESERVE)
+      problem = "Not enough ETH on Base (keep a little for fees)";
   } else if (!walletConnected) problem = "Connect your wallet to sell";
   else if (holdingTokens <= 0) problem = `You don't hold ${stock.symbol}`;
+  else if (!(price > 0)) problem = "Loading price…";
   else if (sellUsd < SELL_MIN_USD) problem = `Minimum sell is $${SELL_MIN_USD}`;
 
   const commit = (v: string) => {
     const n = Math.round((Number(v) || 0) * 100) / 100;
     onTradeUsdChange(Math.max(0, n));
   };
-  const maxBuy = usdcBalance !== null ? Math.min(BUY_MAX_USD, Math.floor(usdcBalance * 100) / 100) : null;
+  const maxBuy =
+    payWith === "eth"
+      ? ethBalance !== null && ethUsd
+        ? Math.min(BUY_MAX_USD, Math.floor(Math.max(0, ethBalance - ETH_GAS_RESERVE) * ethUsd * 100) / 100)
+        : null
+      : usdcBalance !== null
+      ? Math.min(BUY_MAX_USD, Math.floor(usdcBalance * 100) / 100)
+      : null;
+  const ethNeeded = ethUsd ? tradeUsd / ethUsd : null;
+  const ethEnough = ethBalance !== null && ethUsd !== null && ethBalance - ETH_GAS_RESERVE >= tradeUsd / ethUsd;
   const chip = "rounded-lg border px-2 py-1 text-[11px] font-bold transition cursor-pointer";
 
   return (
@@ -695,10 +722,32 @@ function SwapPanel({
 
       {side === "buy" ? (
         <>
+          <div className="flex items-center justify-between gap-2 text-[11px] text-slate-400">
+            <span>Pay with</span>
+            <div className="inline-flex rounded-lg border border-slate-800 bg-[#040814] p-0.5">
+              {(["usdc", "eth"] as const).map((t) => (
+                <button
+                  key={t}
+                  onClick={() => setPayWith(t)}
+                  aria-pressed={payWith === t}
+                  className={`rounded-md px-2.5 py-1 font-bold uppercase transition cursor-pointer ${
+                    payWith === t ? "bg-slate-700 text-white" : "text-slate-400 hover:text-white"
+                  }`}
+                >
+                  {t}
+                </button>
+              ))}
+            </div>
+          </div>
           <label className="block">
             <span className="flex items-center justify-between text-[11px] text-slate-400">
-              <span>You pay (USDC)</span>
-              {walletConnected && usdcBalance !== null && <span>Balance: {usdcBalance.toFixed(2)}</span>}
+              <span>You pay (USD)</span>
+              {walletConnected && payWith === "usdc" && usdcBalance !== null && <span>Balance: {usdcBalance.toFixed(2)} USDC</span>}
+              {walletConnected && payWith === "eth" && ethBalance !== null && (
+                <span>
+                  Balance: {ethBalance.toFixed(5)} ETH{ethUsd ? ` ≈ $${(ethBalance * ethUsd).toFixed(2)}` : ""}
+                </span>
+              )}
             </span>
             <div className="mt-1 flex items-center rounded-xl border border-slate-700 bg-[#040814] px-3 focus-within:border-[#4C6FFF]">
               <span className="text-slate-400 font-mono">$</span>
@@ -713,7 +762,7 @@ function SwapPanel({
                   setDraft(e.target.value);
                   commit(e.target.value);
                 }}
-                aria-label="Amount in USDC"
+                aria-label="Amount in USD"
                 className="w-full bg-transparent px-2 py-2 font-mono text-base font-bold text-white outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
               />
             </div>
@@ -737,8 +786,33 @@ function SwapPanel({
               </button>
             )}
           </div>
+          {payWith === "eth" && ethNeeded !== null && (
+            <div className="text-[11px] text-slate-400">
+              You pay ≈ <span className="font-mono text-slate-200">{ethNeeded.toFixed(6)} ETH</span>
+              <span className="text-slate-500"> at the Chainlink ETH/USD price</span>
+            </div>
+          )}
+          {payWith === "usdc" && problem === "Not enough USDC on Base" && (
+            <div className="rounded-xl border border-slate-700 bg-[#070b14] p-2.5 text-[11px] text-slate-300 space-y-1.5">
+              <div className="font-semibold text-white">No USDC on Base?</div>
+              {ethEnough ? (
+                <button onClick={() => setPayWith("eth")} className="text-cyan-300 underline cursor-pointer">
+                  Pay with the ETH in your wallet instead
+                </button>
+              ) : (
+                <div>Pay with ETH, or add USDC on the Base network:</div>
+              )}
+              <div className="text-slate-400">
+                Buy USDC on{" "}
+                <a href="https://www.coinbase.com/price/usdc" target="_blank" rel="noopener noreferrer" className="text-cyan-300 underline">
+                  Coinbase
+                </a>{" "}
+                and withdraw it choosing the <span className="text-slate-200">Base</span> network.
+              </div>
+            </div>
+          )}
           <div className="text-[11px] text-slate-400">
-            You receive ≈ <span className="font-mono text-slate-200">{estTokens.toFixed(6)} {stock.symbol}</span>
+            You receive ≈ <span className="font-mono text-slate-200">{price > 0 ? estTokens.toFixed(6) : "…"} {stock.symbol}</span>
             <span className="text-slate-500"> (exact amount quoted before you sign)</span>
           </div>
         </>
@@ -769,7 +843,7 @@ function SwapPanel({
       )}
 
       <button
-        onClick={() => (side === "buy" ? onBuy(stock, tradeUsd) : onSell(stock, sellTokens))}
+        onClick={() => (side === "buy" ? onBuy(stock, tradeUsd, payWith) : onSell(stock, sellTokens))}
         disabled={pending || Boolean(problem)}
         className={`w-full inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-xs font-bold text-white shadow-lg transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${
           side === "buy"
@@ -782,7 +856,7 @@ function SwapPanel({
           ? pendingLabel
           : problem ||
             (side === "buy"
-              ? `Buy $${tradeUsd.toFixed(2)} of ${stock.symbol}`
+              ? `Buy $${tradeUsd.toFixed(2)} of ${stock.symbol}${payWith === "eth" ? " with ETH" : ""}`
               : `Sell ${sellPct === 100 ? "all" : `${sellPct}%`} ${stock.symbol} for USDC`)}
       </button>
     </div>

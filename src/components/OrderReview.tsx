@@ -82,7 +82,11 @@ export function OrderReview({
                 <div className="flex items-center justify-between gap-2">
                   <span className="font-bold text-white">{q.symbol}</span>
                   <span className="font-mono text-slate-300">
-                    {isBuy ? fmtUsd(Number(q.amountInRaw) / 1e6) : `${(q.amountInTokens ?? 0).toFixed(6)} ${q.symbol}`}
+                    {isBuy
+                      ? q.payWith === "eth"
+                        ? `${(q.amountInEth ?? 0).toFixed(6)} ETH`
+                        : fmtUsd(Number(q.amountInRaw) / 1e6)
+                      : `${(q.amountInTokens ?? 0).toFixed(6)} ${q.symbol}`}
                     <span className="text-slate-500"> → </span>
                     <span className="text-white font-semibold">
                       {isBuy ? `≈ ${(q.amountOutShares ?? 0).toFixed(6)} ${q.symbol}` : `≈ ${fmtUsdc(q.amountOutUsdc ?? 0)}`}
@@ -134,7 +138,10 @@ export function OrderReview({
         <div className="grid grid-cols-2 gap-2 font-mono text-xs">
           <div className="rounded-xl border border-slate-800 bg-[#070b14] p-3">
             <div className="font-sans text-[10px] text-slate-400">{isBuy ? "You pay" : "You sell (value)"}</div>
-            <div className="text-base font-extrabold text-white">{fmtUsd(order.totalInUsd)}{isBuy ? " USDC" : ""}</div>
+            <div className="text-base font-extrabold text-white">
+              {fmtUsd(order.totalInUsd)}
+              {isBuy ? (order.legs.some((q) => q.payWith === "eth") ? " in ETH" : " USDC") : ""}
+            </div>
           </div>
           <div className="rounded-xl border border-slate-800 bg-[#070b14] p-3">
             <div className="font-sans text-[10px] text-slate-400">{isBuy ? "Est. value received" : "Est. USDC received"}</div>
@@ -158,9 +165,16 @@ export function OrderReview({
             Your wallet will ask for <span className="text-slate-200">{actions} action{actions > 1 ? "s" : ""}</span>
             {order.approvals > 0 ? ` (${order.approvals} exact-amount approval${order.approvals > 1 ? "s" : ""} + ${swaps} swap${swaps > 1 ? "s" : ""})` : ` (${swaps} swap${swaps > 1 ? "s" : ""})`}, in one
             prompt if it supports batching. If the price moves more than the max slippage, the swap reverts and
-            you keep your {isBuy ? "USDC" : "stock"}. MAXXAGENT never holds your funds.
+            you keep your {isBuy ? (order.legs.some((q) => q.payWith === "eth") ? "ETH" : "USDC") : "stock"}. MAXXAGENT never holds your funds.
           </div>
         </div>
+
+        {order.gasWarning && (
+          <div className="flex gap-2 rounded-xl border border-amber-500/40 bg-amber-500/10 p-3 text-[11px] text-amber-100">
+            <AlertTriangle className="h-4 w-4 shrink-0 text-amber-300" />
+            <div>{order.gasWarning}</div>
+          </div>
+        )}
 
         {busy && status && <div className="text-center text-[11px] text-slate-400">{status}</div>}
 

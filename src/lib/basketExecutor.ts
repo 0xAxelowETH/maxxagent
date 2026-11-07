@@ -12,6 +12,11 @@ const builderSuffix = (code: string) => toErc8021DataSuffix([code]).dataSuffix;
  */
 
 export const USDC_BASE = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" as const;
+/** KyberSwap's placeholder for native ETH (paid as tx value, no approval) */
+export const NATIVE_ETH = "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE";
+const isNative = (token?: string) => (token || "").toLowerCase() === NATIVE_ETH.toLowerCase();
+// Below this, an EOA likely can't pay Base gas for approve + swap (~$0.05 at typical prices)
+const MIN_GAS_WEI = 20_000_000_000_000n; // 0.00002 ETH
 const BASE_CHAIN_HEX = "0x2105";
 const USDC_DECIMALS = 6;
 const B20_DECIMALS = 8;
@@ -30,6 +35,8 @@ export interface BasketLeg {
   symbol: string;
   b20Address: string;
   usd: number;
+  /** pay in USDC (default) or native ETH */
+  payWith?: "usdc" | "eth";
 }
 
 export interface SellLeg {
@@ -55,6 +62,8 @@ export interface LegQuote {
   b20Address?: string;
   amountOutUsd?: number;
   amountInUsd?: number;
+  payWith?: "usdc" | "eth";
+  amountInEth?: number;
   /** guaranteed minimum out after slippage (raw units of tokenOut) */
   minAmountOutRaw?: string;
   /** % worse than the Chainlink NAV (negative = better than NAV); null if NAV unavailable */
@@ -189,6 +198,7 @@ async function trackReceipts(
 async function buildApprovals(eth: EthProvider, sender: string, legs: LegQuote[], builderCode: string): Promise<Call[]> {
   const needed = new Map<string, { token: string; router: string; amount: bigint }>();
   for (const q of legs) {
+    if (isNative(q.tokenIn)) continue; // ETH is sent as value: nothing to approve
     const key = `${q.tokenIn!.toLowerCase()}|${q.routerAddress!.toLowerCase()}`;
     const cur = needed.get(key);
     needed.set(key, { token: q.tokenIn!, router: q.routerAddress!, amount: (cur?.amount ?? 0n) + BigInt(q.amountInRaw!) });
@@ -242,6 +252,10 @@ async function sendCalls(
   const calls = [...approveCalls, ...swapCalls];
   const balancesOf = () => Promise.all(spend.map((t) => readErc20(eth, t, "balanceOf", [sender as `0x${string}`]).catch(() => null)));
   const before = await balancesOf();
+  // Nonce = number of txs this address has sent: covers ETH-paid orders (no token balance to compare)
+  const nonceOf = () =>
+    (eth.request({ method: "eth_getTransactionCount", params: [sender, "latest"] }) as Promise<string>).then((n) => BigInt(n)).catch(() => null);
+  const nonceBefore = await nonceOf();
   onStatus(`Confirm ${calls.length} action${calls.length > 1 ? "s" : ""} in one wallet prompt…`);
   // Smart wallets (ERC-4337) wrap calls in executeBatch, so the per-call suffix is not at the end of
   // the UserOp callData. Base's documented fix: the optional `dataSuffix` capability, appended by the wallet.
@@ -267,8 +281,9 @@ async function sendCalls(
       // Unknown error (wallets word "no batching" in many ways). Before sending one by one, make sure the
       // batch did not go through anyway: if any spent balance dropped, never resend (no double trade).
       await sleep(5000);
-      const after = await balancesOf();
-      if (after.some((a, i) => a !== null && before[i] !== null && a < before[i]!)) {
+      const [after, nonceAfter] = await Promise.all([balancesOf(), nonceOf()]);
+      const nonceMoved = nonceBefore !== null && nonceAfter !== null && nonceAfter > nonceBefore;
+      if (nonceMoved || after.some((a, i) => a !== null && before[i] !== null && a < before[i]!)) {
         throw new Error("Your wallet reported an error, but funds have moved. Check your wallet activity before retrying.");
       }
     }
@@ -372,7 +387,7 @@ const usable = (q: LegQuote) =>
     q.tokenIn &&
     q.routerAddress?.toLowerCase() === KYBER_ROUTER &&
     q.tx.to.toLowerCase() === KYBER_ROUTER &&
-    BigInt(q.tx.value || "0") === 0n
+    BigInt(q.tx.value || "0") === (isNative(q.tokenIn) ? BigInt(q.amountInRaw) : 0n)
   );
 
 const withSkipReason = (q: LegQuote): LegQuote => (q.error ? q : { ...q, error: "Unexpected route, skipped for safety" });
@@ -429,6 +444,8 @@ export interface PreparedOrder {
   slippageBps: number;
   /** wallet actions: approvals needed now + one swap per leg */
   approvals: number;
+  /** shown in the review when the wallet may not be able to pay network fees */
+  gasWarning?: string;
   preparedAt: number;
 }
 
@@ -436,7 +453,8 @@ function summarize(side: "buy" | "sell", sender: string, legs: LegQuote[], skipp
   // Each leg's cost % comes from the aggregator's own consistent USD pricing. Mixing face-value USDC
   // with aggregator USD (which prices USDC slightly below $1) would overstate the cost, so totals are
   // built from the per-leg cost: buy value received = USDC paid x (1 - cost).
-  const legIn = (q: LegQuote) => (side === "buy" ? Number(q.amountInRaw) / 1e6 : q.amountInUsd ?? 0);
+  const legIn = (q: LegQuote) =>
+    side === "buy" && !isNative(q.tokenIn) ? Number(q.amountInRaw) / 1e6 : q.amountInUsd ?? 0;
   const totalInUsd = legs.reduce((a, q) => a + legIn(q), 0);
   const costPct = totalInUsd > 0 ? legs.reduce((a, q) => a + legIn(q) * (q.costPct ?? 0), 0) / totalInUsd : 0;
   const totalOutUsdc = side === "sell" ? legs.reduce((a, q) => a + (q.amountOutUsdc ?? 0), 0) : undefined;
@@ -456,13 +474,33 @@ function summarize(side: "buy" | "sell", sender: string, legs: LegQuote[], skipp
   };
 }
 
+/** Warns when an EOA has (almost) no ETH left for gas. Smart wallets may have gas sponsored, so only a note. */
+async function gasCheck(eth: EthProvider, sender: string, ethSpent: bigint): Promise<string | undefined> {
+  try {
+    const [balHex, code] = await Promise.all([
+      eth.request({ method: "eth_getBalance", params: [sender, "latest"] }) as Promise<string>,
+      (eth.request({ method: "eth_getCode", params: [sender, "latest"] }) as Promise<string>).catch(() => "0x"),
+    ]);
+    const left = BigInt(balHex) - ethSpent;
+    if (left >= MIN_GAS_WEI) return undefined;
+    const smart = !!code && code !== "0x";
+    return smart
+      ? "Low ETH for network fees. If your wallet doesn't cover gas for you, the transaction may fail."
+      : ethSpent > 0n
+      ? "Leave a little ETH on Base for network fees (about $0.05): lower the amount slightly."
+      : "You need a little ETH on Base for network fees (about $0.05). Without it the transaction will fail.";
+  } catch {
+    return undefined;
+  }
+}
+
 async function countApprovals(eth: EthProvider, sender: string, legs: LegQuote[]) {
   // Same grouping as buildApprovals; the builder code does not change the count
   return (await buildApprovals(eth, sender, legs, "")).length;
 }
 
 export async function quoteLeg(leg: BasketLeg, sender: string, slippageBps = 50): Promise<LegQuote> {
-  return postSwap({ side: "buy", stockAddress: leg.b20Address, amountUsd: leg.usd, sender, slippageBps }, leg.symbol);
+  return postSwap({ side: "buy", stockAddress: leg.b20Address, amountUsd: leg.usd, payWith: leg.payWith || "usdc", sender, slippageBps }, leg.symbol);
 }
 
 export async function quoteSellLeg(leg: SellLeg, sender: string, slippageBps = 50): Promise<LegQuote> {
@@ -484,12 +522,23 @@ export async function prepareBuy(params: {
   const skipped = quotes.filter((q) => !bought.includes(q)).map(withSkipReason);
   if (bought.length === 0) throw new Error(skipped.map((s) => `${s.symbol}: ${s.error}`).join(" | ") || "No routes available");
 
-  const totalIn = bought.reduce((acc, q) => acc + BigInt(q.amountInRaw!), 0n);
-  const balance = await readErc20(eth, USDC_BASE, "balanceOf", [sender as `0x${string}`]);
-  if (balance < totalIn) {
-    throw new Error(`Not enough USDC on Base: need ${(Number(totalIn) / 1e6).toFixed(2)}, have ${(Number(balance) / 1e6).toFixed(2)}.`);
+  const usdcIn = bought.filter((q) => !isNative(q.tokenIn)).reduce((acc, q) => acc + BigInt(q.amountInRaw!), 0n);
+  const ethIn = bought.filter((q) => isNative(q.tokenIn)).reduce((acc, q) => acc + BigInt(q.amountInRaw!), 0n);
+  if (usdcIn > 0n) {
+    const balance = await readErc20(eth, USDC_BASE, "balanceOf", [sender as `0x${string}`]);
+    if (balance < usdcIn) {
+      throw new Error(`Not enough USDC on Base: need ${(Number(usdcIn) / 1e6).toFixed(2)}, have ${(Number(balance) / 1e6).toFixed(2)}. You can pay with ETH instead.`);
+    }
   }
-  return summarize("buy", sender, bought, skipped, await countApprovals(eth, sender, bought), slippageBps);
+  if (ethIn > 0n) {
+    const balance = BigInt((await eth.request({ method: "eth_getBalance", params: [sender, "latest"] })) as string);
+    if (balance < ethIn) {
+      throw new Error(`Not enough ETH on Base: need ${(Number(ethIn) / 1e18).toFixed(6)}, have ${(Number(balance) / 1e18).toFixed(6)}.`);
+    }
+  }
+  const order = summarize("buy", sender, bought, skipped, await countApprovals(eth, sender, bought), slippageBps);
+  order.gasWarning = await gasCheck(eth, sender, ethIn);
+  return order;
 }
 
 /** Step 1 (sell): quote every leg and check the stock balances. Nothing is sent. */
@@ -511,7 +560,9 @@ export async function prepareSell(params: {
     const bal = await readErc20(eth, q.tokenIn!, "balanceOf", [sender as `0x${string}`]);
     if (bal < BigInt(q.amountInRaw!)) throw new Error(`Not enough ${q.symbol} in this wallet.`);
   }
-  return summarize("sell", sender, sold, skipped, await countApprovals(eth, sender, sold), slippageBps);
+  const order = summarize("sell", sender, sold, skipped, await countApprovals(eth, sender, sold), slippageBps);
+  order.gasWarning = await gasCheck(eth, sender, 0n);
+  return order;
 }
 
 /** Step 2: the user confirmed the review. Sends approvals + swaps to the wallet and reads what arrived. */
@@ -528,7 +579,8 @@ export async function submitOrder(params: {
 
   const approveCalls = await buildApprovals(eth, sender, legs, builderCode);
   const verb = side === "buy" ? "Buy" : "Sell";
-  const spend = [...new Set(legs.map((q) => q.tokenIn!))];
+  // Native ETH is excluded from the double-trade guard: gas also lowers it, which would stop valid orders
+  const spend = [...new Set(legs.map((q) => q.tokenIn!).filter((t) => !isNative(t)))];
   const swapSpend = legs.map((q) => ({ token: q.tokenIn!, amount: BigInt(q.amountInRaw!) }));
   const { mode, txHashes, failed } = await sendCalls(
     eth,
