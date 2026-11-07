@@ -1,0 +1,25 @@
+# dependencies
+node_modules/
+
+# Next.js build output
+.next/
+.next-audit/
+out/
+tsconfig.tsbuildinfo
+next-env.d.ts
+
+# secrets — never commit
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+
+# logs & caches
+*.log
+cache/
+artifacts/
+
+# internal working notes (kept locally, not published)
+KONSEP.md
+JADWAL_POSTING_X.md

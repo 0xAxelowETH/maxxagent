@@ -1,0 +1,85 @@
+import { NextRequest, NextResponse } from "next/server";
+
+/**
+ * Coinbase tokenized stocks are only available to persons in eligible jurisdictions
+ * outside of the U.S., and integrators are responsible for applying restrictions.
+ * Blocks U.S. (and U.S. territory) visitors when the hosting platform provides a geo header
+ * (Vercel: x-vercel-ip-country, Cloudflare: cf-ipcountry). The in-app attestation still applies.
+ */
+const BLOCKED_COUNTRIES = new Set(["US", "PR", "GU", "VI", "AS", "MP", "UM"]);
+
+/**
+ * Best-effort per-IP rate limit for API routes (fixed 60s window, per server instance).
+ * Protects shared third-party quotas (KyberSwap, GeckoTerminal, public RPC) from a single client.
+ */
+const LIMITS: Record<string, number> = {
+  "/api/swap": 30,
+  "/api/agent": 30,
+  "/api/history": 90,
+  "/api/stocks": 90,
+  "/api/indexes": 60,
+  "/api/health": 30,
+};
+const WINDOW_MS = 60_000;
+const hits = new Map<string, { start: number; count: number }>();
+
+function rateLimited(request: NextRequest): { limited: boolean; retryAfter: number } {
+  const route = Object.keys(LIMITS).find((r) => request.nextUrl.pathname.startsWith(r));
+  if (!route) return { limited: false, retryAfter: 0 };
+  const ip =
+    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
+    request.headers.get("x-real-ip") ||
+    "local";
+  const key = `${route}|${ip}`;
+  const now = Date.now();
+  const entry = hits.get(key);
+  if (!entry || now - entry.start > WINDOW_MS) {
+    hits.set(key, { start: now, count: 1 });
+    if (hits.size > 5000) {
+      for (const [k, v] of hits) if (now - v.start > WINDOW_MS) hits.delete(k);
+    }
+    return { limited: false, retryAfter: 0 };
+  }
+  entry.count++;
+  return { limited: entry.count > LIMITS[route], retryAfter: Math.ceil((WINDOW_MS - (now - entry.start)) / 1000) };
+}
+
+export function middleware(request: NextRequest) {
+  const country = (
+    request.headers.get("x-vercel-ip-country") ||
+    request.headers.get("cf-ipcountry") ||
+    ""
+  ).toUpperCase();
+
+  if (!BLOCKED_COUNTRIES.has(country)) {
+    if (request.nextUrl.pathname.startsWith("/api/")) {
+      const { limited, retryAfter } = rateLimited(request);
+      if (limited) {
+        return NextResponse.json(
+          { ok: false, error: "Too many requests. Please wait a moment." },
+          { status: 429, headers: { "Retry-After": String(retryAfter) } }
+        );
+      }
+    }
+    return NextResponse.next();
+  }
+
+  if (request.nextUrl.pathname.startsWith("/api/")) {
+    return NextResponse.json(
+      { ok: false, error: "Not available in your jurisdiction." },
+      { status: 451 }
+    );
+  }
+
+  return new NextResponse(
+    "<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><title>Not available</title></head>" +
+      "<body style='font-family:system-ui;background:#050811;color:#e2e8f0;display:grid;place-items:center;min-height:100vh;margin:0;padding:16px'>" +
+      "<div style='max-width:480px'><h1 style='font-size:20px'>Not available in your jurisdiction</h1>" +
+      "<p style='color:#94a3b8;font-size:14px;line-height:1.6'>Coinbase tokenized stocks on Base are only available to persons in eligible jurisdictions outside of the United States.</p></div></body></html>",
+    { status: 451, headers: { "content-type": "text/html; charset=utf-8" } }
+  );
+}
+
+export const config = {
+  matcher: ["/((?!_next/static|_next/image|favicon.ico|logos/).*)"],
+};

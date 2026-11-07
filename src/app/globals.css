@@ -1,0 +1,176 @@
+@import "tailwindcss";
+
+:root {
+  --bg-primary: #02050c;
+  --bg-card: #080e1e;
+  --brand-primary: #4c6fff;
+  --brand-sky: #38bdf8;
+  --brand-indigo: #6366f1;
+  --brand-emerald: #34d399;
+  --accent-cyan: #06b6d4;
+}
+
+body {
+  background-color: #02050c;
+  color: #f8fafc;
+  font-family: var(--font-sans), ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+    "Segoe UI", Roboto, sans-serif;
+  overflow-x: hidden;
+  selection-background-color: #4c6fff;
+}
+
+.font-mono,
+code,
+pre {
+  font-family: var(--font-mono), ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+/* Institutional radial spotlight + precision grid backdrop */
+.bg-cyber-grid {
+  background-color: #02050c;
+  background-size: 48px 48px;
+  background-image:
+    radial-gradient(circle at 50% 0%, rgba(76, 111, 255, 0.16), transparent 55%),
+    linear-gradient(to right, rgba(30, 41, 59, 0.18) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(30, 41, 59, 0.18) 1px, transparent 1px);
+}
+
+/* Premium Multi-Layer Glassmorphic Surface with Top Specular Rim */
+.glass-panel {
+  background: linear-gradient(
+    165deg,
+    rgba(15, 25, 50, 0.86) 0%,
+    rgba(8, 14, 29, 0.94) 55%,
+    rgba(5, 9, 20, 0.97) 100%
+  );
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  border: 1px solid rgba(56, 78, 112, 0.42);
+  box-shadow:
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.12),
+    inset 0 0 24px 0 rgba(76, 111, 255, 0.04),
+    0 24px 48px -18px rgba(0, 0, 0, 0.82);
+}
+
+.glass-panel-hover {
+  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.glass-panel-hover:hover {
+  border-color: rgba(96, 128, 255, 0.72);
+  box-shadow:
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.2),
+    inset 0 0 30px 0 rgba(76, 111, 255, 0.09),
+    0 24px 52px -14px rgba(76, 111, 255, 0.28);
+  transform: translateY(-3px);
+}
+
+/* Hero Mesh Card Spotlight */
+.hero-mesh-card {
+  background:
+    radial-gradient(circle at 88% 15%, rgba(76, 111, 255, 0.28) 0%, transparent 48%),
+    radial-gradient(circle at 12% 85%, rgba(6, 182, 212, 0.16) 0%, transparent 45%),
+    linear-gradient(160deg, rgba(13, 23, 48, 0.92) 0%, rgba(6, 11, 24, 0.96) 100%);
+  border: 1px solid rgba(59, 130, 246, 0.4);
+  box-shadow:
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.16),
+    0 25px 60px -15px rgba(76, 111, 255, 0.22);
+}
+
+/* Smooth entrance animation */
+@keyframes fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fade-up {
+  animation: fade-up 0.32s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+/* Infinite Wall Street x Base Ticker Marquee */
+@keyframes ticker-marquee {
+  0% {
+    transform: translateX(0%);
+  }
+  100% {
+    transform: translateX(-50%);
+  }
+}
+
+.animate-ticker {
+  display: flex;
+  width: max-content;
+  animation: ticker-marquee 38s linear infinite;
+}
+
+.animate-ticker:hover {
+  animation-play-state: paused;
+}
+
+/* Custom Range Input Styling */
+input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 6px;
+  background: linear-gradient(90deg, #1e293b 0%, #0f172a 100%);
+  border-radius: 9999px;
+  outline: none;
+  border: 1px solid rgba(51, 65, 85, 0.6);
+}
+
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 9999px;
+  background: linear-gradient(135deg, #3b82f6 0%, #4c6fff 100%);
+  border: 2px solid #e0f2fe;
+  box-shadow: 0 0 14px rgba(76, 111, 255, 0.9);
+  cursor: pointer;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+input[type="range"]::-webkit-slider-thumb:hover {
+  transform: scale(1.2);
+  box-shadow: 0 0 20px rgba(6, 182, 212, 0.95);
+}
+
+/* Custom subtle scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #040711;
+}
+::-webkit-scrollbar-thumb {
+  background: #1e293b;
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #4c6fff;
+}
+
+/* Logo visibility on the dark theme:
+   - dark/transparent third-party logos get a subtle ring so their edges never disappear
+   - BaseScan's mark is black-on-transparent, so it sits on a white chip */
+img[src^="/logos/stocks/"],
+img[src^="/logos/partners/"] {
+  box-shadow: 0 0 0 1px rgba(148, 163, 184, 0.35);
+}
+img[src$="/logos/brands/basescan.svg"] {
+  background: #ffffff;
+  border-radius: 9999px;
+  padding: 1px;
+}
+img.logo-wordmark {
+  max-width: none;
+  object-fit: contain;
+}

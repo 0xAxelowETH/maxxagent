@@ -1,0 +1,41 @@
+{
+  "name": "stock-maxxing-base",
+  "version": "1.0.0",
+  "private": true,
+  "description": "MAXXAGENT — agent-picked baskets of Coinbase tokenized stocks on Base, bought non-custodially with ERC-8021 attribution (Stocks Maxxing Season)",
+  "scripts": {
+    "dev": "next dev -p 3000",
+    "build": "next build",
+    "start": "next start -p 3000",
+    "lint": "next lint",
+    "agent:cli": "node scripts/agent-cli.mjs",
+    "verify:onchain": "node scripts/verify-onchain.mjs",
+    "compile:contracts": "node scripts/compile-contracts.mjs",
+    "test:swap": "node scripts/test-swap-route.mjs",
+    "deploy:mainnet": "node scripts/deploy-mainnet.mjs",
+    "test:contracts": "node scripts/test-contracts.mjs",
+    "brand": "node scripts/generate-brand.mjs",
+    "shots": "node scripts/capture-posts.mjs"
+  },
+  "dependencies": {
+    "lucide-react": "^0.468.0",
+    "next": "^15.1.6",
+    "ox": "^1.8.13",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "viem": "^2.57.16"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.0.0",
+    "@types/node": "^22.10.2",
+    "@types/react": "^19.0.2",
+    "@types/react-dom": "^19.0.2",
+    "puppeteer-core": "^23.11.1",
+    "solc": "^0.8.38",
+    "tailwindcss": "^4.0.0",
+    "typescript": "^5.7.2"
+  },
+  "overrides": {
+    "postcss": "^8.5.32"
+  }
+}
