@@ -46,7 +46,23 @@ function rateLimited(request: NextRequest): { limited: boolean; retryAfter: numb
   return { limited: entry.count > LIMITS[route], retryAfter: Math.ceil((WINDOW_MS - (now - entry.start)) / 1000) };
 }
 
+/**
+ * One canonical domain: once CANONICAL_HOST is set (e.g. maxxagent.xyz), the old production alias
+ * permanently redirects there with the same path and query. Preview deployments are left alone.
+ */
+const CANONICAL_HOST = (process.env.CANONICAL_HOST || "").toLowerCase();
+const OLD_HOSTS = new Set(["maxxagent-wine.vercel.app", "www.maxxagent.xyz"]);
+
 export function middleware(request: NextRequest) {
+  const host = (request.headers.get("host") || "").toLowerCase();
+  if (CANONICAL_HOST && host !== CANONICAL_HOST && OLD_HOSTS.has(host)) {
+    const url = request.nextUrl.clone();
+    url.protocol = "https:";
+    url.host = CANONICAL_HOST;
+    url.port = "";
+    return NextResponse.redirect(url, 308);
+  }
+
   const country = (
     request.headers.get("x-vercel-ip-country") ||
     request.headers.get("cf-ipcountry") ||

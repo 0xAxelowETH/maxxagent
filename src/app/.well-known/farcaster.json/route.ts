@@ -7,7 +7,7 @@ import { NextResponse } from "next/server";
  */
 export const dynamic = "force-static";
 
-const SITE = (process.env.NEXT_PUBLIC_SITE_URL || "https://maxxagent-wine.vercel.app").replace(/\/$/, "");
+const SITE = (process.env.NEXT_PUBLIC_SITE_URL || "https://maxxagent.xyz").replace(/\/$/, "");
 
 export function GET() {
   const header = process.env.FARCASTER_ACCOUNT_HEADER;
