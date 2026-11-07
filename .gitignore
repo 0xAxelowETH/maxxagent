@@ -23,3 +23,6 @@ artifacts/
 # internal working notes (kept locally, not published)
 KONSEP.md
 JADWAL_POSTING_X.md
+
+# build-in-public drafts & screenshots (internal, kept locally)
+build-in-public/
