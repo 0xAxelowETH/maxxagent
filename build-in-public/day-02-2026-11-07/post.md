@@ -38,4 +38,4 @@ Code (MIT): https://github.com/0xAxelowETH/maxxagent
 
 ## Posted
 
-- [ ] Posted (paste link here):
+- [x] Posted (paste link here):
