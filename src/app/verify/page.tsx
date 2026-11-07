@@ -137,7 +137,7 @@ export default function VerifyPage() {
                 {REGISTRY}
               </a>
               . It stores names and weights only: no deposits, no payable functions, no token transfers, no fees. Only
-              an index&apos;s creator can change its weights. Source verified on Sourcify.
+              an index&apos;s creator can change its weights. Source verified on BaseScan and Sourcify.
             </p>
           ) : (
             <p>

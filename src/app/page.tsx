@@ -3085,29 +3085,80 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
 
               {/* Onchain index registry: published indexes anyone can buy (hidden until the registry is deployed) */}
               {hasRegistry && (
-              <div className="lg:col-span-5 self-start rounded-2xl border border-slate-800 bg-[#0b1120] p-6 space-y-4">
-                <div className="flex items-center justify-between gap-2">
-                  <div className="flex items-center gap-2 text-cyan-400 text-xs font-bold uppercase tracking-wider">
-                    <Layers className="h-4 w-4" />
-                    Published indexes
+              <div className="lg:col-span-5 self-start rounded-3xl border border-slate-800 bg-gradient-to-b from-[#0d1428] to-[#0b1120] p-5 sm:p-6 space-y-4">
+                {/* Header */}
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex items-center gap-3">
+                    <div className="grid h-10 w-10 place-items-center rounded-xl border border-[#4C6FFF]/40 bg-[#4C6FFF]/15">
+                      <Layers className="h-5 w-5 text-blue-300" />
+                    </div>
+                    <div>
+                      <h3 className="flex items-center gap-2 text-base font-bold text-white">
+                        Published indexes
+                        {publishedIndexes.length > 0 && (
+                          <span className="rounded-full bg-[#4C6FFF]/20 px-2 py-0.5 font-mono text-[11px] text-blue-200">{publishedIndexes.length}</span>
+                        )}
+                      </h3>
+                      <p className="text-[11px] text-slate-400">Onchain baskets anyone can buy in one click</p>
+                    </div>
                   </div>
                   <button
                     onClick={() => loadPublishedIndexes()}
-                    className="inline-flex items-center gap-1 text-xs text-slate-300 hover:text-white cursor-pointer"
+                    className="grid h-8 w-8 place-items-center rounded-lg border border-slate-700 text-slate-400 hover:border-slate-500 hover:text-white cursor-pointer"
+                    title="Refresh"
+                    aria-label="Refresh published indexes"
                   >
-                    <RefreshCw className="h-3.5 w-3.5" />
-                    {indexesStatus || "Refresh"}
+                    <RefreshCw className={`h-3.5 w-3.5 ${indexesStatus === "Loading…" ? "animate-spin" : ""}`} />
                   </button>
                 </div>
-                <p className="text-xs text-slate-300 leading-relaxed">
-                  <code className="text-cyan-300">StockMaxxIndexRegistry</code> stores only index names
-                  and weights. It never holds funds, charges no fees, and only an index&apos;s creator can
-                  change its weights. Buying an index swaps USDC or ETH into its stocks from your own wallet.
-                </p>
-                <div className="rounded-xl border border-slate-800 bg-[#070b14] px-3 py-2">{amountControl}</div>
+
+                <a
+                  href={`https://basescan.org/address/${registryAddress}#code`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center justify-between gap-2 rounded-xl border border-emerald-500/25 bg-emerald-500/5 px-3 py-2 text-[11px] text-slate-300 hover:border-emerald-400/50"
+                >
+                  <span className="flex items-center gap-1.5">
+                    <ShieldCheck className="h-3.5 w-3.5 text-emerald-300" />
+                    Registry verified on BaseScan · holds no funds, no fees
+                  </span>
+                  <ExternalLink className="h-3 w-3 text-slate-500" />
+                </a>
+
+                {/* Amount per buy */}
+                <div className="rounded-2xl border border-slate-800 bg-[#070b14] p-3 space-y-2">
+                  <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Amount per buy</div>
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    {[10, 20, 50, 100].map((v) => (
+                      <button
+                        key={v}
+                        onClick={() => setBasketUsd(v)}
+                        className={`rounded-lg border px-2.5 py-1 text-xs font-bold cursor-pointer ${
+                          basketUsd === v ? "border-emerald-400 bg-emerald-500/15 text-emerald-200" : "border-slate-700 text-slate-300 hover:border-slate-500"
+                        }`}
+                      >
+                        ${v}
+                      </button>
+                    ))}
+                    <span className="relative">
+                      <span className="absolute left-2 top-1/2 -translate-y-1/2 text-xs text-slate-500">$</span>
+                      <input
+                        type="number"
+                        min={1}
+                        max={10000}
+                        step={1}
+                        value={basketUsd || ""}
+                        onChange={(e) => setBasketUsd(Math.max(0, Number(e.target.value) || 0))}
+                        className="w-20 rounded-lg border border-slate-700 bg-[#050811] py-1 pl-5 pr-1.5 font-mono text-xs text-white focus:border-emerald-500 focus:outline-none"
+                        aria-label="Amount per index buy in USD"
+                      />
+                    </span>
+                    <span className="ml-auto">{payToggle}</span>
+                  </div>
+                </div>
 
                 {publishedIndexes.length === 0 ? (
-                  <div className="rounded-xl border border-dashed border-slate-800 p-4 text-center text-xs text-slate-400">
+                  <div className="rounded-2xl border border-dashed border-slate-800 p-5 text-center text-xs text-slate-400">
                     {indexesStatus === "Loading…"
                       ? "Loading published indexes…"
                       : indexesStatus && !/published/.test(indexesStatus)
@@ -3115,19 +3166,62 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                       : "No indexes published yet — publish the first one."}
                   </div>
                 ) : (
-                  <div className="space-y-2.5 max-h-[520px] overflow-y-auto pr-1">
+                  <div className="space-y-3 max-h-[640px] overflow-y-auto pr-1">
                     {publishedIndexes.map((ix) => (
-                      <div key={ix.id} className="rounded-xl border border-slate-800 bg-[#070b14] p-3.5 space-y-2">
-                        <div className="flex items-center justify-between gap-2">
-                          <div>
-                            <div className="text-sm font-bold text-white">
-                              {ix.name}{" "}
-                              <span className="font-mono text-[11px] text-blue-300">{ix.ticker}</span>
+                      <div
+                        key={ix.id}
+                        className="rounded-2xl border border-slate-800 bg-gradient-to-br from-[#101a33] to-[#070b14] p-4 space-y-3 transition hover:border-[#4C6FFF]/60"
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="flex min-w-0 items-center gap-3">
+                            <div className="flex shrink-0 -space-x-2">
+                              {ix.constituents.slice(0, 4).map((c) => (
+                                <img
+                                  key={c.b20Address}
+                                  src={STOCK_LOGO_MAP[c.symbol]}
+                                  alt=""
+                                  className="h-8 w-8 rounded-full bg-slate-900 object-cover ring-2 ring-[#0b1120]"
+                                />
+                              ))}
                             </div>
-                            <div className="font-mono text-[10px] text-slate-500">
-                              #{ix.id} · v{ix.version} · by {ix.creator.slice(0, 6)}…{ix.creator.slice(-4)}
+                            <div className="min-w-0">
+                              <a href={`/index/${ix.id}`} className="block text-sm font-bold leading-snug text-white hover:text-cyan-300 line-clamp-2">
+                                {ix.name}
+                              </a>
+                              <div className="flex flex-wrap items-center gap-1.5 text-[10px]">
+                                <span className="rounded bg-[#4C6FFF]/20 px-1.5 py-0.5 font-mono font-bold text-blue-200">{ix.ticker}</span>
+                                <span className="font-mono text-slate-500">
+                                  #{ix.id} · by {ix.creator.slice(0, 6)}…{ix.creator.slice(-4)}
+                                </span>
+                              </div>
                             </div>
                           </div>
+                          <span className="hidden sm:inline-flex shrink-0 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[10px] font-semibold text-emerald-300">
+                            Onchain
+                          </span>
+                        </div>
+
+                        {/* Weights: one stacked bar + legend */}
+                        <div className="flex h-2 w-full overflow-hidden rounded-full bg-slate-800">
+                          {ix.constituents.map((c) => (
+                            <div
+                              key={c.b20Address}
+                              style={{ width: `${c.weightBps / 100}%`, backgroundColor: STOCK_COLOR_MAP[c.symbol] || "#4C6FFF" }}
+                              title={`${c.symbol} ${(c.weightBps / 100).toFixed(1)}%`}
+                            />
+                          ))}
+                        </div>
+                        <div className="grid grid-cols-2 gap-x-3 gap-y-1 sm:grid-cols-3">
+                          {ix.constituents.map((c) => (
+                            <div key={c.b20Address} className="flex items-center gap-1.5 text-[11px]">
+                              <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: STOCK_COLOR_MAP[c.symbol] || "#4C6FFF" }} />
+                              <span className="font-mono text-slate-200">{c.symbol}</span>
+                              <span className="ml-auto font-mono text-slate-400">{(c.weightBps / 100).toFixed(0)}%</span>
+                            </div>
+                          ))}
+                        </div>
+
+                        <div className="flex items-center gap-2 pt-1">
                           <button
                             onClick={() =>
                               buyStocks(
@@ -3141,33 +3235,24 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                               )
                             }
                             disabled={basketPending || basketUsd < 1}
-                            className="rounded-lg bg-emerald-600 px-3 py-1.5 text-[11px] font-bold text-white hover:bg-emerald-500 disabled:opacity-50 transition cursor-pointer shrink-0"
+                            className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-xl bg-emerald-600 px-3 py-2.5 text-xs font-bold text-white shadow-lg shadow-emerald-600/20 hover:bg-emerald-500 disabled:opacity-50 transition cursor-pointer"
                           >
-                            Buy ${basketUsd} {payLabel}
+                            <Zap className="h-3.5 w-3.5" />
+                            {basketPending ? basketStatus || "Working…" : `Buy $${basketUsd} ${payLabel}`}
                           </button>
-                        </div>
-                        <div className="flex flex-wrap gap-1.5">
-                          {ix.constituents.map((c) => (
-                            <span
-                              key={c.b20Address}
-                              className="inline-flex items-center gap-1 rounded bg-slate-800/90 px-2 py-0.5 font-mono text-[11px] text-slate-200"
-                            >
-                              {STOCK_LOGO_MAP[c.symbol] && (
-                                <img src={STOCK_LOGO_MAP[c.symbol]} alt="" className="h-3.5 w-3.5 rounded-full" />
-                              )}
-                              {c.symbol} {(c.weightBps / 100).toFixed(0)}%
-                            </span>
-                          ))}
-                        </div>
-                        <div className="flex flex-wrap gap-3 text-[11px]">
-                          <a href={`/index/${ix.id}`} className="text-cyan-300 hover:underline">
-                            Index page
+                          <a
+                            href={`/index/${ix.id}`}
+                            className="rounded-xl border border-slate-700 px-3 py-2.5 text-xs font-semibold text-slate-200 hover:border-slate-500 hover:text-white"
+                          >
+                            Details
                           </a>
                           <button
                             onClick={() => copyToClipboard(`${window.location.origin}/index/${ix.id}`, `index-link-${ix.id}`)}
-                            className="text-cyan-300 hover:underline cursor-pointer"
+                            className="grid h-[38px] w-[38px] place-items-center rounded-xl border border-slate-700 text-slate-300 hover:border-slate-500 hover:text-white cursor-pointer"
+                            title="Copy link"
+                            aria-label={`Copy link to ${ix.ticker}`}
                           >
-                            {copiedKey === `index-link-${ix.id}` ? "Link copied" : "Copy link"}
+                            {copiedKey === `index-link-${ix.id}` ? <Check className="h-4 w-4 text-emerald-300" /> : <Copy className="h-4 w-4" />}
                           </button>
                         </div>
                       </div>
