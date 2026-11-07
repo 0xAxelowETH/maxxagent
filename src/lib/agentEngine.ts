@@ -69,7 +69,7 @@ export function scoresToWeightsBps(scores: number[]): number[] {
 
   // Iteratively clamp to [min, max] while keeping the total at 10,000
   let weights = new Array(n).fill(0);
-  let fixed = new Array(n).fill(false);
+  const fixed = new Array(n).fill(false);
   for (let iter = 0; iter < n + 1; iter++) {
     const fixedTotal = weights.reduce((a, w, i) => (fixed[i] ? a + w : a), 0);
     const freeStrength = strength.reduce((a, s, i) => (fixed[i] ? a : a + s), 0);

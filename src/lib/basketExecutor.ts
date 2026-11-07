@@ -1,5 +1,7 @@
 import { encodeFunctionData, decodeFunctionResult, parseAbi, toHex } from "viem";
-import { appendBuilderCodeToCalldata } from "./builderCode";
+import { appendBuilderCodeToCalldata, toErc8021DataSuffix } from "./builderCode";
+
+const builderSuffix = (code: string) => toErc8021DataSuffix([code]).dataSuffix;
 
 /**
  * Non-custodial swaps between USDC and Coinbase B20 stocks, signed in the user's own wallet.
@@ -202,33 +204,56 @@ async function sendCalls(
   approveCalls: Call[],
   swapCalls: Call[],
   labels: string[],
-  onStatus: StatusFn
+  onStatus: StatusFn,
+  builderCode: string
 ): Promise<{ mode: "batch" | "sequential"; txHashes: string[] }> {
   const calls = [...approveCalls, ...swapCalls];
+  onStatus(`Confirm ${calls.length} action${calls.length > 1 ? "s" : ""} in one wallet prompt…`);
+  // Smart wallets (ERC-4337) wrap calls in executeBatch, so the per-call suffix is not at the end of
+  // the UserOp callData. Base's documented fix: the optional `dataSuffix` capability, appended by the wallet.
+  const base = { version: "2.0.0", chainId: BASE_CHAIN_HEX, from: sender, atomicRequired: false, calls };
+  let batchId: string | undefined;
   try {
-    onStatus(`Confirm ${calls.length} action${calls.length > 1 ? "s" : ""} in one wallet prompt…`);
-    const sendRes = (await eth.request({
-      method: "wallet_sendCalls",
-      params: [{ version: "2.0.0", chainId: BASE_CHAIN_HEX, from: sender, atomicRequired: false, calls }],
-    })) as string | { id: string };
-    const batchId = typeof sendRes === "string" ? sendRes : sendRes?.id;
+    let sendRes: string | { id: string };
+    try {
+      sendRes = (await eth.request({
+        method: "wallet_sendCalls",
+        params: [{ ...base, capabilities: { dataSuffix: { value: builderSuffix(builderCode), optional: true } } }],
+      })) as string | { id: string };
+    } catch (capErr) {
+      // Non-compliant wallets may reject the optional capability: retry once without it.
+      const e = capErr as { code?: number; message?: string };
+      if (e?.code !== 5700 && !/capabilit/i.test(e?.message || "")) throw capErr;
+      sendRes = (await eth.request({ method: "wallet_sendCalls", params: [base] })) as string | { id: string };
+    }
+    batchId = typeof sendRes === "string" ? sendRes : sendRes?.id;
+  } catch (err) {
+    // Only a wallet that cannot batch falls back to one-by-one. A rejection by the user is rethrown.
+    if (!isUnsupportedMethod(err)) throw err;
+  }
+
+  if (batchId) {
+    // The batch was submitted: from here on, never resend the calls (that would double the trade).
     onStatus("Waiting for confirmation onchain…");
     const start = Date.now();
+    let misses = 0;
     while (Date.now() - start < 180_000) {
-      const status = (await eth.request({ method: "wallet_getCallsStatus", params: [batchId] })) as {
-        status?: number | string;
-        receipts?: { transactionHash: string }[];
-      };
+      let status: { status?: number | string; receipts?: { transactionHash: string; status?: string }[] } | undefined;
+      try {
+        status = (await eth.request({ method: "wallet_getCallsStatus", params: [batchId] })) as typeof status;
+      } catch {
+        // Some wallets briefly report an unknown id right after submission
+        if (++misses > 10) throw new Error("Batch was sent but its status is unavailable. Check your wallet activity before retrying.");
+      }
       const done = status?.status === 200 || status?.status === "CONFIRMED" || status?.status === "success";
       const failed = (typeof status?.status === "number" && status.status >= 400) || status?.status === "failure";
       if (failed) throw new Error("Batch failed onchain. Nothing was swapped in the failed calls.");
-      if (done) return { mode: "batch", txHashes: [...new Set((status.receipts || []).map((r) => r.transactionHash))] };
+      if (done) return { mode: "batch", txHashes: [...new Set((status!.receipts || []).map((r) => r.transactionHash))] };
       await sleep(2000);
     }
-    throw new Error("Timed out waiting for batch confirmation. Check your wallet activity.");
-  } catch (err) {
-    if (!isUnsupportedMethod(err)) throw err;
+    throw new Error("Timed out waiting for batch confirmation. Check your wallet activity before retrying.");
   }
+
   const txHashes: string[] = [];
   for (let i = 0; i < calls.length; i++) {
     const c = calls[i];
@@ -250,7 +275,34 @@ async function postSwap(body: Record<string, unknown>, fallbackSymbol: string): 
   }
 }
 
-const usable = (q: LegQuote) => q.ok && q.tx && q.routerAddress && q.amountInRaw && q.tokenIn;
+const usable = (q: LegQuote) => !!(q.ok && q.tx && q.routerAddress && q.amountInRaw && q.tokenIn);
+
+/** Quotes legs one by one (aggregator burst limit), then retries failed legs once after a pause. */
+async function quoteAll<L extends { symbol: string }>(
+  legs: L[],
+  quote: (leg: L) => Promise<LegQuote>,
+  verb: string,
+  onStatus: StatusFn
+): Promise<LegQuote[]> {
+  const quotes: LegQuote[] = [];
+  for (const [i, leg] of legs.entries()) {
+    if (i > 0) await sleep(500);
+    onStatus(`Finding best route ${verb} ${leg.symbol} (${i + 1}/${legs.length})…`);
+    quotes.push(await quote(leg));
+  }
+  const failed = quotes.map((q, i) => (usable(q) ? -1 : i)).filter((i) => i >= 0);
+  // Retry only when part of the basket failed (usually a rate limit); a single failed leg reports its error
+  if (failed.length > 0 && failed.length < legs.length) {
+    await sleep(2000);
+    for (const i of failed) {
+      onStatus(`Retrying route ${verb} ${legs[i].symbol}…`);
+      const retry = await quote(legs[i]);
+      if (usable(retry)) quotes[i] = retry;
+      await sleep(700);
+    }
+  }
+  return quotes;
+}
 const toSwapCall = (q: LegQuote): Call => ({ to: q.tx!.to, data: q.tx!.data, value: toHex(BigInt(q.tx!.value || "0")) });
 
 // ---------------------------------------------------------------- buy
@@ -270,12 +322,7 @@ export async function executeBasket(params: {
   const { eth, sender, legs, builderCode, slippageBps = 50, onStatus = () => {} } = params;
   await ensureBase(eth, onStatus);
 
-  const quotes: LegQuote[] = [];
-  for (const [i, leg] of legs.entries()) {
-    if (i > 0) await sleep(500); // stay under the aggregator's burst limit
-    onStatus(`Finding best route for ${leg.symbol} (${i + 1}/${legs.length})…`);
-    quotes.push(await quoteLeg(leg, sender, slippageBps));
-  }
+  const quotes = await quoteAll(legs, (l) => quoteLeg(l, sender, slippageBps), "for", onStatus);
   const bought = quotes.filter(usable);
   const skipped = quotes.filter((q) => !bought.includes(q));
   if (bought.length === 0) throw new Error(skipped.map((s) => `${s.symbol}: ${s.error}`).join(" | ") || "No routes available");
@@ -287,7 +334,7 @@ export async function executeBasket(params: {
   }
 
   const approveCalls = await buildApprovals(eth, sender, bought, builderCode);
-  const { mode, txHashes } = await sendCalls(eth, sender, approveCalls, bought.map(toSwapCall), bought.map((q) => `Buy ${q.symbol}`), onStatus);
+  const { mode, txHashes } = await sendCalls(eth, sender, approveCalls, bought.map(toSwapCall), bought.map((q) => `Buy ${q.symbol}`), onStatus, builderCode);
   onStatus("Reading what you received onchain…");
   const tracked = await trackReceipts(
     eth,
@@ -315,12 +362,7 @@ export async function executeSell(params: {
   const { eth, sender, legs, builderCode, slippageBps = 50, onStatus = () => {} } = params;
   await ensureBase(eth, onStatus);
 
-  const quotes: LegQuote[] = [];
-  for (const [i, leg] of legs.entries()) {
-    if (i > 0) await sleep(500);
-    onStatus(`Finding best route to sell ${leg.symbol} (${i + 1}/${legs.length})…`);
-    quotes.push(await quoteSellLeg(leg, sender, slippageBps));
-  }
+  const quotes = await quoteAll(legs, (l) => quoteSellLeg(l, sender, slippageBps), "to sell", onStatus);
   const sold = quotes.filter(usable);
   const skipped = quotes.filter((q) => !sold.includes(q));
   if (sold.length === 0) throw new Error(skipped.map((s) => `${s.symbol}: ${s.error}`).join(" | ") || "No routes available");
@@ -331,7 +373,7 @@ export async function executeSell(params: {
   }
 
   const approveCalls = await buildApprovals(eth, sender, sold, builderCode);
-  const { mode, txHashes } = await sendCalls(eth, sender, approveCalls, sold.map(toSwapCall), sold.map((q) => `Sell ${q.symbol}`), onStatus);
+  const { mode, txHashes } = await sendCalls(eth, sender, approveCalls, sold.map(toSwapCall), sold.map((q) => `Sell ${q.symbol}`), onStatus, builderCode);
   onStatus("Reading what you received onchain…");
   const quotedUsdc = sold.reduce((a, q) => a + (q.amountOutUsdc ?? 0), 0);
   const tracked = await trackReceipts(eth, txHashes, sender, [

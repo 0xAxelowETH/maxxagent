@@ -25,9 +25,12 @@ export default function AppError({ error, reset }: { error: Error & { digest?: s
           >
             Try again
           </button>
-          <a href="/" className="rounded-xl border border-slate-700 px-4 py-2.5 text-sm font-semibold text-slate-200 hover:bg-slate-800">
+          <button
+            onClick={() => window.location.reload()}
+            className="rounded-xl border border-slate-700 px-4 py-2.5 text-sm font-semibold text-slate-200 hover:bg-slate-800 cursor-pointer"
+          >
             Reload
-          </a>
+          </button>
         </div>
       </div>
     </main>

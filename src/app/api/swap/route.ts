@@ -75,7 +75,8 @@ export async function POST(request: NextRequest) {
     const amountIn =
       side === "buy"
         ? BigInt(Math.floor(amountUsd * 1e6))
-        : BigInt(Math.floor(amountTokens * 10 ** stock.decimals));
+        : // round, not floor: x/1e8*1e8 can land at n-0.0000001 and leave 1 unit of dust on "Sell all"
+          BigInt(Math.round(amountTokens * 10 ** stock.decimals));
     if (amountIn <= 0n) {
       return NextResponse.json({ ok: false, error: "Amount too small." }, { status: 400 });
     }

@@ -330,7 +330,7 @@ export async function GET(request: NextRequest) {
   );
 
   // 3. Optional wallet B20 `balanceOfUI` & policy compliance inspection on Base Mainnet
-  let walletBalances: Record<
+  const walletBalances: Record<
     string,
     { rawTokens: number; sharesUI: number; usdValue: number; b20Authorized: boolean }
   > = {};

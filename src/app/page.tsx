@@ -262,6 +262,7 @@ export default function StockMaxxingDashboard() {
   const [connectedWalletName, setConnectedWalletName] = useState<string>("");
   const [connectingWallet, setConnectingWallet] = useState<boolean>(false);
   const providerRef = useRef<EthereumProvider | null>(null);
+  const detachListenersRef = useRef<(() => void) | null>(null);
   useEffect(() => {
     const onAnnounce = (event: Event) => {
       const detail = (event as CustomEvent<Eip6963ProviderDetail>).detail;
@@ -396,8 +397,14 @@ export default function StockMaxxingDashboard() {
         return;
       }
       const validLegs = legs.filter((l) => l.usd >= 1);
-      if (validLegs.length === 0) {
-        setBasketError("Each stock needs at least $1. Increase the amount.");
+      if (validLegs.length < legs.length) {
+        // Never silently drop part of a basket: tell the user the smallest total that funds every stock
+        const total = legs.reduce((a, l) => a + l.usd, 0);
+        const smallest = Math.min(...legs.map((l) => l.usd));
+        const needed = smallest > 0 ? Math.ceil(total / smallest) : 0;
+        setBasketError(
+          `Each stock needs at least $1.${needed > 0 ? ` For this basket, use at least $${needed}.` : ""}`
+        );
         return;
       }
       const eth = getEthProvider();
@@ -615,15 +622,23 @@ export default function StockMaxxingDashboard() {
         setInspectAddress(accounts[0]);
         setChainIdHex(chainId);
         fetchLiveStocks(accounts[0]);
-        eth.on?.("accountsChanged", (...args: unknown[]) => {
+        // One set of listeners at a time: reconnecting must not stack duplicates
+        detachListenersRef.current?.();
+        const onAccounts = (...args: unknown[]) => {
           const next = (args[0] as string[] | undefined)?.[0] || "";
           setWalletAddress(next);
           setInspectAddress(next);
           setWalletBalances({});
           setUsdcBalance(null);
           if (next) fetchLiveStocks(next);
-        });
-        eth.on?.("chainChanged", (...args: unknown[]) => setChainIdHex(String(args[0] || "")));
+        };
+        const onChain = (...args: unknown[]) => setChainIdHex(String(args[0] || ""));
+        eth.on?.("accountsChanged", onAccounts);
+        eth.on?.("chainChanged", onChain);
+        detachListenersRef.current = () => {
+          eth.removeListener?.("accountsChanged", onAccounts);
+          eth.removeListener?.("chainChanged", onChain);
+        };
       }
     } catch (err: unknown) {
       setTxError(err instanceof Error ? err.message : "Wallet connection rejected");
@@ -979,6 +994,8 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                 </div>
                 <button
                   onClick={async () => {
+                    detachListenersRef.current?.();
+                    detachListenersRef.current = null;
                     await disconnectExternalWallets();
                     providerRef.current = null;
                     setWalletAddress("");
