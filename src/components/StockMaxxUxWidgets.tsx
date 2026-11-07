@@ -1,5 +1,6 @@
 "use client";
 
+import { MarketStatus } from "./MarketStatus";
 import React, { useEffect, useState } from "react";
 import {
   Activity,
@@ -719,6 +720,7 @@ function SwapPanel({
           </button>
         ))}
       </div>
+      <MarketStatus showDetail className="text-[10px] leading-snug" />
 
       {side === "buy" ? (
         <>

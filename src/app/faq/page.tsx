@@ -75,7 +75,7 @@ const FAQ: { q: string; a: React.ReactNode }[] = [
     a: (
       <>
         MAXXAGENT charges no fee. You pay network gas and the DEX cost of the route (price impact + pool fees), shown in the
-        review before you sign. Routes costing more than 1.5% are refused. The default max slippage is 0.5%: if the price
+        review before you sign. Routes costing more than 1.5% are refused. The default max slippage is 0.5% (you can pick 0.3% or 1% on the review screen): if the price
         moves more than that before your swap lands, the swap reverts and you keep your funds (only gas is spent).
       </>
     ),

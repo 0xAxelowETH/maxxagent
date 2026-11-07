@@ -23,6 +23,8 @@ export function OrderReview({
   onConfirm,
   onCancel,
   onRefresh,
+  slippageBps,
+  onSlippageChange,
 }: {
   order: PreparedOrder;
   label: string;
@@ -32,6 +34,9 @@ export function OrderReview({
   onConfirm: () => void;
   onCancel: () => void;
   onRefresh: () => void;
+  slippageBps?: number;
+  /** re-quotes the order with the new max slippage */
+  onSlippageChange?: (bps: number) => void;
 }) {
   const [now, setNow] = useState(() => Date.now());
   const confirmRef = useRef<HTMLButtonElement>(null);
@@ -155,7 +160,29 @@ export function OrderReview({
           </div>
           <div className="rounded-xl border border-slate-800 bg-[#070b14] p-3">
             <div className="font-sans text-[10px] text-slate-400">Max slippage</div>
-            <div className="text-sm font-bold text-slate-200">{(order.slippageBps / 100).toFixed(2)}%</div>
+            {onSlippageChange ? (
+              <div className="mt-0.5 flex gap-1" role="group" aria-label="Max slippage">
+                {[30, 50, 100].map((bps) => {
+                  const active = (slippageBps ?? order.slippageBps) === bps;
+                  return (
+                    <button
+                      key={bps}
+                      type="button"
+                      onClick={() => !active && onSlippageChange(bps)}
+                      disabled={busy}
+                      aria-pressed={active}
+                      className={`rounded-md border px-1.5 py-0.5 text-[11px] font-bold cursor-pointer disabled:opacity-50 ${
+                        active ? "border-cyan-400 bg-cyan-500/15 text-cyan-200" : "border-slate-700 text-slate-400 hover:border-slate-500"
+                      }`}
+                    >
+                      {(bps / 100).toFixed(1)}%
+                    </button>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="text-sm font-bold text-slate-200">{(order.slippageBps / 100).toFixed(2)}%</div>
+            )}
           </div>
         </div>
 

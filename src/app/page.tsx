@@ -19,6 +19,9 @@ import {
   TrendingUp,
   Wallet,
   Zap,
+  Check,
+  ChevronDown,
+  LogOut,
 } from "lucide-react";
 import {
   B20DividendSplitSimulator,
@@ -57,6 +60,7 @@ import {
 import { MaxxAgentLogo, MaxxAgentMark } from "@/components/BrandLogo";
 import { OrderReview } from "@/components/OrderReview";
 import { TradeHistoryPanel, type TradeHistoryEntry } from "@/components/TradeHistoryPanel";
+import { MarketStatus } from "@/components/MarketStatus";
 import { RebalancePanel } from "@/components/RebalancePanel";
 import { TermsGate, TERMS_STORAGE_KEY } from "@/components/TermsGate";
 import {
@@ -258,6 +262,8 @@ function PortfolioDonutChart({
   );
 }
 
+const SLIPPAGE_OPTIONS = [30, 50, 100];
+
 // ---- Shareable basket links: /?basket=NVDAc-40,MSFTc-30&amount=50 --------------------------------
 const PUBLIC_SITE_URL = (process.env.NEXT_PUBLIC_SITE_URL || "").replace(/\/$/, "");
 const SHARE_SYMBOLS = new Set(BASE_TOKENIZED_STOCKS.map((s) => s.symbol));
@@ -309,6 +315,23 @@ export default function StockMaxxingDashboard() {
   // EIP-6963: discover every installed wallet instead of trusting window.ethereum
   const [walletProviders, setWalletProviders] = useState<Eip6963ProviderDetail[]>([]);
   const [showWalletMenu, setShowWalletMenu] = useState<boolean>(false);
+  // Connected-wallet dropdown (copy address, BaseScan, switch, disconnect)
+  const [accountMenuOpen, setAccountMenuOpen] = useState<boolean>(false);
+  const [addressCopied, setAddressCopied] = useState<boolean>(false);
+  const accountMenuRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!accountMenuOpen) return;
+    const onDown = (e: MouseEvent) => {
+      if (!accountMenuRef.current?.contains(e.target as Node)) setAccountMenuOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setAccountMenuOpen(false);
+    document.addEventListener("mousedown", onDown);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [accountMenuOpen]);
   const [connectedWalletName, setConnectedWalletName] = useState<string>("");
   const [connectingWallet, setConnectingWallet] = useState<boolean>(false);
   const providerRef = useRef<EthereumProvider | null>(null);
@@ -349,6 +372,18 @@ export default function StockMaxxingDashboard() {
   // Wallet whose balances are currently shown (lowercase); "" = none loaded yet
   const [balancesFor, setBalancesFor] = useState<string>("");
   const [balancesError, setBalancesError] = useState<string>("");
+  // Max slippage for swaps (bps), chosen in the review screen and remembered per browser
+  const [slippageBps, setSlippageBps] = useState<number>(50);
+  const slippageRef = useRef<number>(50);
+  useEffect(() => {
+    try {
+      const v = Number(localStorage.getItem("maxxagent_slippage_bps"));
+      if (SLIPPAGE_OPTIONS.includes(v)) {
+        slippageRef.current = v;
+        setSlippageBps(v);
+      }
+    } catch {}
+  }, []);
   // P/L rebuilt from the wallet's onchain history (/api/pnl). Loads after balances and never blocks them.
   const [pnl, setPnl] = useState<{
     for: string;
@@ -519,7 +554,7 @@ export default function StockMaxxingDashboard() {
       try {
         const sender = await resolveSender(eth);
         if (sender.toLowerCase() !== walletAddress.toLowerCase()) setWalletAddress(sender);
-        const order = await prepareBuy({ eth, sender, legs: validLegs, onStatus: setBasketStatus });
+        const order = await prepareBuy({ eth, sender, legs: validLegs, slippageBps: slippageRef.current, onStatus: setBasketStatus });
         setReview({ order, label, legs: { buy: validLegs } });
       } catch (err: unknown) {
         setBasketError(err instanceof Error ? err.message : "Could not prepare the order");
@@ -556,7 +591,7 @@ export default function StockMaxxingDashboard() {
           setBalanceRefreshNonce((n) => n + 1);
           throw new Error("Your wallet switched to another account. Balances were refreshed: check them and try again.");
         }
-        const order = await prepareSell({ eth, sender, legs: validLegs, onStatus: setBasketStatus });
+        const order = await prepareSell({ eth, sender, legs: validLegs, slippageBps: slippageRef.current, onStatus: setBasketStatus });
         setReview({ order, label, legs: { sell: validLegs } });
       } catch (err: unknown) {
         setBasketError(err instanceof Error ? err.message : "Could not prepare the sale");
@@ -569,8 +604,15 @@ export default function StockMaxxingDashboard() {
   );
 
   // Re-quote the order under review (expired quote or user request)
-  const refreshReview = useCallback(async () => {
+  const refreshReview = useCallback(async (newSlippageBps?: number) => {
     if (!review) return;
+    if (newSlippageBps) {
+      slippageRef.current = newSlippageBps;
+      setSlippageBps(newSlippageBps);
+      try {
+        localStorage.setItem("maxxagent_slippage_bps", String(newSlippageBps));
+      } catch {}
+    }
     const eth = getEthProvider();
     if (!eth) return;
     setReviewBusy(true);
@@ -578,8 +620,8 @@ export default function StockMaxxingDashboard() {
     try {
       const { sender } = review.order;
       const order = review.legs.buy
-        ? await prepareBuy({ eth, sender, legs: review.legs.buy, onStatus: setBasketStatus })
-        : await prepareSell({ eth, sender, legs: review.legs.sell || [], onStatus: setBasketStatus });
+        ? await prepareBuy({ eth, sender, legs: review.legs.buy, slippageBps: slippageRef.current, onStatus: setBasketStatus })
+        : await prepareSell({ eth, sender, legs: review.legs.sell || [], slippageBps: slippageRef.current, onStatus: setBasketStatus });
       setReview({ ...review, order });
     } catch (err: unknown) {
       setReview(null);
@@ -777,6 +819,22 @@ export default function StockMaxxingDashboard() {
       eth.removeListener?.("accountsChanged", onAccounts);
       eth.removeListener?.("chainChanged", onChain);
     };
+  };
+
+  const disconnectWallet = async () => {
+    setAccountMenuOpen(false);
+    detachListenersRef.current?.();
+    detachListenersRef.current = null;
+    try {
+      localStorage.removeItem("maxxagent_wallet");
+    } catch {}
+    await disconnectExternalWallets();
+    providerRef.current = null;
+    setWalletAddress("");
+    setInspectAddress("");
+    setWalletBalances({});
+    setUsdcBalance(null);
+    setConnectedWalletName("");
   };
 
   // Connect EVM Wallet & switch to Base Mainnet (8453)
@@ -1098,6 +1156,7 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
             <img src="/logos/partners/base.svg" alt="" className="h-3 w-3 rounded-xs" />
             Built for Base Stocks Maxxing Season · independent project
           </span>
+          <MarketStatus />
           <span className="hidden sm:inline">Not financial advice · eligible non-US persons only</span>
         </div>
       </div>
@@ -1212,37 +1271,91 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                     Wrong network — switch to Base
                   </button>
                 )}
-                <div className="flex items-center gap-2 rounded-xl border border-[#4C6FFF]/60 bg-gradient-to-r from-[#4C6FFF]/25 to-cyan-500/15 px-3.5 py-2 font-mono text-xs font-bold text-blue-100 shadow-md shadow-[#4C6FFF]/20">
-                  <span className="h-2 w-2 rounded-full bg-emerald-400" />
-                  <span title={connectedWalletName || "Wallet"}>
-                    {walletAddress.slice(0, 6)}...{walletAddress.slice(-4)}
-                  </span>
-                  <span className="text-slate-500">|</span>
-                  <span className={usdcBalance !== null && usdcBalance < basketUsd ? "text-amber-300" : "text-emerald-300"}>
-                    {usdcBalance === null ? "… USDC" : `${usdcBalance.toFixed(2)} USDC`}
-                  </span>
+                <div className="relative" ref={accountMenuRef}>
+                  <button
+                    onClick={() => setAccountMenuOpen((v) => !v)}
+                    aria-haspopup="menu"
+                    aria-expanded={accountMenuOpen}
+                    aria-label="Wallet menu"
+                    className="flex items-center gap-2 rounded-xl border border-[#4C6FFF]/60 bg-gradient-to-r from-[#4C6FFF]/25 to-cyan-500/15 px-3.5 py-2 font-mono text-xs font-bold text-blue-100 shadow-md shadow-[#4C6FFF]/20 hover:brightness-110 cursor-pointer"
+                  >
+                    <span className="h-2 w-2 rounded-full bg-emerald-400" />
+                    <span title={connectedWalletName || "Wallet"}>
+                      {walletAddress.slice(0, 6)}...{walletAddress.slice(-4)}
+                    </span>
+                    <span className="text-slate-500">|</span>
+                    <span className={usdcBalance !== null && usdcBalance < basketUsd ? "text-amber-300" : "text-emerald-300"}>
+                      {usdcBalance === null ? "… USDC" : `${usdcBalance.toFixed(2)} USDC`}
+                    </span>
+                    <ChevronDown className={`h-3 w-3 text-slate-400 transition ${accountMenuOpen ? "rotate-180" : ""}`} />
+                  </button>
+                  {accountMenuOpen && (
+                    <div
+                      role="menu"
+                      className="absolute right-0 top-full z-50 mt-2 w-64 rounded-2xl border border-slate-700 bg-[#0b1120] p-2 text-xs shadow-2xl"
+                    >
+                      <div className="px-2.5 py-2 border-b border-slate-800 mb-1">
+                        <div className="text-[10px] uppercase tracking-wider text-slate-500">{connectedWalletName || "Wallet"}</div>
+                        <div className="font-mono text-[11px] text-slate-200 break-all">{walletAddress}</div>
+                        <div className="mt-1 text-[11px] text-slate-400">
+                          {usdcBalance === null ? "…" : `${usdcBalance.toFixed(2)} USDC`}
+                          {ethBalance !== null ? ` · ${ethBalance.toFixed(5)} ETH` : ""}
+                        </div>
+                      </div>
+                      <button
+                        role="menuitem"
+                        onClick={async () => {
+                          try {
+                            await navigator.clipboard.writeText(walletAddress);
+                            setAddressCopied(true);
+                            setTimeout(() => setAddressCopied(false), 1500);
+                          } catch {}
+                        }}
+                        className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-slate-200 hover:bg-slate-800 cursor-pointer"
+                      >
+                        {addressCopied ? <Check className="h-3.5 w-3.5 text-emerald-300" /> : <Copy className="h-3.5 w-3.5 text-slate-400" />}
+                        {addressCopied ? "Copied" : "Copy address"}
+                      </button>
+                      <a
+                        role="menuitem"
+                        href={`https://basescan.org/address/${walletAddress}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-slate-200 hover:bg-slate-800"
+                      >
+                        <ExternalLink className="h-3.5 w-3.5 text-slate-400" /> View on BaseScan
+                      </a>
+                      <button
+                        role="menuitem"
+                        onClick={() => {
+                          setAccountMenuOpen(false);
+                          setActiveTab("traction");
+                        }}
+                        className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-slate-200 hover:bg-slate-800 cursor-pointer"
+                      >
+                        <Wallet className="h-3.5 w-3.5 text-slate-400" /> My portfolio
+                      </button>
+                      <button
+                        role="menuitem"
+                        onClick={async () => {
+                          await disconnectWallet();
+                          setShowWalletMenu(true);
+                        }}
+                        className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-slate-200 hover:bg-slate-800 cursor-pointer"
+                      >
+                        <RefreshCw className="h-3.5 w-3.5 text-slate-400" /> Switch wallet
+                      </button>
+                      <button
+                        role="menuitem"
+                        onClick={disconnectWallet}
+                        title="Disconnect"
+                        className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-rose-300 hover:bg-rose-500/10 cursor-pointer"
+                      >
+                        <LogOut className="h-3.5 w-3.5" /> Disconnect
+                      </button>
+                    </div>
+                  )}
                 </div>
-                <button
-                  onClick={async () => {
-                    detachListenersRef.current?.();
-                    detachListenersRef.current = null;
-                    try {
-                      localStorage.removeItem("maxxagent_wallet");
-                    } catch {}
-                    await disconnectExternalWallets();
-                    providerRef.current = null;
-                    setWalletAddress("");
-                    setInspectAddress("");
-                    setWalletBalances({});
-                    setUsdcBalance(null);
-                    setConnectedWalletName("");
-                  }}
-                  className="rounded-xl border border-slate-700 px-2.5 py-2 text-xs text-slate-400 hover:text-white hover:border-slate-500 cursor-pointer"
-                  title="Disconnect"
-                  aria-label="Disconnect wallet"
-                >
-                  ✕
-                </button>
               </div>
             ) : (
               <div className="relative">
@@ -3622,7 +3735,9 @@ const walletClient = createWalletClient({
           status={basketStatus}
           onConfirm={confirmReview}
           onCancel={() => setReview(null)}
-          onRefresh={refreshReview}
+          onRefresh={() => refreshReview()}
+          slippageBps={slippageBps}
+          onSlippageChange={(bps) => refreshReview(bps)}
         />
       )}
 

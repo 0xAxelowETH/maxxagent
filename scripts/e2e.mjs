@@ -425,6 +425,8 @@ await step("Stats page loads with live onchain totals", async () => {
 await step("Disconnect, then refresh: stays disconnected", async () => {
   await page.goto(URL_BASE + "/", { waitUntil: "load", timeout: 120000 });
   await waitText(new RegExp(shortAddr.replace(/\./g, "\.")), 20000).catch(() => {});
+  await page.evaluate(() => document.querySelector('button[aria-label="Wallet menu"]')?.click());
+  await page.waitForSelector('button[title="Disconnect"]', { timeout: 5000 });
   await page.evaluate(() => document.querySelector('button[title="Disconnect"]')?.click());
   await sleep(800);
   await page.reload({ waitUntil: "load" });
