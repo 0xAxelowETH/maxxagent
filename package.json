@@ -17,7 +17,9 @@
     "brand": "node scripts/generate-brand.mjs",
     "shots": "node scripts/capture-posts.mjs",
     "test:buy": "node scripts/test-buy.mjs",
-    "test:sell": "node scripts/test-sell.mjs"
+    "test:sell": "node scripts/test-sell.mjs",
+    "test:attribution": "node scripts/test-attribution.mjs",
+    "verify:trades": "node scripts/verify-trades.mjs"
   },
   "dependencies": {
     "@coinbase/wallet-sdk": "^4.4.0",
