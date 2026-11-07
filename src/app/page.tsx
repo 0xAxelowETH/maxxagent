@@ -3583,6 +3583,9 @@ const walletClient = createWalletClient({
             <a href="/terms" className="hover:text-white underline">
               Terms &amp; Risks
             </a>
+            <a href="/stats" className="hover:text-white underline">
+              Live stats
+            </a>
             <a href="/faq" className="hover:text-white underline">
               FAQ
             </a>

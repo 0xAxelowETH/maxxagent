@@ -19,6 +19,7 @@ const LIMITS: Record<string, number> = {
   "/api/stocks": 90,
   "/api/indexes": 60,
   "/api/pnl": 20,
+  "/api/stats": 30,
   "/api/health": 30,
 };
 const WINDOW_MS = 60_000;

@@ -61,7 +61,17 @@ const codesOf = (data) => {
 
 // 1. Every tx that moved USDC or a B20 stock in or out of the wallet
 const latest = await client.getBlockNumber();
-const fromBlock = latest - BigInt(Math.round(HOURS * 1800)); // Base: 2s blocks
+// Base block time changed (2s -> 0.2s in late Oct 2026): binary-search the block at "now - HOURS"
+const target = Math.floor(Date.now() / 1000) - HOURS * 3600;
+let lo = 0n;
+let hi = latest;
+while (hi - lo > 1n) {
+  const mid = (lo + hi) / 2n;
+  const t = Number((await client.getBlock({ blockNumber: mid })).timestamp);
+  if (t < target) lo = mid;
+  else hi = mid;
+}
+const fromBlock = hi;
 const CHUNK = 2000n;
 const txs = new Map(); // hash -> { block, moves: [] }
 process.stdout.write(`Scanning ${HOURS}h of Base blocks for ${WALLET}…`);

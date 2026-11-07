@@ -29,7 +29,8 @@ const ETH_USD_FEED = "0x71041dddad3595F9CEd3DcCFBe3D1F4b0a16Bb70" as const; // C
 const START_BLOCK = 49_870_000n;
 // Dedicated RPCs (CDP) accept 100k-block getLogs ranges; the public fallback caps at 50k
 const CHUNK = process.env.BASE_RPC_URL ? 100_000n : 45_000n;
-const FIRST_WINDOW = 432_000n; // ~10 days of 2s blocks
+// ~3 days at Base's 0.2s block time (it was 2s until late Oct 2026, so older ranges cover more time)
+const FIRST_WINDOW = 1_300_000n;
 const CONCURRENCY = 4; // more triggers the RPC's rate limit
 const TIME_BUDGET_MS = 25_000;
 const MAX_TXS = 400;
