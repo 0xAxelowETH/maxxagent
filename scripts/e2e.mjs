@@ -50,6 +50,10 @@ const MOCK = (wallet) => {
       .then((r) => r.json())
       .then((j) => (j.error ? Promise.reject(j.error) : j.result));
   const reject = () => Promise.reject(Object.assign(new Error("User rejected the request."), { code: 4001 }));
+  const USDC = "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913";
+  const ROUTER = "0x6131b5fae19ea4f9d964eac0408e4408b66337b5";
+  window.__fakeTx = {}; // hash -> receipt status
+  let swapCount = 0;
   const listeners = {};
   const provider = {
     request: async ({ method, params }) => {
@@ -63,11 +67,39 @@ const MOCK = (wallet) => {
         (listeners.chainChanged || []).forEach((f) => f(m.chain));
         return null;
       }
+      if (method === "eth_call" && typeof m.usdc === "number") {
+        const c = params?.[0] || {};
+        // balanceOf(address) on USDC -> simulated balance
+        if (String(c.to).toLowerCase() === USDC && String(c.data).startsWith("0x70a08231")) {
+          return "0x" + BigInt(Math.round(m.usdc * 1e6)).toString(16).padStart(64, "0");
+        }
+      }
+      if (method === "eth_getTransactionReceipt" && window.__fakeTx[params?.[0]]) {
+        return { status: window.__fakeTx[params[0]], logs: [], gasUsed: "0x5208", blockNumber: "0x1" };
+      }
       if (["eth_call", "eth_getTransactionReceipt", "eth_blockNumber", "eth_getBalance"].includes(method)) return rpc(method, params);
       if (method === "wallet_sendCalls") {
         if (m.sendCalls === "unsupported") return Promise.reject(Object.assign(new Error("Method not supported"), { code: -32601 }));
         if (m.sendCalls === "weird") return Promise.reject(Object.assign(new Error("Internal JSON-RPC error."), { code: -32603 }));
+        if (m.sendCalls === "late") {
+          // The wallet errors, but the batch actually lands a moment later: funds leave the wallet
+          setTimeout(() => {
+            m.usdc = Math.max(0, (m.usdc || 0) - (m.lateSpend || 5));
+          }, 1500);
+          return Promise.reject(Object.assign(new Error("Request timed out."), { code: -32000 }));
+        }
         return reject();
+      }
+      if (method === "eth_sendTransaction" && m.sendTx === "fake") {
+        const to = String(params?.[0]?.to || "").toLowerCase();
+        const hash = "0x" + Math.random().toString(16).slice(2).padEnd(64, "0").slice(0, 64);
+        let status = "0x1";
+        if (to === ROUTER) {
+          swapCount++;
+          if (m.revertSwap === swapCount) status = "0x0";
+        }
+        window.__fakeTx[hash] = status;
+        return hash;
       }
       return reject(); // eth_sendTransaction and anything else that would act
     },
@@ -98,7 +130,8 @@ page.on("response", async (r) => {
   if (r.url().includes("/api/swap") && /No route available|Could not build/.test(body)) return;
   serverErrors.push(`${r.status()} ${r.url().replace(URL_BASE, "")} ${body.slice(0, 120)}`);
 });
-await page.setViewport({ width: 390, height: 900, isMobile: true, hasTouch: true });
+const WIDTH = Number(arg("width", "390"));
+await page.setViewport({ width: WIDTH, height: 900, isMobile: WIDTH < 768, hasTouch: WIDTH < 768 });
 await page.evaluateOnNewDocument(MOCK, WALLET);
 
 const text = () => page.evaluate(() => document.body.innerText);
@@ -239,7 +272,38 @@ await step("Agent basket: buy opens a multi-stock review or a clear funds messag
   return "clear message shown (test wallet has little USDC)";
 });
 
-await step("Portfolio: balances, P/L and visible Sell buttons at phone width", async () => {
+await step("Basket where one swap reverts (one-by-one): reports 'Partly completed' with the failed stock", async () => {
+  await dismissToast();
+  await setMock({ usdc: 1000, sendCalls: "unsupported", sendTx: "fake", revertSwap: 2 });
+  await page.evaluate(() => { window.__fakeTx = {}; });
+  await tab("Agent");
+  await waitText(/Buy basket for \$/, 60000);
+  assert(await click("button", /^Buy basket for \$/), "basket button");
+  await page.waitForSelector('[role="dialog"]', { timeout: 120000 });
+  const legs = await page.$$eval('[role="dialog"] .divide-y > div', (e) => e.length);
+  assert(await click('[role="dialog"] button', /Confirm in wallet/), "Confirm");
+  await waitText(/Partly completed/, 120000);
+  const t = await text();
+  assert(/Not completed: Buy \w+c \(Swap reverted onchain/.test(t), "failed stock not listed with the revert reason");
+  return `${legs} legs, 1 reverted, the rest reported as done`;
+});
+
+await step("Batch that errors but lands late: nothing is resent (no double trade)", async () => {
+  await setMock({ usdc: 1000, lateSpend: 25, sendCalls: "late", sendTx: "fake", revertSwap: 0 });
+  await page.evaluate(() => { window.__fakeTx = {}; });
+  await tab("Market");
+  await buyOneDollar();
+  await page.waitForSelector('[role="dialog"]', { timeout: 60000 });
+  await click('[role="dialog"] button', /Confirm in wallet/);
+  await waitText(/funds have moved/, 40000);
+  const c = await calls();
+  assert(!c.includes("eth_sendTransaction"), "sent one-by-one after the batch had landed (double trade)");
+  await dismissToast();
+  await setMock({ usdc: undefined, sendCalls: "reject", sendTx: "reject", revertSwap: 0 });
+  await page.evaluate(() => { delete window.__mock.usdc; sessionStorage.setItem("__mock", JSON.stringify(window.__mock)); });
+});
+
+await step(`Portfolio: balances, P/L and visible Sell buttons at ${WIDTH}px`, async () => {
   await dismissToast();
   await tab("Portfolio");
   await page.waitForFunction(() => [...document.querySelectorAll("table button")].some((b) => b.textContent.trim() === "All"), { timeout: 40000 });
@@ -262,13 +326,13 @@ await step("Sell 50% opens a sell review; nothing sent before Confirm", async ()
   await click('[role="dialog"] button', /^Cancel$/);
 });
 
-await step("No horizontal scrolling on any tab at 390px", async () => {
+await step(`No horizontal scrolling on any tab at ${WIDTH}px`, async () => {
   const bad = [];
   for (const t of ["Market", "Agent", "Indexes", "Portfolio"]) {
     await tab(t);
     await sleep(700);
     const w = await page.evaluate(() => document.documentElement.scrollWidth);
-    if (w > 390) bad.push(`${t}:${w}px`);
+    if (w > WIDTH) bad.push(`${t}:${w}px`);
   }
   assert(bad.length === 0, bad.join(" "));
 });

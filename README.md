@@ -60,7 +60,7 @@ Checks (no funds needed):
 npm run test:contracts         # 19 registry checks via a single eth_call
 npm run test:swap              # simulates USDC -> each stock swap on mainnet
 npm run test:attribution       # Builder Code survives EOA, EIP-7702 and ERC-4337 batching
-npm run test:e2e               # 17 user journeys in a browser with a read-only mock wallet
+npm run test:e2e               # 19 user journeys in a browser with a read-only mock wallet
 npm run agent:cli              # live NAV + multipliers in the terminal
 ```
 

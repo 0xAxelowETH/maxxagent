@@ -11,7 +11,7 @@ Start the app first: `npm run dev`.
 | --- | --- |
 | `npx tsc --noEmit` and `npm run lint` | No type errors, no lint errors |
 | `npm run test:contracts` | Index registry contract rules (19 checks) |
-| `npm run test:e2e` | 17 user journeys in a real browser with a read-only mock wallet: terms gate, connect, reconnect after refresh, Swap panel, review before signing, rejection not retried, fallback for wallets without batching (and odd batch errors, with the no-double-send check), wrong network, Agent basket, Portfolio P/L and Sell at phone width, no horizontal scroll, disconnect, pages, console and 5xx errors. ~2 min. |
+| `npm run test:e2e` | 19 user journeys (add `-- --width=1440` for desktop) in a real browser with a read-only mock wallet: terms gate, connect, reconnect after refresh, Swap panel, review before signing, rejection not retried, fallback for wallets without batching (and odd batch errors, with the no-double-send check), wrong network, Agent basket, Portfolio P/L and Sell at phone width, no horizontal scroll, disconnect, pages, console and 5xx errors. ~2 min. |
 | `npm run test:attribution` | Every swap from `/api/swap` ends with the Builder Code for EOAs, EIP-7702 batches (MetaMask), ERC-7579 and ERC-4337 smart wallets (Coinbase Smart Wallet). It also checks the router accepts the calldata (`eth_call`). |
 | `npm run test:swap` | Quotes for all 10 stocks (routes, cost, Builder Code) |
 | `npm run test:buy` / `npm run test:sell` | Dry run of a buy / sell from the test wallet (no `--execute` = nothing is sent) |

@@ -2308,6 +2308,12 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                             Skipped: {basketResult.skipped.map((s) => `${s.symbol} — ${s.error}`).join(" · ")}
                           </div>
                         )}
+                        {basketResult.failed?.length > 0 && (
+                          <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-2 py-1.5 text-amber-100">
+                            Partly completed. Not completed: {basketResult.failed.map((f) => `${f.label} (${f.error})`).join(" · ")}. The other
+                            stocks went through.
+                          </div>
+                        )}
                         <div className="flex flex-wrap gap-2">
                           {(basketResult.txs.length ? basketResult.txs : basketResult.txHashes.map((h) => ({ hash: h, status: "unknown" as const }))).map((t) => (
                             <a

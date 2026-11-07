@@ -212,7 +212,10 @@ function isUserRejection(err: unknown) {
 
 const shortError = (err: unknown) => {
   const m = err instanceof Error ? err.message : String((err as { message?: string })?.message ?? err ?? "failed");
-  return /reverted/i.test(m) ? "Swap reverted onchain (price moved or liquidity changed); only gas was spent" : m.slice(0, 140);
+  if (/reverted/i.test(m)) return "Swap reverted onchain (price moved or liquidity changed); only gas was spent";
+  // Not a failure: it may still confirm. Saying "failed" could make the user buy again.
+  if (/timed out/i.test(m)) return "Still pending after 2 minutes: check BaseScan before retrying";
+  return m.slice(0, 140);
 };
 
 export interface FailedLeg {
@@ -232,7 +235,9 @@ async function sendCalls(
   labels: string[],
   onStatus: StatusFn,
   builderCode: string,
-  spend: string[]
+  spend: string[],
+  /** token and amount each swap call spends (same order as swapCalls) */
+  swapSpend: { token: string; amount: bigint }[]
 ): Promise<{ mode: "batch" | "sequential"; txHashes: string[]; failed: FailedLeg[] }> {
   const calls = [...approveCalls, ...swapCalls];
   const balancesOf = () => Promise.all(spend.map((t) => readErc20(eth, t, "balanceOf", [sender as `0x${string}`]).catch(() => null)));
@@ -304,13 +309,31 @@ async function sendCalls(
   // Swaps are independent: one failing must not hide the others that succeeded
   const failed: FailedLeg[] = [];
   let swapped = 0;
+  const spentSoFar = new Map<string, bigint>();
   for (let j = 0; j < swapCalls.length; j++) {
     const c = swapCalls[j];
+    // Double-trade guard: if the token balance dropped more than this order has spent, something else
+    // spent it (e.g. the batch went through late after an error). Stop instead of buying twice.
+    const { token, amount } = swapSpend[j];
+    const idx = spend.findIndex((t) => t.toLowerCase() === token.toLowerCase());
+    const start = idx >= 0 ? before[idx] : null;
+    if (start !== null) {
+      const now = await readErc20(eth, token, "balanceOf", [sender as `0x${string}`]).catch(() => null);
+      const expected = start - (spentSoFar.get(token.toLowerCase()) ?? 0n);
+      if (now !== null && now < expected) {
+        for (let k = j; k < swapCalls.length; k++)
+          failed.push({ label: labels[k], error: "Stopped: funds moved outside this order (the batch may have gone through). Check your wallet activity" });
+        break;
+      }
+    }
     onStatus(`${labels[j]} (${approveCalls.length + j + 1}/${calls.length})…`);
     let hash: string | undefined;
     try {
       hash = (await eth.request({ method: "eth_sendTransaction", params: [{ from: sender, to: c.to, data: c.data, value: c.value }] })) as string;
       txHashes.push(hash);
+      // Counted as spent as soon as it is sent: a reverted swap returns the funds, so the guard then only
+      // under-estimates the balance (never stops wrongly in the dangerous direction)
+      spentSoFar.set(token.toLowerCase(), (spentSoFar.get(token.toLowerCase()) ?? 0n) + amount);
       await waitForReceipt(eth, hash);
       swapped++;
     } catch (err) {
@@ -506,6 +529,7 @@ export async function submitOrder(params: {
   const approveCalls = await buildApprovals(eth, sender, legs, builderCode);
   const verb = side === "buy" ? "Buy" : "Sell";
   const spend = [...new Set(legs.map((q) => q.tokenIn!))];
+  const swapSpend = legs.map((q) => ({ token: q.tokenIn!, amount: BigInt(q.amountInRaw!) }));
   const { mode, txHashes, failed } = await sendCalls(
     eth,
     sender,
@@ -514,7 +538,8 @@ export async function submitOrder(params: {
     legs.map((q) => `${verb} ${q.symbol}`),
     onStatus,
     builderCode,
-    spend
+    spend,
+    swapSpend
   );
   onStatus("Reading what you received onchain…");
   const watch =
@@ -522,6 +547,19 @@ export async function submitOrder(params: {
       ? legs.map((q) => ({ address: q.b20Address!, symbol: q.symbol, decimals: B20_DECIMALS, quoted: q.amountOutShares }))
       : [{ address: USDC_BASE, symbol: "USDC", decimals: USDC_DECIMALS, quoted: order.totalOutUsdc }];
   const tracked = await trackReceipts(eth, txHashes, sender, watch);
+  // A batch can be mined while its swaps revert (non-atomic wallets) -> judge by what actually arrived,
+  // but only when every receipt was readable (an RPC hiccup must not be reported as a failed trade)
+  if (mode === "batch" && tracked.txs.length > 0 && tracked.txs.every((t) => t.status !== "unknown")) {
+    if (side === "buy") {
+      for (const q of legs) {
+        const got = tracked.received.find((r) => r.b20Address === q.b20Address!.toLowerCase());
+        if (!got || got.raw === "0") failed.push({ label: `${verb} ${q.symbol}`, error: "No stock arrived: the swap reverted; only gas was spent" });
+      }
+    } else if ((tracked.received[0]?.raw ?? "0") === "0") {
+      for (const q of legs) failed.push({ label: `${verb} ${q.symbol}`, error: "No USDC arrived: the swap reverted; only gas was spent" });
+    }
+    if (failed.length === legs.length) throw new Error("The batch was mined but every swap reverted (price moved). Your funds stayed in your wallet; only gas was spent.");
+  }
   // Legs that failed are not "bought": keep only the ones that went through
   const failedLabels = new Set(failed.map((f) => f.label));
   const done = legs.filter((q) => !failedLabels.has(`${verb} ${q.symbol}`));
