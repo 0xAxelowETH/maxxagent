@@ -88,6 +88,8 @@ export interface BasketResult {
   /** Actual amounts received, read from onchain Transfer events (not the quote) */
   received: ReceivedAmount[];
   txs: TrackedTx[];
+  /** legs that did not go through when sent one by one (the others did) */
+  failed: FailedLeg[];
 }
 
 type StatusFn = (msg: string) => void;
@@ -202,7 +204,26 @@ async function buildApprovals(eth: EthProvider, sender: string, legs: LegQuote[]
   return calls;
 }
 
-/** Sends approvals + swaps: one EIP-5792 batch if supported, otherwise one by one. */
+/** True when the user declined in the wallet (never retried in another form). */
+function isUserRejection(err: unknown) {
+  const e = err as { code?: number; message?: string };
+  return e?.code === 4001 || /user (rejected|denied|cancel)|rejected by (the )?user|request rejected|denied transaction|cancell?ed/i.test(e?.message || "");
+}
+
+const shortError = (err: unknown) => {
+  const m = err instanceof Error ? err.message : String((err as { message?: string })?.message ?? err ?? "failed");
+  return /reverted/i.test(m) ? "Swap reverted onchain (price moved or liquidity changed); only gas was spent" : m.slice(0, 140);
+};
+
+export interface FailedLeg {
+  label: string;
+  error: string;
+}
+
+/**
+ * Sends approvals + swaps: one EIP-5792 batch if the wallet supports it, otherwise one by one.
+ * `spend` = tokens the order spends; their balances guard the fallback against sending twice.
+ */
 async function sendCalls(
   eth: EthProvider,
   sender: string,
@@ -210,9 +231,12 @@ async function sendCalls(
   swapCalls: Call[],
   labels: string[],
   onStatus: StatusFn,
-  builderCode: string
-): Promise<{ mode: "batch" | "sequential"; txHashes: string[] }> {
+  builderCode: string,
+  spend: string[]
+): Promise<{ mode: "batch" | "sequential"; txHashes: string[]; failed: FailedLeg[] }> {
   const calls = [...approveCalls, ...swapCalls];
+  const balancesOf = () => Promise.all(spend.map((t) => readErc20(eth, t, "balanceOf", [sender as `0x${string}`]).catch(() => null)));
+  const before = await balancesOf();
   onStatus(`Confirm ${calls.length} action${calls.length > 1 ? "s" : ""} in one wallet prompt…`);
   // Smart wallets (ERC-4337) wrap calls in executeBatch, so the per-call suffix is not at the end of
   // the UserOp callData. Base's documented fix: the optional `dataSuffix` capability, appended by the wallet.
@@ -233,8 +257,17 @@ async function sendCalls(
     }
     batchId = typeof sendRes === "string" ? sendRes : sendRes?.id;
   } catch (err) {
-    // Only a wallet that cannot batch falls back to one-by-one. A rejection by the user is rethrown.
-    if (!isUnsupportedMethod(err)) throw err;
+    if (isUserRejection(err)) throw err;
+    if (!isUnsupportedMethod(err)) {
+      // Unknown error (wallets word "no batching" in many ways). Before sending one by one, make sure the
+      // batch did not go through anyway: if any spent balance dropped, never resend (no double trade).
+      await sleep(5000);
+      const after = await balancesOf();
+      if (after.some((a, i) => a !== null && before[i] !== null && a < before[i]!)) {
+        throw new Error("Your wallet reported an error, but funds have moved. Check your wallet activity before retrying.");
+      }
+    }
+    onStatus("Your wallet doesn't support one-prompt batches: confirming each step…");
   }
 
   if (batchId) {
@@ -253,21 +286,47 @@ async function sendCalls(
       const done = status?.status === 200 || status?.status === "CONFIRMED" || status?.status === "success";
       const failed = (typeof status?.status === "number" && status.status >= 400) || status?.status === "failure";
       if (failed) throw new Error("Batch failed onchain. Nothing was swapped in the failed calls.");
-      if (done) return { mode: "batch", txHashes: [...new Set((status!.receipts || []).map((r) => r.transactionHash))] };
+      if (done) return { mode: "batch", txHashes: [...new Set((status!.receipts || []).map((r) => r.transactionHash))], failed: [] };
       await sleep(2000);
     }
     throw new Error("Timed out waiting for batch confirmation. Check your wallet activity before retrying.");
   }
 
+  // One by one. Approvals first (a failed approval stops everything: nothing has been swapped yet).
   const txHashes: string[] = [];
-  for (let i = 0; i < calls.length; i++) {
-    const c = calls[i];
-    onStatus(i < approveCalls.length ? `Approve (${i + 1}/${calls.length})…` : `${labels[i - approveCalls.length]} (${i + 1}/${calls.length})…`);
+  for (let i = 0; i < approveCalls.length; i++) {
+    const c = approveCalls[i];
+    onStatus(`Approve (${i + 1}/${calls.length})…`);
     const hash = (await eth.request({ method: "eth_sendTransaction", params: [{ from: sender, to: c.to, data: c.data, value: c.value }] })) as string;
     txHashes.push(hash);
     await waitForReceipt(eth, hash);
   }
-  return { mode: "sequential", txHashes };
+  // Swaps are independent: one failing must not hide the others that succeeded
+  const failed: FailedLeg[] = [];
+  let swapped = 0;
+  for (let j = 0; j < swapCalls.length; j++) {
+    const c = swapCalls[j];
+    onStatus(`${labels[j]} (${approveCalls.length + j + 1}/${calls.length})…`);
+    let hash: string | undefined;
+    try {
+      hash = (await eth.request({ method: "eth_sendTransaction", params: [{ from: sender, to: c.to, data: c.data, value: c.value }] })) as string;
+      txHashes.push(hash);
+      await waitForReceipt(eth, hash);
+      swapped++;
+    } catch (err) {
+      if (isUserRejection(err)) {
+        // The user stopped: report this leg and the remaining ones as cancelled
+        for (let k = j; k < swapCalls.length; k++) failed.push({ label: labels[k], error: "Cancelled in wallet" });
+        break;
+      }
+      failed.push({ label: labels[j], error: shortError(err) });
+    }
+  }
+  if (swapped === 0) {
+    const first = failed[0];
+    throw new Error(first?.error === "Cancelled in wallet" ? "Cancelled in wallet. Nothing was swapped." : first?.error || "No swap went through.");
+  }
+  return { mode: "sequential", txHashes, failed };
 }
 
 async function postSwap(body: Record<string, unknown>, fallbackSymbol: string): Promise<LegQuote> {
@@ -446,14 +505,27 @@ export async function submitOrder(params: {
 
   const approveCalls = await buildApprovals(eth, sender, legs, builderCode);
   const verb = side === "buy" ? "Buy" : "Sell";
-  const { mode, txHashes } = await sendCalls(eth, sender, approveCalls, legs.map(toSwapCall), legs.map((q) => `${verb} ${q.symbol}`), onStatus, builderCode);
+  const spend = [...new Set(legs.map((q) => q.tokenIn!))];
+  const { mode, txHashes, failed } = await sendCalls(
+    eth,
+    sender,
+    approveCalls,
+    legs.map(toSwapCall),
+    legs.map((q) => `${verb} ${q.symbol}`),
+    onStatus,
+    builderCode,
+    spend
+  );
   onStatus("Reading what you received onchain…");
   const watch =
     side === "buy"
       ? legs.map((q) => ({ address: q.b20Address!, symbol: q.symbol, decimals: B20_DECIMALS, quoted: q.amountOutShares }))
       : [{ address: USDC_BASE, symbol: "USDC", decimals: USDC_DECIMALS, quoted: order.totalOutUsdc }];
   const tracked = await trackReceipts(eth, txHashes, sender, watch);
-  return { side, mode, txHashes, bought: legs, skipped, ...tracked };
+  // Legs that failed are not "bought": keep only the ones that went through
+  const failedLabels = new Set(failed.map((f) => f.label));
+  const done = legs.filter((q) => !failedLabels.has(`${verb} ${q.symbol}`));
+  return { side, mode, txHashes, bought: done, skipped, ...tracked, failed };
 }
 
 /** Quote + send in one go (no review step). Kept for scripts and backwards compatibility. */

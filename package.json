@@ -19,7 +19,8 @@
     "test:buy": "node scripts/test-buy.mjs",
     "test:sell": "node scripts/test-sell.mjs",
     "test:attribution": "node scripts/test-attribution.mjs",
-    "verify:trades": "node scripts/verify-trades.mjs"
+    "verify:trades": "node scripts/verify-trades.mjs",
+    "test:e2e": "node scripts/e2e.mjs"
   },
   "dependencies": {
     "@coinbase/wallet-sdk": "^4.4.0",

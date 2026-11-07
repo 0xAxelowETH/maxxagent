@@ -1921,14 +1921,14 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                           </td>
                           <td className="py-3.5 px-4 text-right font-mono">
                             <div className="text-slate-200 font-medium">
-                              {stock.totalSupplySharesUI.toLocaleString(undefined, {
+                              {stock.totalSupplySharesUI.toLocaleString("en-US", {
                                 maximumFractionDigits: 2,
                               })}{" "}
                               sh
                             </div>
                             <div className="text-[10px] text-slate-400">
                               Raw:{" "}
-                              {stock.totalSupplyTokens.toLocaleString(undefined, {
+                              {stock.totalSupplyTokens.toLocaleString("en-US", {
                                 maximumFractionDigits: 2,
                               })}
                             </div>
@@ -2339,7 +2339,7 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                         logoUrl: a.logoUrl || STOCK_LOGO_MAP[a.symbol],
                       }))}
                       centerLabel="Capital"
-                      centerValue={`$${agentReport.portfolioCapitalUsd.toLocaleString()}`}
+                      centerValue={`$${agentReport.portfolioCapitalUsd.toLocaleString("en-US")}`}
                     />
                   </div>
 
@@ -2395,7 +2395,7 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                               </span>
                               <span className="text-white font-bold">
                                 {(alloc.targetWeightBps / 100).toFixed(2)}% ($
-                                {alloc.usdAllocation.toLocaleString(undefined, {
+                                {alloc.usdAllocation.toLocaleString("en-US", {
                                   maximumFractionDigits: 0,
                                 })}
                                 )
@@ -3483,7 +3483,7 @@ const walletClient = createWalletClient({
         <div className="fixed bottom-24 md:bottom-4 left-3 right-3 sm:left-auto sm:right-4 sm:w-96 z-50 rounded-2xl border border-slate-700 bg-[#0b1120]/95 p-4 text-xs shadow-2xl backdrop-blur space-y-2">
           <div className="flex items-start justify-between gap-3">
             <div className="font-bold text-white">
-              {basketPending ? basketStatus || "Working…" : basketError ? "Order not completed" : basketResult?.side === "sell" ? "Sale confirmed" : "Purchase confirmed"}
+              {basketPending ? basketStatus || "Working…" : basketError ? "Order not completed" : basketResult?.failed?.length ? "Partly completed" : basketResult?.side === "sell" ? "Sale confirmed" : "Purchase confirmed"}
             </div>
             {!basketPending && (
               <button
@@ -3499,6 +3499,11 @@ const walletClient = createWalletClient({
             )}
           </div>
           {basketError && <div className="text-rose-200">{basketError}</div>}
+          {basketResult && basketResult.failed?.length > 0 && (
+            <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-2 text-amber-100">
+              Not completed: {basketResult.failed.map((f) => `${f.label} (${f.error})`).join(" · ")}. The other steps went through.
+            </div>
+          )}
           {basketResult && (
             <div className="text-emerald-100 space-y-1">
               <div>

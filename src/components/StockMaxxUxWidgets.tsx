@@ -664,7 +664,7 @@ function SwapPanel({
   let problem = "";
   if (side === "buy") {
     if (!(tradeUsd >= BUY_MIN_USD)) problem = `Minimum is $${BUY_MIN_USD}`;
-    else if (tradeUsd > BUY_MAX_USD) problem = `Maximum is $${BUY_MAX_USD.toLocaleString()} per order`;
+    else if (tradeUsd > BUY_MAX_USD) problem = `Maximum is $${BUY_MAX_USD.toLocaleString("en-US")} per order`;
     else if (walletConnected && usdcBalance !== null && tradeUsd > usdcBalance) problem = "Not enough USDC on Base";
   } else if (!walletConnected) problem = "Connect your wallet to sell";
   else if (holdingTokens <= 0) problem = `You don't hold ${stock.symbol}`;
