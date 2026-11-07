@@ -186,6 +186,31 @@ interface HistoryResponse {
   dexPool: string | null;
 }
 
+// Client-side history cache shared by every chart instance: switching back to a stock is instant
+const HISTORY_TTL_MS = 5 * 60 * 1000;
+const historyCache = new Map<string, { at: number; data: HistoryResponse | null }>();
+const inflight = new Map<string, Promise<void>>();
+
+function loadHistory(symbol: string, tf: HistoryTf): Promise<void> {
+  const key = `${symbol}:${tf}`;
+  const hit = historyCache.get(key);
+  if (hit && Date.now() - hit.at < HISTORY_TTL_MS) return Promise.resolve();
+  const running = inflight.get(key);
+  if (running) return running;
+  const p = fetch(`/api/history?symbol=${symbol}&tf=${tf}`)
+    .then((r) => r.json())
+    .then((d: HistoryResponse) => {
+      // keep a previous good series if a refresh fails
+      if (d?.ok || !hit) historyCache.set(key, { at: Date.now(), data: d?.ok ? d : null });
+    })
+    .catch(() => {
+      if (!hit) historyCache.set(key, { at: Date.now() - HISTORY_TTL_MS + 30_000, data: null }); // retry in 30s
+    })
+    .finally(() => inflight.delete(key));
+  inflight.set(key, p);
+  return p;
+}
+
 function nearest(series: [number, number][], t: number): [number, number] | null {
   if (series.length === 0) return null;
   let best = series[0];
@@ -199,44 +224,74 @@ export function InteractiveB20TradingChart({
   onSelectSymbol,
   onSendToAgent,
   onBuy,
-  buyLabel,
-  buyDisabled,
+  onSell,
+  tradeUsd,
+  onTradeUsdChange,
+  usdcBalance,
+  holdingTokens,
+  walletConnected,
+  pending,
+  pendingLabel,
 }: {
   stocks: LiveTokenizedStock[];
   selectedSymbol: string;
   onSelectSymbol: (sym: string) => void;
   onSendToAgent: (sym: string) => void;
-  onBuy: (stock: TokenizedStockMetadata) => void;
-  buyLabel: string;
-  buyDisabled?: boolean;
+  /** Buy `usd` worth of the stock with USDC */
+  onBuy: (stock: TokenizedStockMetadata, usd: number) => void;
+  /** Sell `tokens` of the stock for USDC */
+  onSell: (stock: TokenizedStockMetadata, tokens: number) => void;
+  tradeUsd: number;
+  onTradeUsdChange: (usd: number) => void;
+  usdcBalance: number | null;
+  /** Wallet balance of the selected stock, in stock tokens */
+  holdingTokens: number;
+  walletConnected: boolean;
+  pending: boolean;
+  pendingLabel: string;
 }) {
   const [timeframe, setTimeframe] = useState<HistoryTf>("7D");
   const [hoverT, setHoverT] = useState<number | null>(null);
-  const [history, setHistory] = useState<HistoryResponse | null>(null);
-  const [loading, setLoading] = useState<boolean>(false);
+  // Bumped when a history response lands, so the chart re-reads the cache
+  const [, setCacheTick] = useState(0);
 
   const stockList: TokenizedStockMetadata[] = stocks.length > 0 ? stocks : BASE_TOKENIZED_STOCKS;
   const activeStock = stockList.find((s) => s.symbol === selectedSymbol) || stockList[0];
   const liveActive = "navPrice" in activeStock ? (activeStock as LiveTokenizedStock) : null;
 
+  const key = `${activeStock.symbol}:${timeframe}`;
+  // Only the history of the stock on screen is ever used: never the previous stock's series
+  const cachedEntry = historyCache.get(key);
+  const history = cachedEntry?.data ?? null;
+  const loading = !cachedEntry || Date.now() - cachedEntry.at > HISTORY_TTL_MS;
+
   useEffect(() => {
     let cancelled = false;
-    setLoading(true);
-    fetch(`/api/history?symbol=${activeStock.symbol}&tf=${timeframe}`)
-      .then((r) => r.json())
-      .then((d: HistoryResponse) => {
-        if (!cancelled) setHistory(d?.ok ? d : null);
-      })
-      .catch(() => {
-        if (!cancelled) setHistory(null);
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
+    loadHistory(activeStock.symbol, timeframe).finally(() => {
+      if (!cancelled) setCacheTick((n) => n + 1);
+    });
     return () => {
       cancelled = true;
     };
   }, [activeStock.symbol, timeframe]);
+
+  // Warm the cache for the other stocks in the background (one at a time, gently)
+  const symbolsKey = stockList.map((s) => s.symbol).join(",");
+  useEffect(() => {
+    let stop = false;
+    const timer = setTimeout(async () => {
+      for (const sym of symbolsKey.split(",")) {
+        if (stop) return;
+        if (historyCache.has(`${sym}:${timeframe}`)) continue;
+        await loadHistory(sym, timeframe);
+        await new Promise((r) => setTimeout(r, 1500));
+      }
+    }, 2500);
+    return () => {
+      stop = true;
+      clearTimeout(timer);
+    };
+  }, [symbolsKey, timeframe]);
 
   const nav = history?.nav ?? [];
   const dex = history?.dex ?? [];
@@ -537,14 +592,19 @@ export function InteractiveB20TradingChart({
           </div>
 
           <div className="space-y-2 pt-2 border-t border-slate-800/80">
-            <button
-              onClick={() => onBuy(activeStock)}
-              disabled={buyDisabled}
-              className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-[#4C6FFF] to-cyan-600 px-4 py-2.5 text-xs font-bold text-white shadow-lg shadow-[#4C6FFF]/30 hover:brightness-110 disabled:opacity-60 transition cursor-pointer"
-            >
-              <Zap className="h-3.5 w-3.5" />
-              {buyLabel}
-            </button>
+            <SwapPanel
+              stock={activeStock}
+              price={liveActive ? liveActive.dexPrice24_7 || liveActive.navPrice : 0}
+              tradeUsd={tradeUsd}
+              onTradeUsdChange={onTradeUsdChange}
+              usdcBalance={usdcBalance}
+              holdingTokens={holdingTokens}
+              walletConnected={walletConnected}
+              pending={pending}
+              pendingLabel={pendingLabel}
+              onBuy={onBuy}
+              onSell={onSell}
+            />
             <button
               onClick={() => onSendToAgent(activeStock.symbol)}
               className="w-full inline-flex items-center justify-center gap-2 rounded-xl border border-slate-700 bg-slate-800/90 hover:bg-slate-700 px-4 py-2 text-xs font-semibold text-slate-200 transition cursor-pointer"
@@ -555,6 +615,176 @@ export function InteractiveB20TradingChart({
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+/** Same limits as /api/swap, so the panel never offers an amount the server would refuse */
+const BUY_MIN_USD = 1;
+const BUY_MAX_USD = 2500;
+const SELL_MIN_USD = 0.25;
+
+/** Buy/Sell one stock for any amount (USDC in, or a share of the current holding out). */
+function SwapPanel({
+  stock,
+  price,
+  tradeUsd,
+  onTradeUsdChange,
+  usdcBalance,
+  holdingTokens,
+  walletConnected,
+  pending,
+  pendingLabel,
+  onBuy,
+  onSell,
+}: {
+  stock: TokenizedStockMetadata;
+  price: number;
+  tradeUsd: number;
+  onTradeUsdChange: (usd: number) => void;
+  usdcBalance: number | null;
+  holdingTokens: number;
+  walletConnected: boolean;
+  pending: boolean;
+  pendingLabel: string;
+  onBuy: (stock: TokenizedStockMetadata, usd: number) => void;
+  onSell: (stock: TokenizedStockMetadata, tokens: number) => void;
+}) {
+  const [side, setSide] = useState<"buy" | "sell">("buy");
+  const [sellPct, setSellPct] = useState<number>(100);
+  const [draft, setDraft] = useState<string>(String(tradeUsd));
+  // Follow outside changes (chips, Max) without clobbering what is being typed ("1." → 1)
+  useEffect(() => setDraft((d) => (Number(d) === tradeUsd ? d : String(tradeUsd))), [tradeUsd]);
+
+  const holdingUsd = holdingTokens * price;
+  const sellTokens = (holdingTokens * sellPct) / 100;
+  const sellUsd = sellTokens * price;
+  const estTokens = price > 0 ? tradeUsd / price : 0;
+
+  let problem = "";
+  if (side === "buy") {
+    if (!(tradeUsd >= BUY_MIN_USD)) problem = `Minimum is $${BUY_MIN_USD}`;
+    else if (tradeUsd > BUY_MAX_USD) problem = `Maximum is $${BUY_MAX_USD.toLocaleString()} per order`;
+    else if (walletConnected && usdcBalance !== null && tradeUsd > usdcBalance) problem = "Not enough USDC on Base";
+  } else if (!walletConnected) problem = "Connect your wallet to sell";
+  else if (holdingTokens <= 0) problem = `You don't hold ${stock.symbol}`;
+  else if (sellUsd < SELL_MIN_USD) problem = `Minimum sell is $${SELL_MIN_USD}`;
+
+  const commit = (v: string) => {
+    const n = Math.round((Number(v) || 0) * 100) / 100;
+    onTradeUsdChange(Math.max(0, n));
+  };
+  const maxBuy = usdcBalance !== null ? Math.min(BUY_MAX_USD, Math.floor(usdcBalance * 100) / 100) : null;
+  const chip = "rounded-lg border px-2 py-1 text-[11px] font-bold transition cursor-pointer";
+
+  return (
+    <div id="swap-panel" className="rounded-2xl border border-slate-800 bg-[#050a18] p-3 space-y-3 scroll-mt-24">
+      <div className="grid grid-cols-2 gap-1 rounded-xl bg-[#040814] p-1">
+        {(["buy", "sell"] as const).map((s) => (
+          <button
+            key={s}
+            onClick={() => setSide(s)}
+            className={`rounded-lg py-1.5 text-xs font-bold capitalize transition cursor-pointer ${
+              side === s ? (s === "buy" ? "bg-[#4C6FFF] text-white" : "bg-rose-500/80 text-white") : "text-slate-400 hover:text-white"
+            }`}
+          >
+            {s} {stock.symbol}
+          </button>
+        ))}
+      </div>
+
+      {side === "buy" ? (
+        <>
+          <label className="block">
+            <span className="flex items-center justify-between text-[11px] text-slate-400">
+              <span>You pay (USDC)</span>
+              {walletConnected && usdcBalance !== null && <span>Balance: {usdcBalance.toFixed(2)}</span>}
+            </span>
+            <div className="mt-1 flex items-center rounded-xl border border-slate-700 bg-[#040814] px-3 focus-within:border-[#4C6FFF]">
+              <span className="text-slate-400 font-mono">$</span>
+              <input
+                type="number"
+                inputMode="decimal"
+                min={BUY_MIN_USD}
+                max={BUY_MAX_USD}
+                step="0.01"
+                value={draft}
+                onChange={(e) => {
+                  setDraft(e.target.value);
+                  commit(e.target.value);
+                }}
+                aria-label="Amount in USDC"
+                className="w-full bg-transparent px-2 py-2 font-mono text-base font-bold text-white outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+              />
+            </div>
+          </label>
+          <div className="flex flex-wrap gap-1.5">
+            {[5, 10, 25, 50, 100].map((v) => (
+              <button
+                key={v}
+                onClick={() => onTradeUsdChange(v)}
+                className={`${chip} ${tradeUsd === v ? "border-[#4C6FFF] bg-[#4C6FFF]/20 text-white" : "border-slate-700 text-slate-300 hover:border-slate-500"}`}
+              >
+                ${v}
+              </button>
+            ))}
+            {maxBuy !== null && maxBuy >= BUY_MIN_USD && (
+              <button
+                onClick={() => onTradeUsdChange(maxBuy)}
+                className={`${chip} border-slate-700 text-slate-300 hover:border-slate-500`}
+              >
+                Max
+              </button>
+            )}
+          </div>
+          <div className="text-[11px] text-slate-400">
+            You receive ≈ <span className="font-mono text-slate-200">{estTokens.toFixed(6)} {stock.symbol}</span>
+            <span className="text-slate-500"> (exact amount quoted before you sign)</span>
+          </div>
+        </>
+      ) : (
+        <>
+          <div className="flex items-center justify-between text-[11px] text-slate-400">
+            <span>You hold</span>
+            <span className="font-mono text-slate-200">
+              {holdingTokens.toFixed(6)} {stock.symbol} ≈ ${holdingUsd.toFixed(2)}
+            </span>
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            {[25, 50, 75, 100].map((p) => (
+              <button
+                key={p}
+                onClick={() => setSellPct(p)}
+                className={`${chip} ${sellPct === p ? "border-rose-400 bg-rose-500/20 text-white" : "border-slate-700 text-slate-300 hover:border-slate-500"}`}
+              >
+                {p === 100 ? "All" : `${p}%`}
+              </button>
+            ))}
+          </div>
+          <div className="text-[11px] text-slate-400">
+            You sell <span className="font-mono text-slate-200">{sellTokens.toFixed(6)} {stock.symbol}</span> ≈{" "}
+            <span className="font-mono text-slate-200">${sellUsd.toFixed(2)} USDC</span>
+          </div>
+        </>
+      )}
+
+      <button
+        onClick={() => (side === "buy" ? onBuy(stock, tradeUsd) : onSell(stock, sellTokens))}
+        disabled={pending || Boolean(problem)}
+        className={`w-full inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-xs font-bold text-white shadow-lg transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${
+          side === "buy"
+            ? "bg-gradient-to-r from-[#4C6FFF] to-cyan-600 shadow-[#4C6FFF]/30 hover:brightness-110"
+            : "bg-gradient-to-r from-rose-600 to-rose-500 shadow-rose-500/20 hover:brightness-110"
+        }`}
+      >
+        <Zap className="h-3.5 w-3.5" />
+        {pending
+          ? pendingLabel
+          : problem ||
+            (side === "buy"
+              ? `Buy $${tradeUsd.toFixed(2)} of ${stock.symbol}`
+              : `Sell ${sellPct === 100 ? "all" : `${sellPct}%`} ${stock.symbol} for USDC`)}
+      </button>
     </div>
   );
 }

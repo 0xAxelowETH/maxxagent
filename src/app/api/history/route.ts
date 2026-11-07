@@ -14,7 +14,7 @@ type Timeframe = "24H" | "7D" | "30D";
 const TF: Record<Timeframe, { seconds: number; gecko: string; maxRounds: number }> = {
   "24H": { seconds: 86_400, gecko: "minute?aggregate=15&limit=96", maxRounds: 150 },
   "7D": { seconds: 7 * 86_400, gecko: "hour?aggregate=1&limit=168", maxRounds: 300 },
-  "30D": { seconds: 30 * 86_400, gecko: "hour?aggregate=4&limit=180", maxRounds: 400 },
+  "30D": { seconds: 30 * 86_400, gecko: "hour?aggregate=4&limit=180", maxRounds: 900 },
 };
 
 const FEED_ABI = parseAbi([
@@ -35,34 +35,35 @@ const GECKO = "https://api.geckoterminal.com/api/v2/networks/base";
 async function chainlinkHistory(feed: `0x${string}`, sinceSec: number, maxRounds: number) {
   const points: [number, number][] = [];
   const [latestId] = await client.readContract({ address: feed, abi: FEED_ABI, functionName: "latestRoundData" });
-  let cursor = latestId;
-  const batchSize = 50n;
-  let reads = 0;
-  while (reads < maxRounds) {
-    const ids: bigint[] = [];
-    for (let i = 0n; i < batchSize && cursor - i > 0n; i++) ids.push(cursor - i);
-    if (ids.length === 0) break;
-    const results = await client.multicall({
+  const read = (ids: bigint[]) =>
+    client.multicall({
       allowFailure: true,
       contracts: ids.map((id) => ({ address: feed, abi: FEED_ABI, functionName: "getRoundData" as const, args: [id] })),
     });
-    reads += ids.length;
-    let reachedStart = false;
-    for (const r of results) {
-      if (r.status !== "success") {
-        reachedStart = true; // phase boundary / missing round
-        break;
-      }
-      const [, answer, , updatedAt] = r.result as readonly [bigint, bigint, bigint, bigint, bigint];
-      const t = Number(updatedAt);
-      if (t < sinceSec) {
-        reachedStart = true;
-        break;
-      }
-      if (answer > 0n) points.push([t, Number(answer) / 1e8]);
-    }
-    if (reachedStart) break;
-    cursor -= batchSize;
+  const idsFrom = (start: bigint, count: number) => {
+    const ids: bigint[] = [];
+    for (let i = 0n; i < BigInt(count) && start - i > 0n; i++) ids.push(start - i);
+    return ids;
+  };
+
+  // Newest 50 rounds first (usually enough for 24H); the rest in ONE parallel multicall instead of
+  // sequential 50-round pages (30D went from ~8 round trips / 3s to 2 round trips).
+  const FIRST = 50;
+  const results = [...(await read(idsFrom(latestId, Math.min(FIRST, maxRounds))))];
+  const needMore = () => {
+    const last = results[results.length - 1];
+    return last?.status === "success" && Number((last.result as readonly bigint[])[3]) >= sinceSec;
+  };
+  if (maxRounds > FIRST && results.length === FIRST && needMore()) {
+    results.push(...(await read(idsFrom(latestId - BigInt(FIRST), maxRounds - FIRST))));
+  }
+
+  for (const r of results) {
+    if (r.status !== "success") break; // phase boundary / missing round
+    const [, answer, , updatedAt] = r.result as readonly [bigint, bigint, bigint, bigint, bigint];
+    const t = Number(updatedAt);
+    if (t < sinceSec) break;
+    if (answer > 0n) points.push([t, Number(answer) / 1e8]);
   }
   return points.reverse();
 }

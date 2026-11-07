@@ -334,6 +334,8 @@ export default function StockMaxxingDashboard() {
     "Balanced"
   );
   const [capitalUsd, setCapitalUsd] = useState<number>(20);
+  // Single-stock trade amount (Swap panel), separate from the basket capital in the Agent tab
+  const [tradeUsd, setTradeUsd] = useState<number>(10);
   const [agentReport, setAgentReport] = useState<AgentAnalysisReport | null>(null);
   const [runningAgent, setRunningAgent] = useState<boolean>(false);
 
@@ -1495,18 +1497,16 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
 
                     <div className="mt-3 pt-2.5 border-t border-slate-800/70 flex items-center justify-between gap-2">
                       <button
-                        onClick={() =>
-                          buyStocks(
-                            [{ symbol: stock.symbol, b20Address: stock.b20Address, usd: basketUsd }],
-                            stock.symbol
-                          )
-                        }
-                        disabled={basketPending}
-                        className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-lg bg-[#4C6FFF]/20 hover:bg-[#4C6FFF]/35 border border-[#4C6FFF]/45 px-2.5 py-1.5 text-[11px] font-bold text-blue-200 disabled:opacity-60 transition cursor-pointer"
-                        title={`Buy $${basketUsd} of ${stock.symbol} with USDC (set the amount in the Agent tab)`}
+                        onClick={() => {
+                          // Open this stock in the Swap panel to choose the amount
+                          setChartSelectedSymbol(stock.symbol);
+                          document.getElementById("swap-panel")?.scrollIntoView({ behavior: "smooth", block: "center" });
+                        }}
+                        className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-lg bg-[#4C6FFF]/20 hover:bg-[#4C6FFF]/35 border border-[#4C6FFF]/45 px-2.5 py-1.5 text-[11px] font-bold text-blue-200 transition cursor-pointer"
+                        title={`Buy or sell ${stock.symbol}: choose any amount in the Swap panel`}
                       >
                         <Zap className="h-3 w-3" />
-                        Buy ${basketUsd} {stock.symbol}
+                        Trade {stock.symbol}
                       </button>
                       <a
                         href={stock.basescanUrl}
@@ -1534,11 +1534,15 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                 setActiveTab("agent");
                 triggerStockAgent(stocks, promptText);
               }}
-              onBuy={(st) =>
-                buyStocks([{ symbol: st.symbol, b20Address: st.b20Address, usd: basketUsd }], st.symbol)
-              }
-              buyLabel={basketPending ? basketStatus || "Working…" : `Buy $${basketUsd} of ${chartSelectedSymbol} with USDC`}
-              buyDisabled={basketPending}
+              onBuy={(st, usd) => buyStocks([{ symbol: st.symbol, b20Address: st.b20Address, usd }], st.symbol)}
+              onSell={(st, tokens) => sellStocks([{ symbol: st.symbol, b20Address: st.b20Address, tokens }], st.symbol)}
+              tradeUsd={tradeUsd}
+              onTradeUsdChange={setTradeUsd}
+              usdcBalance={usdcBalance}
+              holdingTokens={walletBalances[chartSelectedSymbol]?.rawTokens ?? 0}
+              walletConnected={Boolean(walletAddress)}
+              pending={basketPending}
+              pendingLabel={basketStatus || "Working…"}
             />
 
             {/* Plain-English Glossary Strip (Demystifying Key Base B20 Concepts) */}
@@ -1785,14 +1789,11 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                           <td className="py-3.5 px-4">
                             <div className="flex items-center justify-center gap-1.5 flex-wrap">
                               <button
-                                onClick={() =>
-                                  buyStocks(
-                                    [{ symbol: stock.symbol, b20Address: stock.b20Address, usd: basketUsd }],
-                                    stock.symbol
-                                  )
-                                }
-                                disabled={basketPending}
-                                title={`Buy $${basketUsd} of ${stock.symbol} with USDC in-app`}
+                                onClick={() => {
+                                  setChartSelectedSymbol(stock.symbol);
+                                  document.getElementById("swap-panel")?.scrollIntoView({ behavior: "smooth", block: "center" });
+                                }}
+                                title={`Buy or sell ${stock.symbol}: choose any amount in the Swap panel`}
                                 className="inline-flex items-center gap-1 rounded-md border border-[#4C6FFF]/50 bg-[#4C6FFF]/20 px-2 py-1 text-[11px] font-bold text-blue-200 hover:bg-[#4C6FFF]/35 disabled:opacity-60 transition cursor-pointer"
                               >
                                 <Zap className="h-3 w-3" />
