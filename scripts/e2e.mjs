@@ -379,7 +379,27 @@ await step(`No horizontal scrolling on any tab at ${WIDTH}px`, async () => {
   assert(bad.length === 0, bad.join(" "));
 });
 
+await step("Shared basket link opens the index builder with validated, normalized weights", async () => {
+  await page.goto(URL_BASE + "/?basket=NVDAc-50,MSFTc-30,XXX-20&amount=7", { waitUntil: "load", timeout: 120000 });
+  await waitText(/Shared basket loaded/, 30000);
+  const t = await text();
+  assert(/Buy for \$7 USDC/.test(t), "amount from the link not applied");
+  assert(!/XXX/.test(t.split("Shared basket loaded")[1] || ""), "invalid symbol was not dropped");
+  const total = await page.evaluate(() => (document.body.innerText.match(/(\d+(?:\.\d+)?)%\s*\/\s*100/) || [])[1]);
+  return total ? `weights total ${total}%` : "loaded";
+});
+
+await step("Stats page loads with live onchain totals", async () => {
+  const r = await fetch(URL_BASE + "/api/stats").then((x) => x.json());
+  assert(r.ok && r.totals && typeof r.totals.trades === "number", `stats API: ${r.error || "bad shape"}`);
+  await page.goto(URL_BASE + "/stats", { waitUntil: "load", timeout: 120000 });
+  await waitText(/Builder Code attributed/, 60000);
+  return `${r.totals.trades} trades, ${r.totals.wallets} wallets (team wallet excluded: ${r.excludesTeamTestWallet})`;
+});
+
 await step("Disconnect, then refresh: stays disconnected", async () => {
+  await page.goto(URL_BASE + "/", { waitUntil: "load", timeout: 120000 });
+  await waitText(new RegExp(shortAddr.replace(/\./g, "\.")), 20000).catch(() => {});
   await page.evaluate(() => document.querySelector('button[title="Disconnect"]')?.click());
   await sleep(800);
   await page.reload({ waitUntil: "load" });
@@ -389,7 +409,7 @@ await step("Disconnect, then refresh: stays disconnected", async () => {
 
 await step("FAQ, Terms, robots, sitemap respond; unknown page is 404", async () => {
   const st = [];
-  for (const [p, want] of [["/faq", 200], ["/terms", 200], ["/robots.txt", 200], ["/sitemap.xml", 200], ["/no-such-page", 404]]) {
+  for (const [p, want] of [["/faq", 200], ["/terms", 200], ["/stats", 200], ["/robots.txt", 200], ["/sitemap.xml", 200], ["/no-such-page", 404]]) {
     const r = await fetch(URL_BASE + p);
     if (r.status !== want) st.push(`${p}=${r.status}`);
   }

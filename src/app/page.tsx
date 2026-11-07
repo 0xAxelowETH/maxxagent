@@ -256,6 +256,43 @@ function PortfolioDonutChart({
   );
 }
 
+// ---- Shareable basket links: /?basket=NVDAc-40,MSFTc-30&amount=50 --------------------------------
+const PUBLIC_SITE_URL = (process.env.NEXT_PUBLIC_SITE_URL || "").replace(/\/$/, "");
+const SHARE_SYMBOLS = new Set(BASE_TOKENIZED_STOCKS.map((s) => s.symbol));
+
+/** weights in bps (10,000 = 100%) -> query string */
+function basketToQuery(weightsBps: Record<string, number>, amountUsd?: number): string {
+  const parts = Object.entries(weightsBps)
+    .filter(([, w]) => w > 0)
+    .map(([sym, w]) => `${sym}-${Number((w / 100).toFixed(2))}`);
+  const q = new URLSearchParams({ basket: parts.join(",") });
+  if (amountUsd && amountUsd >= 1) q.set("amount", String(amountUsd));
+  return q.toString();
+}
+
+/** Parses and validates a shared basket. Unknown symbols are dropped; weights are normalized to 100%. */
+function parseSharedBasket(search: string): { weightsBps: Record<string, number>; amountUsd?: number } | null {
+  const q = new URLSearchParams(search);
+  const raw = q.get("basket");
+  if (!raw) return null;
+  const pct = new Map<string, number>();
+  for (const part of raw.split(",").slice(0, 10)) {
+    const [sym, val] = part.split("-");
+    const n = Number(val);
+    if (SHARE_SYMBOLS.has(sym) && Number.isFinite(n) && n > 0 && n <= 100 && !pct.has(sym)) pct.set(sym, n);
+  }
+  if (pct.size === 0) return null;
+  const total = [...pct.values()].reduce((a, b) => a + b, 0);
+  const weightsBps: Record<string, number> = {};
+  for (const [sym, n] of pct) weightsBps[sym] = Math.round((n / total) * 10000);
+  // rounding remainder goes to the largest weight so the basket is exactly 100%
+  const diff = 10000 - Object.values(weightsBps).reduce((a, b) => a + b, 0);
+  const largest = Object.entries(weightsBps).sort((a, b) => b[1] - a[1])[0][0];
+  weightsBps[largest] += diff;
+  const amount = Number(q.get("amount"));
+  return { weightsBps, amountUsd: Number.isFinite(amount) && amount >= 1 && amount <= 10000 ? Math.round(amount * 100) / 100 : undefined };
+}
+
 export default function StockMaxxingDashboard() {
   const [activeTab, setActiveTab] = useState<ActiveTab>("terminal");
 
@@ -983,6 +1020,22 @@ export default function StockMaxxingDashboard() {
   };
 
   const totalCustomWeightBps = Object.values(customWeights).reduce((a, b) => a + b, 0);
+
+  // Opened from a shared link: load the basket into the index builder (the user still reviews and confirms)
+  const [sharedBasketLoaded, setSharedBasketLoaded] = useState<boolean>(false);
+  useEffect(() => {
+    const shared = parseSharedBasket(window.location.search);
+    if (!shared) return;
+    setCustomWeights(shared.weightsBps);
+    setCustomIndexName("Shared basket");
+    if (shared.amountUsd) setBasketUsd(shared.amountUsd);
+    setActiveTab("indexes");
+    setSharedBasketLoaded(true);
+    setTimeout(() => document.getElementById("index-builder")?.scrollIntoView({ behavior: "smooth", block: "start" }), 400);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const shareLinkFor = (weightsBps: Record<string, number>) =>
+    `${typeof window !== "undefined" ? window.location.origin : PUBLIC_SITE_URL}/?${basketToQuery(weightsBps, basketUsd)}`;
   const attributionInfo = toErc8021DataSuffix([builderCode]);
   const sampleDecoded = parseErc8021Calldata(
     agentReport?.onchainExecution.attributedCalldata || attributionInfo.dataSuffix
@@ -2198,7 +2251,9 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                           `My MAXXAGENT basket of tokenized stocks on @base:\n${agentReport.allocations
                             .slice(0, 5)
                             .map((a) => `• $${a.symbol}: ${(a.targetWeightBps / 100).toFixed(0)}%`)
-                            .join("\n")}\n\nNot financial advice. #StocksMaxxing @buildonbase`
+                            .join("\n")}\n\nBuy the same basket: ${PUBLIC_SITE_URL}/?${basketToQuery(
+                            Object.fromEntries(agentReport.allocations.map((a) => [a.symbol, a.targetWeightBps]))
+                          )}\n\nNot financial advice. #StocksMaxxing @buildonbase`
                         )}`}
                         target="_blank"
                         rel="noopener noreferrer"
@@ -2208,6 +2263,19 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                         <img src="/logos/brands/x.svg" alt="X" className="h-3.5 w-3.5" />
                         Share on X
                       </a>
+                      <button
+                        onClick={() =>
+                          copyToClipboard(
+                            shareLinkFor(Object.fromEntries(agentReport.allocations.map((a) => [a.symbol, a.targetWeightBps]))),
+                            "share-agent"
+                          )
+                        }
+                        className="inline-flex items-center gap-1.5 rounded-xl border border-slate-700 bg-slate-800/90 px-3 py-2.5 text-xs font-bold text-slate-200 hover:border-cyan-400 hover:text-white transition cursor-pointer"
+                        title="Copy a link that opens this basket for anyone"
+                      >
+                        <Copy className="h-3.5 w-3.5" />
+                        {copiedKey === "share-agent" ? "Link copied!" : "Copy share link"}
+                      </button>
                       {hasRegistry && (
                       <button
                         onClick={() =>
@@ -2565,7 +2633,18 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
 
             {/* Interactive Programmable Index Constructor */}
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-              <div className={`${hasRegistry ? "lg:col-span-7" : "lg:col-span-12"} rounded-2xl border border-slate-800 bg-[#0b1120] p-6 space-y-5`}>
+              <div id="index-builder" className={`${hasRegistry ? "lg:col-span-7" : "lg:col-span-12"} rounded-2xl border border-slate-800 bg-[#0b1120] p-6 space-y-5 scroll-mt-24`}>
+                {sharedBasketLoaded && (
+                  <div className="flex items-start justify-between gap-3 rounded-xl border border-cyan-500/40 bg-cyan-500/10 p-3 text-xs text-cyan-100">
+                    <span>
+                      <strong>Shared basket loaded.</strong> Check the weights and the amount below, then buy from your own wallet.
+                      Nothing happens until you confirm.
+                    </span>
+                    <button onClick={() => setSharedBasketLoaded(false)} aria-label="Dismiss" className="text-cyan-200 hover:text-white cursor-pointer">
+                      ✕
+                    </button>
+                  </div>
+                )}
                 <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-4">
                   <div className="flex items-center gap-2.5">
                     <MaxxAgentMark size={28} />
@@ -2704,7 +2783,7 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                           .filter(([, w]) => w > 0)
                           .slice(0, 5)
                           .map(([s, w]) => `• $${s}: ${(w / 100).toFixed(0)}%`)
-                          .join("\n")}\n\nNot financial advice. #StocksMaxxing @buildonbase`
+                          .join("\n")}\n\nBuy the same index: ${PUBLIC_SITE_URL}/?${basketToQuery(customWeights)}\n\nNot financial advice. #StocksMaxxing @buildonbase`
                       )}`}
                       target="_blank"
                       rel="noopener noreferrer"
@@ -2713,6 +2792,15 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                       <img src="/logos/brands/x.svg" alt="X" className="h-3.5 w-3.5" />
                       Share Index on X
                     </a>
+                    <button
+                      onClick={() => copyToClipboard(shareLinkFor(customWeights), "share-index")}
+                      disabled={totalCustomWeightBps !== 10000}
+                      className="inline-flex items-center gap-2 rounded-xl border border-slate-700 bg-slate-800/90 px-4 py-2.5 text-xs font-bold text-slate-200 hover:border-cyan-400 hover:text-white disabled:opacity-50 transition cursor-pointer"
+                      title="Copy a link that opens this index for anyone"
+                    >
+                      <Copy className="h-4 w-4" />
+                      {copiedKey === "share-index" ? "Link copied!" : "Copy share link"}
+                    </button>
                     <button
                       onClick={() =>
                         buyStocks(
