@@ -62,7 +62,14 @@ const endsWithCode = (data) => codesOf(data).includes(CODE);
 // How wallets wrap a batch [approve, swap] (the executor always puts the swap last)
 const callTuple = { type: "tuple[]", components: [{ type: "address" }, { type: "uint256" }, { type: "bytes" }] };
 const WRAPPERS = {
-  "EIP-7702 / ERC-7821 execute (MetaMask)": (calls) =>
+  // Seen onchain for UI trades from an EIP-7702 account (self-call, selector 0x3f707e6b)
+  "EIP-7702 execute(Call[]) (seen onchain)": (calls) =>
+    encodeFunctionData({
+      abi: parseAbi(["function execute((address to,uint256 value,bytes data)[] calls)"]),
+      functionName: "execute",
+      args: [calls.map((c) => ({ to: c.to, value: 0n, data: c.data }))],
+    }),
+  "EIP-7702 / ERC-7821 execute (mode, data)": (calls) =>
     encodeFunctionData({
       abi: parseAbi(["function execute(bytes32 mode, bytes executionData)"]),
       functionName: "execute",
