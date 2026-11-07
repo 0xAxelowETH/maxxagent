@@ -665,16 +665,23 @@ export default function StockMaxxingDashboard() {
     if (!walletAddress || balancesFor !== walletAddress.toLowerCase()) return;
     let cancelled = false;
     const w = walletAddress.toLowerCase();
-    fetch(`/api/pnl?wallet=${w}`)
-      .then((r) => r.json())
-      .then((d) => {
-        if (!cancelled) setPnl({ for: w, data: d?.ok ? d : null, error: d?.ok ? "" : d?.error || "P/L unavailable" });
-      })
-      .catch(() => {
-        if (!cancelled) setPnl({ for: w, data: null, error: "P/L unavailable right now." });
-      });
+    let retry: ReturnType<typeof setTimeout> | undefined;
+    const load = (attempt: number) =>
+      fetch(`/api/pnl?wallet=${w}`)
+        .then(async (r) => {
+          const d = await r.json();
+          if (cancelled) return;
+          // 503 = server busy with other first-time scans: retry once instead of showing an error
+          if (r.status === 503 && attempt === 0) retry = setTimeout(() => load(1), 5000);
+          else setPnl({ for: w, data: d?.ok ? d : null, error: d?.ok ? "" : d?.error || "P/L unavailable" });
+        })
+        .catch(() => {
+          if (!cancelled) setPnl({ for: w, data: null, error: "P/L unavailable right now." });
+        });
+    load(0);
     return () => {
       cancelled = true;
+      if (retry) clearTimeout(retry);
     };
   }, [walletAddress, balancesFor, walletBalances]);
 
@@ -3492,6 +3499,17 @@ const walletClient = createWalletClient({
             </a>
             <a href="/terms" className="hover:text-white underline">
               Terms &amp; Risks
+            </a>
+            <a href="/faq" className="hover:text-white underline">
+              FAQ
+            </a>
+            <a
+              href="https://github.com/0xAxelowETH/maxxagent"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="hover:text-white underline"
+            >
+              Source code (GitHub)
             </a>
             <a
               href="https://www.base.org/stocksmaxxing/rules"

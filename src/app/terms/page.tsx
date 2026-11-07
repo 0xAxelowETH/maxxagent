@@ -7,7 +7,7 @@ export const metadata: Metadata = {
   description: "Terms of use and risk disclosure for MAXXAGENT, a non-custodial tool for Coinbase tokenized stocks on Base.",
 };
 
-const LAST_UPDATED = "November 6, 2026";
+const LAST_UPDATED = "November 7, 2026";
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
@@ -104,8 +104,16 @@ export default function TermsPage() {
 
         <Section title="8. Data and privacy">
           <p>
-            We do not ask for your name, email or identity documents. Your wallet address and transactions are public on
-            the blockchain. Your acceptance of these terms and your local activity log are stored only in your browser.
+            We do not ask for your name, email or identity documents, and we do not use analytics or tracking cookies.
+            Your wallet address and transactions are public on the blockchain. Your acceptance of these terms and your
+            local activity log are stored only in your browser.
+          </p>
+          <p>
+            To show balances, profit and loss, and swap quotes, your connected wallet address is sent to the MAXXAGENT
+            server, which reads public Base data for it, and to KyberSwap, which builds the swap for that address. The
+            server keeps this only in short-lived memory caches. Our hosting provider (Vercel) may log IP addresses for
+            security and abuse prevention. Wallet connections go through the wallet you choose (for example Coinbase
+            Wallet or WalletConnect / Reown), under their own privacy terms.
           </p>
         </Section>
 

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { runAutonomousStockAgent } from "@/lib/agentEngine";
 import { BASE_TOKENIZED_STOCKS, LiveTokenizedStock } from "@/lib/tokenizedStocks";
+import { GET as getStocks } from "../stocks/route";
 
 /**
  * Runs the rule-based stock agent over LIVE market data only.
@@ -77,7 +78,9 @@ export async function POST(request: NextRequest) {
 
     let stocksToAnalyze = sanitizeStocks(body.stocks);
     if (stocksToAnalyze.length < 5) {
-      const liveRes = await fetch(`${request.nextUrl.origin}/api/stocks`, { cache: "no-store" });
+      // In-process call (shares the 15s market cache). A self-fetch over HTTP failed on Vercel, and it
+      // would also trust the Host header for the URL.
+      const liveRes = await getStocks(new NextRequest(new URL("/api/stocks", request.url)));
       const liveData = liveRes.ok ? await liveRes.json() : null;
       stocksToAnalyze = sanitizeStocks(liveData?.stocks);
     }

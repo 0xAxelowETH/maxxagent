@@ -33,6 +33,7 @@ const CONCURRENCY = 4; // more triggers the RPC's rate limit
 const TIME_BUDGET_MS = 25_000;
 const MAX_TXS = 400;
 const CACHE_TTL_MS = 30 * 60 * 1000;
+const MAX_PARALLEL_SCANS = 3;
 
 const TRANSFER = parseAbiItem("event Transfer(address indexed from, address indexed to, uint256 value)");
 const ABI = parseAbi([
@@ -319,7 +320,10 @@ export async function GET(request: NextRequest) {
     const cached = cache.get(key);
     let history: WalletHistory;
     if (cached && Date.now() - cached.at < 15_000) history = cached;
-    else {
+    else if (!cached && !inflight.has(key) && inflight.size >= MAX_PARALLEL_SCANS) {
+      // A first scan costs dozens of RPC calls: cap them globally so random addresses can't drain the RPC quota
+      return NextResponse.json({ ok: false, error: "P/L is busy right now. Please retry in a few seconds." }, { status: 503 });
+    } else {
       if (!inflight.has(key)) inflight.set(key, loadHistory(wallet as `0x${string}`).finally(() => inflight.delete(key)));
       history = await inflight.get(key)!;
     }
