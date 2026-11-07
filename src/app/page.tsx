@@ -1342,6 +1342,7 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
             </span>
           </div>
 
+          {hasRegistry && (
           <div className="flex flex-wrap items-center gap-2 text-xs">
             <span className="text-slate-400 font-semibold">Index registry:</span>
             {hasRegistry ? (
@@ -1360,6 +1361,7 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
               </span>
             )}
           </div>
+          )}
         </div>
 
         {/* Global Transaction Status Banner */}
@@ -2206,6 +2208,7 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                         <img src="/logos/brands/x.svg" alt="X" className="h-3.5 w-3.5" />
                         Share on X
                       </a>
+                      {hasRegistry && (
                       <button
                         onClick={() =>
                           publishIndexOnchain(
@@ -2224,6 +2227,7 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                         <Layers className="h-3.5 w-3.5" />
                         {txPending ? "Confirm in wallet…" : "Publish as onchain index"}
                       </button>
+                      )}
                     </div>
                   </div>
 
@@ -2561,7 +2565,7 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
 
             {/* Interactive Programmable Index Constructor */}
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-              <div className="lg:col-span-7 rounded-2xl border border-slate-800 bg-[#0b1120] p-6 space-y-5">
+              <div className={`${hasRegistry ? "lg:col-span-7" : "lg:col-span-12"} rounded-2xl border border-slate-800 bg-[#0b1120] p-6 space-y-5`}>
                 <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-4">
                   <div className="flex items-center gap-2.5">
                     <MaxxAgentMark size={28} />
@@ -2729,6 +2733,7 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                       <Zap className="h-4 w-4" />
                       {basketPending ? basketStatus || "Working…" : `Buy for $${basketUsd} USDC`}
                     </button>
+                    {hasRegistry && (
                     <button
                       onClick={() =>
                         publishIndexOnchain(
@@ -2747,11 +2752,13 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                       <Layers className="h-4 w-4" />
                       {txPending ? "Confirm in wallet…" : "Publish onchain"}
                     </button>
+                    )}
                   </div>
                 </div>
               </div>
 
-              {/* Onchain index registry: published indexes anyone can buy */}
+              {/* Onchain index registry: published indexes anyone can buy (hidden until the registry is deployed) */}
+              {hasRegistry && (
               <div className="lg:col-span-5 rounded-2xl border border-slate-800 bg-[#0b1120] p-6 space-y-4">
                 <div className="flex items-center justify-between gap-2">
                   <div className="flex items-center gap-2 text-cyan-400 text-xs font-bold uppercase tracking-wider">
@@ -2825,6 +2832,7 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                   </div>
                 )}
               </div>
+              )}
             </div>
           </div>
         )}
