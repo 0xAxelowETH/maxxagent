@@ -9,13 +9,16 @@ import { miniappEmbedTags } from "@/lib/miniappEmbed";
  */
 const BLOCKED_COUNTRIES = new Set(["US", "PR", "GU", "VI", "AS", "MP", "UM"]);
 
+const STOCK_SYMBOLS = ["NVDAc", "AAPLc", "TSLAc", "MSFTc", "METAc", "GOOGLc", "AMZNc", "MSTRc", "SNDKc", "SPCXc"];
 const PUBLIC_EVERYWHERE = ["/.well-known/", "/brand/", "/robots.txt", "/sitemap.xml", "/icon.svg", "/apple-icon.png", "/favicon.ico"];
 const SITE = (process.env.NEXT_PUBLIC_SITE_URL || "https://maxxagent.xyz").replace(/\/$/, "");
 const esc = (v: string) => v.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
 const PREVIEW_DESC = "Build your own index of Coinbase tokenized stocks on Base, or let an agent propose one, and buy it in one click from your own wallet. Not financial advice.";
 // Same embed as the real pages (stock pages launch on that stock), because preview crawlers run in the US
 const previewTags = (path: string) => {
-  const stock = path.match(/^\/stock\/([A-Za-z]{2,8}c)$/)?.[1];
+  // Only the 10 listed symbols: never reflect arbitrary URL text into the preview
+  const asked = path.match(/^\/stock\/([A-Za-z]{2,8}c)$/)?.[1]?.toLowerCase();
+  const stock = STOCK_SYMBOLS.find((s) => s.toLowerCase() === asked);
   const tags: [string, string][] = [
     ["description", PREVIEW_DESC],
     ["og:type", "website"],
