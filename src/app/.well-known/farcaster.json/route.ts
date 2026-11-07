@@ -9,10 +9,18 @@ export const dynamic = "force-static";
 
 const SITE = (process.env.NEXT_PUBLIC_SITE_URL || "https://maxxagent.xyz").replace(/\/$/, "");
 
+// Public proof that FID 258669 (custody key 0xE85B…FC95) owns maxxagent.xyz; payload = {"domain":"maxxagent.xyz"}.
+// Not a secret. Env vars override it (e.g. after re-signing).
+const ACCOUNT = {
+  header: "eyJmaWQiOjI1ODY2OSwidHlwZSI6ImN1c3RvZHkiLCJrZXkiOiIweEU4NUI4NTE1ZGExOGJFMDlmMTQwNzY0RDdiQjFFQ0YzQjQ4QUZDOTUifQ",
+  payload: "eyJkb21haW4iOiJtYXh4YWdlbnQueHl6In0",
+  signature: "AkZdWcIWUKnAgGxPOUP6MZkWFXW3vIRlXXlkxxdSHSlp56W+GU0IqREIalz/dSL8IBzd6e+x5DR3qpu0crzhzxw=",
+};
+
 export function GET() {
-  const header = process.env.FARCASTER_ACCOUNT_HEADER;
-  const payload = process.env.FARCASTER_ACCOUNT_PAYLOAD;
-  const signature = process.env.FARCASTER_ACCOUNT_SIGNATURE;
+  const header = process.env.FARCASTER_ACCOUNT_HEADER || ACCOUNT.header;
+  const payload = process.env.FARCASTER_ACCOUNT_PAYLOAD || ACCOUNT.payload;
+  const signature = process.env.FARCASTER_ACCOUNT_SIGNATURE || ACCOUNT.signature;
   const body = {
     ...(header && payload && signature ? { accountAssociation: { header, payload, signature } } : {}),
     miniapp: {
