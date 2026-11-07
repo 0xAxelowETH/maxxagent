@@ -1,5 +1,5 @@
 import { encodeFunctionData, decodeFunctionResult, parseAbi, toHex } from "viem";
-import { appendBuilderCodeToCalldata, toErc8021DataSuffix } from "./builderCode";
+import { alignedWithSuffix, appendBuilderCodeToCalldata, toErc8021DataSuffix } from "./builderCode";
 
 const builderSuffix = (code: string) => toErc8021DataSuffix([code]).dataSuffix;
 
@@ -365,6 +365,97 @@ async function sendCalls(
     throw new Error(first?.error === "Cancelled in wallet" ? "Cancelled in wallet. Nothing was swapped." : first?.error || "No swap went through.");
   }
   return { mode: "sequential", txHashes, failed };
+}
+
+/**
+ * Sends ONE contract call that moves no funds (e.g. publishing an index) and resolves with the mined tx hash.
+ * Same safety as orders: Builder Code 32-byte aligned + the dataSuffix capability for smart wallets, EIP-5792
+ * first, one eth_sendTransaction fallback guarded by the nonce, and success only after a successful receipt.
+ */
+export async function sendContractCall(params: {
+  eth: EthProvider;
+  sender: string;
+  to: string;
+  data: `0x${string}`;
+  builderCode: string;
+  onStatus?: StatusFn;
+}): Promise<string> {
+  const { eth, sender, to, builderCode, onStatus = () => {} } = params;
+  await ensureBase(eth, onStatus);
+  const suffix = builderSuffix(builderCode);
+  const call = { to, data: alignedWithSuffix(params.data, suffix), value: "0x0" };
+  const nonceOf = () =>
+    (eth.request({ method: "eth_getTransactionCount", params: [sender, "latest"] }) as Promise<string>).then((n) => BigInt(n)).catch(() => null);
+  const nonceBefore = await nonceOf();
+  onStatus("Confirm in your wallet…");
+  const base = { version: "2.0.0", chainId: BASE_CHAIN_HEX, from: sender, atomicRequired: false, calls: [call] };
+  let batchId: string | undefined;
+  try {
+    let res: string | { id: string };
+    try {
+      res = (await eth.request({
+        method: "wallet_sendCalls",
+        params: [{ ...base, capabilities: { dataSuffix: { value: suffix, optional: true } } }],
+      })) as string | { id: string };
+    } catch (capErr) {
+      const e = capErr as { code?: number; message?: string };
+      if (e?.code !== 5700 && !/capabilit/i.test(e?.message || "")) throw capErr;
+      res = (await eth.request({ method: "wallet_sendCalls", params: [base] })) as string | { id: string };
+    }
+    batchId = typeof res === "string" ? res : res?.id;
+  } catch (err) {
+    if (isUserRejection(err)) throw new Error("Cancelled in wallet.");
+    if (!isUnsupportedMethod(err)) {
+      // Unknown wallet error: make sure nothing was sent before asking again another way
+      await sleep(5000);
+      const nonceAfter = await nonceOf();
+      if (nonceBefore !== null && nonceAfter !== null && nonceAfter > nonceBefore) {
+        throw new Error("Your wallet reported an error, but a transaction was sent. Check your wallet activity before retrying.");
+      }
+    }
+  }
+
+  if (batchId) {
+    onStatus("Waiting for confirmation onchain…");
+    const start = Date.now();
+    let misses = 0;
+    while (Date.now() - start < 180_000) {
+      let status: { status?: number | string; receipts?: { transactionHash: string; status?: string }[] } | undefined;
+      try {
+        status = (await eth.request({ method: "wallet_getCallsStatus", params: [batchId] })) as typeof status;
+      } catch {
+        if (++misses > 10) throw new Error("Sent, but the status is unavailable. Check your wallet activity before retrying.");
+      }
+      const failed = (typeof status?.status === "number" && status.status >= 400) || status?.status === "failure";
+      if (failed || status?.receipts?.some((r) => r.status === "0x0")) throw new Error("The transaction failed onchain (only gas was spent).");
+      const done = status?.status === 200 || status?.status === "CONFIRMED" || status?.status === "success";
+      if (done) {
+        const hash = status!.receipts?.[0]?.transactionHash;
+        if (!hash) throw new Error("Confirmed, but the wallet returned no transaction hash. Check your wallet activity.");
+        return hash;
+      }
+      await sleep(2000);
+    }
+    throw new Error("Still pending after 3 minutes: check your wallet activity before retrying.");
+  }
+
+  let hash: string;
+  try {
+    hash = (await eth.request({ method: "eth_sendTransaction", params: [{ from: sender, ...call }] })) as string;
+  } catch (err) {
+    if (isUserRejection(err)) throw new Error("Cancelled in wallet.");
+    throw err;
+  }
+  onStatus("Waiting for confirmation onchain…");
+  try {
+    await waitForReceipt(eth, hash);
+  } catch (err) {
+    const m = err instanceof Error ? err.message : "";
+    if (/reverted/i.test(m)) throw new Error("The transaction reverted onchain (only gas was spent).");
+    if (/timed out/i.test(m)) throw new Error(`Still pending after 2 minutes: check BaseScan (${hash}) before retrying.`);
+    throw err;
+  }
+  return hash;
 }
 
 async function postSwap(body: Record<string, unknown>, fallbackSymbol: string): Promise<LegQuote> {

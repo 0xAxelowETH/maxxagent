@@ -40,16 +40,16 @@ import {
   STOCKS_MAXXING_PARTNERS,
 } from "@/lib/tokenizedStocks";
 import {
-  appendBuilderCodeToCalldata,
   parseErc8021Calldata,
   toErc8021DataSuffix,
 } from "@/lib/builderCode";
 import { AgentAnalysisReport } from "@/lib/agentEngine";
 import { INDEX_REGISTRY_ABI } from "@/lib/contracts/StockMaxxIndexRegistryABI";
-import { encodeFunctionData } from "viem";
+import { decodeErrorResult, encodeFunctionData } from "viem";
 import {
   prepareBuy,
   prepareSell,
+  sendContractCall,
   submitOrder,
   QUOTE_TTL_MS,
   BasketLeg,
@@ -462,6 +462,7 @@ export default function StockMaxxingDashboard() {
   const [txHash, setTxHash] = useState<string>("");
   const [txError, setTxError] = useState<string>("");
   const [txPending, setTxPending] = useState<boolean>(false);
+  const [publishStatus, setPublishStatus] = useState<string>("");
   const [copiedKey, setCopiedKey] = useState<string>("");
   // Only real transactions sent from this browser are logged (no seeded/example entries)
   const [activityLog, setActivityLog] = useState<OnchainActivityEntry[]>([]);
@@ -1002,8 +1003,18 @@ export default function StockMaxxingDashboard() {
       setTxError("An index needs 1–10 stocks with weights summing to exactly 100% (10,000 bps).");
       return;
     }
-    const cleanName = name.trim().slice(0, 64);
-    const cleanTicker = ticker.trim().slice(0, 16);
+    // The registry limits bytes, not characters (emoji / non-latin names take several bytes each)
+    const clampBytes = (v: string, max: number) => {
+      const enc = new TextEncoder();
+      let out = "";
+      for (const ch of v.trim()) {
+        if (enc.encode(out + ch).length > max) break;
+        out += ch;
+      }
+      return out;
+    };
+    const cleanName = clampBytes(name, 64);
+    const cleanTicker = clampBytes(ticker, 16);
     if (!cleanName || !cleanTicker) {
       setTxError("Please enter an index name and ticker.");
       return;
@@ -1014,16 +1025,14 @@ export default function StockMaxxingDashboard() {
       return;
     }
     setTxPending(true);
+    setPublishStatus("Checking…");
     try {
-      let sender = walletAddress;
-      if (!sender) {
-        const accounts = (await eth.request({ method: "eth_requestAccounts" })) as string[];
-        sender = accounts[0];
-        setWalletAddress(sender);
-      }
+      // The account that will actually sign (never a stale one from before an account switch)
+      const sender = walletAddress ? await resolveSender(eth) : ((await eth.request({ method: "eth_requestAccounts" })) as string[])[0];
+      if (sender.toLowerCase() !== walletAddress.toLowerCase()) setWalletAddress(sender);
+      // The dry run must hit Base (on another chain the registry address has no code and would "pass")
       const currentChain = (await eth.request({ method: "eth_chainId" })) as string;
       if (currentChain?.toLowerCase() !== "0x2105") await switchToBaseMainnet("mainnet");
-
       const calldata = encodeFunctionData({
         abi: INDEX_REGISTRY_ABI,
         functionName: "createIndex",
@@ -1034,23 +1043,35 @@ export default function StockMaxxingDashboard() {
           active.map((e) => e.weightBps),
         ],
       });
-      const hash = (await eth.request({
-        method: "eth_sendTransaction",
-        params: [
-          {
-            from: sender,
-            to: registryAddress,
-            value: "0x0",
-            data: appendBuilderCodeToCalldata(calldata, builderCode),
-          },
-        ],
-      })) as string;
+      // Dry run first: a rejected index fails here with a clear reason instead of costing gas
+      try {
+        await eth.request({ method: "eth_call", params: [{ from: sender, to: registryAddress, data: calldata }, "latest"] });
+      } catch (simErr) {
+        const e = simErr as { data?: unknown; message?: string };
+        const raw = (typeof e?.data === "string" ? e.data : (e?.data as { data?: string })?.data) || "";
+        let reason = "";
+        try {
+          if (/^0x[0-9a-fA-F]{8}/.test(raw)) reason = decodeErrorResult({ abi: INDEX_REGISTRY_ABI, data: raw as `0x${string}` }).errorName;
+        } catch {}
+        const nice: Record<string, string> = {
+          InvalidName: "the name must be 1–64 bytes",
+          InvalidTicker: "the ticker must be 1–16 bytes",
+          TokenNotAllowed: "a stock is not on the registry allowlist",
+          DuplicateToken: "a stock is listed twice",
+          WeightsMustSumTo10000: "weights must sum to exactly 100%",
+          ZeroWeight: "every stock needs a weight above 0",
+          InvalidConstituentCount: "an index needs 1–10 stocks",
+        };
+        throw new Error(`The registry would reject this index${reason ? `: ${nice[reason] || reason}` : ""}. Nothing was sent.`);
+      }
+      const hash = await sendContractCall({ eth, sender, to: registryAddress, data: calldata, builderCode, onStatus: setPublishStatus });
       setTxHash(hash);
       recordOnchainActivity(`PUBLISH_INDEX ${cleanTicker}`, hash, "Base Mainnet (8453)");
-      setTimeout(() => loadPublishedIndexes(), 8000);
+      loadPublishedIndexes();
     } catch (err: unknown) {
       setTxError(err instanceof Error ? err.message : "Transaction cancelled or failed");
     } finally {
+      setPublishStatus("");
       setTxPending(false);
     }
   };
@@ -2467,7 +2488,7 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                         title={hasRegistry ? "Publish these weights to StockMaxxIndexRegistry so others can buy the same basket" : "Index registry not deployed yet"}
                       >
                         <Layers className="h-3.5 w-3.5" />
-                        {txPending ? "Confirm in wallet…" : "Publish as onchain index"}
+                        {txPending ? publishStatus || "Confirm in wallet…" : "Publish as onchain index"}
                       </button>
                       )}
                     </div>
@@ -3033,7 +3054,7 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                       title={hasRegistry ? "Publish to StockMaxxIndexRegistry" : "Index registry not deployed yet"}
                     >
                       <Layers className="h-4 w-4" />
-                      {txPending ? "Confirm in wallet…" : "Publish onchain"}
+                      {txPending ? publishStatus || "Confirm in wallet…" : "Publish onchain"}
                     </button>
                     )}
                   </div>

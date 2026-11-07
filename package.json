@@ -21,7 +21,8 @@
     "test:attribution": "node scripts/test-attribution.mjs",
     "verify:trades": "node scripts/verify-trades.mjs",
     "test:e2e": "node scripts/e2e.mjs",
-    "test:rebalance": "node scripts/test-rebalance.mjs"
+    "test:rebalance": "node scripts/test-rebalance.mjs",
+    "verify:registry": "node scripts/verify-registry.mjs"
   },
   "dependencies": {
     "@coinbase/wallet-sdk": "^4.4.0",
