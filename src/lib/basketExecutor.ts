@@ -54,6 +54,11 @@ export interface LegQuote {
   amountInTokens?: number;
   b20Address?: string;
   amountOutUsd?: number;
+  amountInUsd?: number;
+  /** guaranteed minimum out after slippage (raw units of tokenOut) */
+  minAmountOutRaw?: string;
+  /** % worse than the Chainlink NAV (negative = better than NAV); null if NAV unavailable */
+  navDeviationPct?: number | null;
   costPct?: number;
   venues?: string[];
 }
@@ -318,23 +323,80 @@ async function quoteAll<L extends { symbol: string }>(
 }
 const toSwapCall = (q: LegQuote): Call => ({ to: q.tx!.to, data: q.tx!.data, value: toHex(BigInt(q.tx!.value || "0")) });
 
-// ---------------------------------------------------------------- buy
+// ---------------------------------------------------------------- orders (quote -> review -> submit)
+
+/** Quotes are re-fetched if the user takes longer than this to confirm the review */
+export const QUOTE_TTL_MS = 45_000;
+
+/** A quoted, balance-checked order the user can review before anything is sent to the wallet. */
+export interface PreparedOrder {
+  side: "buy" | "sell";
+  sender: string;
+  /** legs that will execute */
+  legs: LegQuote[];
+  /** legs that could not be routed (with the reason) */
+  skipped: LegQuote[];
+  /** buy: USDC paid. sell: USD value of the stock sold (aggregator pricing) */
+  totalInUsd: number;
+  /** estimated USD value received */
+  totalOutUsd: number;
+  /** sell only: USDC quoted to arrive */
+  totalOutUsdc?: number;
+  /** value lost to price impact + fees, in % of totalInUsd */
+  costPct: number;
+  slippageBps: number;
+  /** wallet actions: approvals needed now + one swap per leg */
+  approvals: number;
+  preparedAt: number;
+}
+
+function summarize(side: "buy" | "sell", sender: string, legs: LegQuote[], skipped: LegQuote[], approvals: number, slippageBps: number): PreparedOrder {
+  // Each leg's cost % comes from the aggregator's own consistent USD pricing. Mixing face-value USDC
+  // with aggregator USD (which prices USDC slightly below $1) would overstate the cost, so totals are
+  // built from the per-leg cost: buy value received = USDC paid x (1 - cost).
+  const legIn = (q: LegQuote) => (side === "buy" ? Number(q.amountInRaw) / 1e6 : q.amountInUsd ?? 0);
+  const totalInUsd = legs.reduce((a, q) => a + legIn(q), 0);
+  const costPct = totalInUsd > 0 ? legs.reduce((a, q) => a + legIn(q) * (q.costPct ?? 0), 0) / totalInUsd : 0;
+  const totalOutUsdc = side === "sell" ? legs.reduce((a, q) => a + (q.amountOutUsdc ?? 0), 0) : undefined;
+  const totalOutUsd = side === "buy" ? legs.reduce((a, q) => a + legIn(q) * (1 - (q.costPct ?? 0) / 100), 0) : totalOutUsdc ?? 0;
+  return {
+    side,
+    sender,
+    legs,
+    skipped,
+    totalInUsd,
+    totalOutUsd,
+    totalOutUsdc,
+    costPct,
+    slippageBps,
+    approvals,
+    preparedAt: Date.now(),
+  };
+}
+
+async function countApprovals(eth: EthProvider, sender: string, legs: LegQuote[]) {
+  // Same grouping as buildApprovals; the builder code does not change the count
+  return (await buildApprovals(eth, sender, legs, "")).length;
+}
 
 export async function quoteLeg(leg: BasketLeg, sender: string, slippageBps = 50): Promise<LegQuote> {
   return postSwap({ side: "buy", stockAddress: leg.b20Address, amountUsd: leg.usd, sender, slippageBps }, leg.symbol);
 }
 
-export async function executeBasket(params: {
+export async function quoteSellLeg(leg: SellLeg, sender: string, slippageBps = 50): Promise<LegQuote> {
+  return postSwap({ side: "sell", stockAddress: leg.b20Address, amountTokens: leg.tokens, sender, slippageBps }, leg.symbol);
+}
+
+/** Step 1 (buy): quote every leg and check the USDC balance. Nothing is sent. */
+export async function prepareBuy(params: {
   eth: EthProvider;
   sender: string;
   legs: BasketLeg[];
-  builderCode: string;
   slippageBps?: number;
   onStatus?: StatusFn;
-}): Promise<BasketResult> {
-  const { eth, sender, legs, builderCode, slippageBps = 50, onStatus = () => {} } = params;
+}): Promise<PreparedOrder> {
+  const { eth, sender, legs, slippageBps = 50, onStatus = () => {} } = params;
   await ensureBase(eth, onStatus);
-
   const quotes = await quoteAll(legs, (l) => quoteLeg(l, sender, slippageBps), "for", onStatus);
   const bought = quotes.filter(usable);
   const skipped = quotes.filter((q) => !bought.includes(q)).map(withSkipReason);
@@ -345,23 +407,66 @@ export async function executeBasket(params: {
   if (balance < totalIn) {
     throw new Error(`Not enough USDC on Base: need ${(Number(totalIn) / 1e6).toFixed(2)}, have ${(Number(balance) / 1e6).toFixed(2)}.`);
   }
-
-  const approveCalls = await buildApprovals(eth, sender, bought, builderCode);
-  const { mode, txHashes } = await sendCalls(eth, sender, approveCalls, bought.map(toSwapCall), bought.map((q) => `Buy ${q.symbol}`), onStatus, builderCode);
-  onStatus("Reading what you received onchain…");
-  const tracked = await trackReceipts(
-    eth,
-    txHashes,
-    sender,
-    bought.map((q) => ({ address: q.b20Address!, symbol: q.symbol, decimals: B20_DECIMALS, quoted: q.amountOutShares }))
-  );
-  return { side: "buy", mode, txHashes, bought, skipped, ...tracked };
+  return summarize("buy", sender, bought, skipped, await countApprovals(eth, sender, bought), slippageBps);
 }
 
-// ---------------------------------------------------------------- sell
+/** Step 1 (sell): quote every leg and check the stock balances. Nothing is sent. */
+export async function prepareSell(params: {
+  eth: EthProvider;
+  sender: string;
+  legs: SellLeg[];
+  slippageBps?: number;
+  onStatus?: StatusFn;
+}): Promise<PreparedOrder> {
+  const { eth, sender, legs, slippageBps = 50, onStatus = () => {} } = params;
+  await ensureBase(eth, onStatus);
+  const quotes = await quoteAll(legs, (l) => quoteSellLeg(l, sender, slippageBps), "to sell", onStatus);
+  const sold = quotes.filter(usable);
+  const skipped = quotes.filter((q) => !sold.includes(q)).map(withSkipReason);
+  if (sold.length === 0) throw new Error(skipped.map((s) => `${s.symbol}: ${s.error}`).join(" | ") || "No routes available");
 
-export async function quoteSellLeg(leg: SellLeg, sender: string, slippageBps = 50): Promise<LegQuote> {
-  return postSwap({ side: "sell", stockAddress: leg.b20Address, amountTokens: leg.tokens, sender, slippageBps }, leg.symbol);
+  for (const q of sold) {
+    const bal = await readErc20(eth, q.tokenIn!, "balanceOf", [sender as `0x${string}`]);
+    if (bal < BigInt(q.amountInRaw!)) throw new Error(`Not enough ${q.symbol} in this wallet.`);
+  }
+  return summarize("sell", sender, sold, skipped, await countApprovals(eth, sender, sold), slippageBps);
+}
+
+/** Step 2: the user confirmed the review. Sends approvals + swaps to the wallet and reads what arrived. */
+export async function submitOrder(params: {
+  eth: EthProvider;
+  order: PreparedOrder;
+  builderCode: string;
+  onStatus?: StatusFn;
+}): Promise<BasketResult> {
+  const { eth, order, builderCode, onStatus = () => {} } = params;
+  if (Date.now() - order.preparedAt > QUOTE_TTL_MS) throw new Error("Quote expired. Refresh the quote and review again.");
+  const { side, sender, legs, skipped } = order;
+  await ensureBase(eth, onStatus);
+
+  const approveCalls = await buildApprovals(eth, sender, legs, builderCode);
+  const verb = side === "buy" ? "Buy" : "Sell";
+  const { mode, txHashes } = await sendCalls(eth, sender, approveCalls, legs.map(toSwapCall), legs.map((q) => `${verb} ${q.symbol}`), onStatus, builderCode);
+  onStatus("Reading what you received onchain…");
+  const watch =
+    side === "buy"
+      ? legs.map((q) => ({ address: q.b20Address!, symbol: q.symbol, decimals: B20_DECIMALS, quoted: q.amountOutShares }))
+      : [{ address: USDC_BASE, symbol: "USDC", decimals: USDC_DECIMALS, quoted: order.totalOutUsdc }];
+  const tracked = await trackReceipts(eth, txHashes, sender, watch);
+  return { side, mode, txHashes, bought: legs, skipped, ...tracked };
+}
+
+/** Quote + send in one go (no review step). Kept for scripts and backwards compatibility. */
+export async function executeBasket(params: {
+  eth: EthProvider;
+  sender: string;
+  legs: BasketLeg[];
+  builderCode: string;
+  slippageBps?: number;
+  onStatus?: StatusFn;
+}): Promise<BasketResult> {
+  const order = await prepareBuy(params);
+  return submitOrder({ eth: params.eth, order, builderCode: params.builderCode, onStatus: params.onStatus });
 }
 
 export async function executeSell(params: {
@@ -372,25 +477,6 @@ export async function executeSell(params: {
   slippageBps?: number;
   onStatus?: StatusFn;
 }): Promise<BasketResult> {
-  const { eth, sender, legs, builderCode, slippageBps = 50, onStatus = () => {} } = params;
-  await ensureBase(eth, onStatus);
-
-  const quotes = await quoteAll(legs, (l) => quoteSellLeg(l, sender, slippageBps), "to sell", onStatus);
-  const sold = quotes.filter(usable);
-  const skipped = quotes.filter((q) => !sold.includes(q)).map(withSkipReason);
-  if (sold.length === 0) throw new Error(skipped.map((s) => `${s.symbol}: ${s.error}`).join(" | ") || "No routes available");
-
-  for (const q of sold) {
-    const bal = await readErc20(eth, q.tokenIn!, "balanceOf", [sender as `0x${string}`]);
-    if (bal < BigInt(q.amountInRaw!)) throw new Error(`Not enough ${q.symbol} in this wallet.`);
-  }
-
-  const approveCalls = await buildApprovals(eth, sender, sold, builderCode);
-  const { mode, txHashes } = await sendCalls(eth, sender, approveCalls, sold.map(toSwapCall), sold.map((q) => `Sell ${q.symbol}`), onStatus, builderCode);
-  onStatus("Reading what you received onchain…");
-  const quotedUsdc = sold.reduce((a, q) => a + (q.amountOutUsdc ?? 0), 0);
-  const tracked = await trackReceipts(eth, txHashes, sender, [
-    { address: USDC_BASE, symbol: "USDC", decimals: USDC_DECIMALS, quoted: quotedUsdc },
-  ]);
-  return { side: "sell", mode, txHashes, bought: sold, skipped, ...tracked };
+  const order = await prepareSell(params);
+  return submitOrder({ eth: params.eth, order, builderCode: params.builderCode, onStatus: params.onStatus });
 }

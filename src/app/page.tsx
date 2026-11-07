@@ -44,8 +44,18 @@ import {
 import { AgentAnalysisReport } from "@/lib/agentEngine";
 import { INDEX_REGISTRY_ABI } from "@/lib/contracts/StockMaxxIndexRegistryABI";
 import { encodeFunctionData } from "viem";
-import { executeBasket, executeSell, BasketLeg, BasketResult, SellLeg } from "@/lib/basketExecutor";
+import {
+  prepareBuy,
+  prepareSell,
+  submitOrder,
+  QUOTE_TTL_MS,
+  BasketLeg,
+  BasketResult,
+  PreparedOrder,
+  SellLeg,
+} from "@/lib/basketExecutor";
 import { MaxxAgentLogo, MaxxAgentMark } from "@/components/BrandLogo";
+import { OrderReview } from "@/components/OrderReview";
 import { TermsGate, TERMS_STORAGE_KEY } from "@/components/TermsGate";
 import {
   connectExternalWallet,
@@ -398,15 +408,43 @@ export default function StockMaxxingDashboard() {
     [builderCode]
   );
 
-  // Buy one or more B20 stocks with USDC from the user's own wallet (one batch when supported)
+  // Order review: quotes are shown to the user before anything is sent to the wallet
+  const [review, setReview] = useState<{
+    order: PreparedOrder;
+    label: string;
+    legs: { buy?: BasketLeg[]; sell?: SellLeg[] };
+  } | null>(null);
+  const [reviewBusy, setReviewBusy] = useState<boolean>(false);
+
+  const recordResult = useCallback(
+    (result: BasketResult, label: string) => {
+      setBasketResult(result);
+      setTimeout(() => setBalanceRefreshNonce((n) => n + 1), 6000);
+      let text: string;
+      if (result.side === "buy") {
+        const got =
+          result.received.length > 0
+            ? result.received.map((r) => `${r.tokens.toFixed(6)} ${r.symbol}`).join(", ")
+            : result.bought.map((b) => b.symbol).join(", ");
+        text = `BUY ${label}: ${got}`;
+      } else {
+        const usdc = result.received.find((r) => r.symbol === "USDC");
+        text = `SELL ${label}: ${result.bought.map((b) => `${(b.amountInTokens ?? 0).toFixed(6)} ${b.symbol}`).join(", ")} → ${
+          usdc ? `${usdc.tokens.toFixed(2)} USDC` : "USDC"
+        }`;
+      }
+      result.txHashes.forEach((h) => recordOnchainActivity(text, h, "Base Mainnet (8453)"));
+    },
+    [recordOnchainActivity]
+  );
+
+  // Step 1 (buy): quote one or more B20 stocks and open the review. Nothing is sent yet.
   const buyStocks = useCallback(
     async (legs: BasketLeg[], label: string) => {
       setBasketError("");
       setBasketResult(null);
       if (!nonUsComplianceAccepted) {
-        setBasketError(
-          "Please accept the terms first (reload the page to see them)."
-        );
+        setBasketError("Please accept the terms first (reload the page to see them).");
         return;
       }
       const validLegs = legs.filter((l) => l.usd >= 1);
@@ -415,9 +453,7 @@ export default function StockMaxxingDashboard() {
         const total = legs.reduce((a, l) => a + l.usd, 0);
         const smallest = Math.min(...legs.map((l) => l.usd));
         const needed = smallest > 0 ? Math.ceil(total / smallest) : 0;
-        setBasketError(
-          `Each stock needs at least $1.${needed > 0 ? ` For this basket, use at least $${needed}.` : ""}`
-        );
+        setBasketError(`Each stock needs at least $1.${needed > 0 ? ` For this basket, use at least $${needed}.` : ""}`);
         return;
       }
       const eth = getEthProvider();
@@ -429,34 +465,19 @@ export default function StockMaxxingDashboard() {
       try {
         const sender = await resolveSender(eth);
         if (sender.toLowerCase() !== walletAddress.toLowerCase()) setWalletAddress(sender);
-        const result = await executeBasket({
-          eth,
-          sender,
-          legs: validLegs,
-          builderCode,
-          onStatus: setBasketStatus,
-        });
-        setBasketResult(result);
-        setTimeout(() => setBalanceRefreshNonce((n) => n + 1), 6000);
-        const boughtLabel =
-          result.received.length > 0
-            ? result.received.map((r) => `${r.tokens.toFixed(6)} ${r.symbol}`).join(", ")
-            : result.bought.map((b) => b.symbol).join(", ");
-        result.txHashes.forEach((h) =>
-          recordOnchainActivity(`BUY ${label}: ${boughtLabel}`, h, "Base Mainnet (8453)")
-        );
-        setBasketStatus("");
+        const order = await prepareBuy({ eth, sender, legs: validLegs, onStatus: setBasketStatus });
+        setReview({ order, label, legs: { buy: validLegs } });
       } catch (err: unknown) {
-        setBasketError(err instanceof Error ? err.message : "Purchase cancelled or failed");
-        setBasketStatus("");
+        setBasketError(err instanceof Error ? err.message : "Could not prepare the order");
       } finally {
+        setBasketStatus("");
         setBasketPending(false);
       }
     },
-    [nonUsComplianceAccepted, walletAddress, builderCode, recordOnchainActivity, getEthProvider, resolveSender]
+    [nonUsComplianceAccepted, walletAddress, getEthProvider, resolveSender]
   );
 
-  // Sell B20 stocks back to USDC from the user's own wallet (exact approval, one batch when supported)
+  // Step 1 (sell): quote the sale and open the review. Nothing is sent yet.
   const sellStocks = useCallback(
     async (legs: SellLeg[], label: string) => {
       setBasketError("");
@@ -481,24 +502,64 @@ export default function StockMaxxingDashboard() {
           setBalanceRefreshNonce((n) => n + 1);
           throw new Error("Your wallet switched to another account. Balances were refreshed: check them and try again.");
         }
-        const result = await executeSell({ eth, sender, legs: validLegs, builderCode, onStatus: setBasketStatus });
-        setBasketResult(result);
-        setTimeout(() => setBalanceRefreshNonce((n) => n + 1), 6000);
-        const usdc = result.received.find((r) => r.symbol === "USDC");
-        const soldLabel = `${result.bought.map((b) => `${(b.amountInTokens ?? 0).toFixed(6)} ${b.symbol}`).join(", ")} → ${
-          usdc ? `${usdc.tokens.toFixed(2)} USDC` : "USDC"
-        }`;
-        result.txHashes.forEach((h) => recordOnchainActivity(`SELL ${label}: ${soldLabel}`, h, "Base Mainnet (8453)"));
-        setBasketStatus("");
+        const order = await prepareSell({ eth, sender, legs: validLegs, onStatus: setBasketStatus });
+        setReview({ order, label, legs: { sell: validLegs } });
       } catch (err: unknown) {
-        setBasketError(err instanceof Error ? err.message : "Sale cancelled or failed");
-        setBasketStatus("");
+        setBasketError(err instanceof Error ? err.message : "Could not prepare the sale");
       } finally {
+        setBasketStatus("");
         setBasketPending(false);
       }
     },
-    [nonUsComplianceAccepted, walletAddress, builderCode, recordOnchainActivity, getEthProvider, resolveSender]
+    [nonUsComplianceAccepted, walletAddress, getEthProvider, resolveSender]
   );
+
+  // Re-quote the order under review (expired quote or user request)
+  const refreshReview = useCallback(async () => {
+    if (!review) return;
+    const eth = getEthProvider();
+    if (!eth) return;
+    setReviewBusy(true);
+    setBasketError("");
+    try {
+      const { sender } = review.order;
+      const order = review.legs.buy
+        ? await prepareBuy({ eth, sender, legs: review.legs.buy, onStatus: setBasketStatus })
+        : await prepareSell({ eth, sender, legs: review.legs.sell || [], onStatus: setBasketStatus });
+      setReview({ ...review, order });
+    } catch (err: unknown) {
+      setReview(null);
+      setBasketError(err instanceof Error ? err.message : "Could not refresh the quote");
+    } finally {
+      setBasketStatus("");
+      setReviewBusy(false);
+    }
+  }, [review, getEthProvider]);
+
+  // Step 2: the user confirmed the review; only now does the wallet open
+  const confirmReview = useCallback(async () => {
+    if (!review) return;
+    if (Date.now() - review.order.preparedAt > QUOTE_TTL_MS) {
+      await refreshReview(); // show fresh numbers first, never send a stale quote silently
+      return;
+    }
+    const eth = getEthProvider();
+    if (!eth) return;
+    const { order, label } = review;
+    setReview(null);
+    setBasketPending(true);
+    try {
+      const result = await submitOrder({ eth, order, builderCode, onStatus: setBasketStatus });
+      recordResult(result, label);
+    } catch (err: unknown) {
+      setBasketError(
+        err instanceof Error ? err.message : order.side === "buy" ? "Purchase cancelled or failed" : "Sale cancelled or failed"
+      );
+    } finally {
+      setBasketStatus("");
+      setBasketPending(false);
+    }
+  }, [review, refreshReview, getEthProvider, builderCode, recordResult]);
 
   // Build in Public State
   const [dayNumber, setDayNumber] = useState<number>(1);
@@ -3253,6 +3314,19 @@ const walletClient = createWalletClient({
           </div>
         )}
       </main>
+
+      {review && (
+        <OrderReview
+          order={review.order}
+          label={review.label}
+          ttlMs={QUOTE_TTL_MS}
+          busy={reviewBusy}
+          status={basketStatus}
+          onConfirm={confirmReview}
+          onCancel={() => setReview(null)}
+          onRefresh={refreshReview}
+        />
+      )}
 
       {/* Purchase status toast (visible from any tab) */}
       {(basketPending || basketError || basketResult) && activeTab !== "agent" && (

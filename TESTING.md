@@ -37,7 +37,9 @@ Use small amounts ($1–$2). Do it on a phone **and** on a desktop.
 - [ ] Disconnect (✕), then connect a different account: balances switch to the new account
 
 **Trading — real money**
-- [ ] Market tab → Swap panel: buy $1 of one stock. The wallet shows one prompt (batch) or approve + swap
+- [ ] Market tab → Swap panel: buy $1 of one stock. A **Review your order** screen opens first (amount, estimate, minimum, cost, vs NAV); the wallet does NOT open until **Confirm in wallet**
+- [ ] Wait past the 45 s countdown: the button turns into "Quote expired — refresh" and shows fresh numbers before anything is sent
+- [ ] After Confirm, the wallet shows one prompt (batch) or approve + swap
 - [ ] Toast says "Purchase confirmed" and shows what was received
 - [ ] Portfolio shows the new position within a few seconds
 - [ ] Sell 50%, then All, from the Portfolio tab: "Sale confirmed", USDC comes back
