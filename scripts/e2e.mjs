@@ -183,9 +183,17 @@ const buyOneDollar = async () => {
   await tab("Market");
   await page.waitForSelector("#swap-panel input", { timeout: 30000 });
   await page.evaluate(() => [...document.querySelectorAll("#swap-panel button")].find((b) => /^buy /i.test(b.textContent.trim()))?.click());
+  // Clear the field reliably: a triple-click doesn't always select on touch emulation, and typing then
+  // appends ("1" -> "11", above the test wallet's balance), which made buy steps fail at random
   const input = await page.$("#swap-panel input");
-  await input.click({ clickCount: 3 });
+  await input.click();
+  await page.keyboard.down("Control");
+  await page.keyboard.press("KeyA");
+  await page.keyboard.up("Control");
+  await page.keyboard.press("Backspace");
   await input.type("1");
+  const typed = await page.$eval("#swap-panel input", (e) => e.value);
+  assert(typed === "1", `amount field holds "${typed}" instead of "1"`);
   if (!(await click("#swap-panel button", /^Buy \$1\.00/, 15000))) {
     const state = await page
       .$eval("#swap-panel", (e) => ({
@@ -281,9 +289,17 @@ await step("Pay with ETH: review shows ETH, no approval, one wallet request afte
   await tab("Market");
   await page.waitForSelector("#swap-panel input", { timeout: 30000 });
   assert(await click("#swap-panel button", /^eth$/i), "ETH pay-with toggle");
+  // Clear the field reliably: a triple-click doesn't always select on touch emulation, and typing then
+  // appends ("1" -> "11", above the test wallet's balance), which made buy steps fail at random
   const input = await page.$("#swap-panel input");
-  await input.click({ clickCount: 3 });
+  await input.click();
+  await page.keyboard.down("Control");
+  await page.keyboard.press("KeyA");
+  await page.keyboard.up("Control");
+  await page.keyboard.press("Backspace");
   await input.type("1");
+  const typed = await page.$eval("#swap-panel input", (e) => e.value);
+  assert(typed === "1", `amount field holds "${typed}" instead of "1"`);
   assert(await click("#swap-panel button", /^Buy \$1\.00 of \w+ with ETH/, 15000), "Buy with ETH button");
   await page.waitForSelector('[role="dialog"]', { timeout: 60000 });
   const d = await page.$eval('[role="dialog"]', (e) => e.innerText);

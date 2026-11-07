@@ -29,7 +29,7 @@ Built for the **Base Builder Quest: Stocks Maxxing Season** (Nov 5 – Dec 5, 20
 | **Stock pages** | `/stock/[symbol]`: live NAV, DEX price and gap, liquidity, volume, market cap, multiplier, 7-day NAV vs DEX chart, US market status |
 | **Live stats** | `/stats` counts every trade MAXXAGENT routed, read from onchain router events (team test wallet excluded) |
 | **Mini app** | Opens inside Farcaster clients with the host wallet connected automatically; shared links render as a launch card; casts shared to MAXXAGENT open the stocks they mention |
-| **Index registry** | `StockMaxxIndexRegistry` (in the repo, tested, not deployed yet) publishes index names and weights onchain. No deposits, no payable functions, no token transfers, no fees |
+| **Index registry** | [`StockMaxxIndexRegistry`](https://basescan.org/address/0xdd059D85d1327a5A4b9cA14cF0A6DF82C7b86909) on Base (source verified on [Sourcify](https://repo.sourcify.dev/8453/0xdd059D85d1327a5A4b9cA14cF0A6DF82C7b86909)) publishes index names and weights onchain so anyone can buy the same basket. No deposits, no payable functions, no token transfers, no fees; only an index's creator can change its weights |
 | **Attribution** | Every transaction carries the ERC-8021 Builder Code (`ox/erc8021`), 32-byte aligned so it survives smart-wallet batching, plus the `dataSuffix` capability |
 
 ## For judges: verify it yourself
@@ -116,4 +116,4 @@ Brand and mini app assets: `npm run brand`, `node scripts/generate-miniapp-asset
 - The Chainlink NAV updates 24/5 and is frozen outside market hours; DEX prices trade 24/7 and can drift.
 - DEX liquidity data can miss pools; GeckoTerminal's public API is rate-limited (charts fall back to Chainlink only).
 - The aggregator may throttle bursts; the swap API retries and re-routes.
-- The index registry is not deployed yet; indexes are shared as links for now.
+- The registry's owner can only add or remove tokens from its allowlist; it cannot touch indexes or funds.

@@ -1,0 +1,9 @@
+{
+  "chainId": 8453,
+  "address": "0xdd059D85d1327a5A4b9cA14cF0A6DF82C7b86909",
+  "txHash": "0x1112cbf9107b194d44f305213181ca71c181a7d4eff9fffd8b08a1d7008d1fd7",
+  "block": 54437968,
+  "deployer": "0xD986C711F575C71dA22Bd08742b9DB2091Ba9e33",
+  "builderCode": "bc_ewm6gcvz",
+  "compiler": "0.8.38+commit.1835d247.Emscripten.clang"
+}
