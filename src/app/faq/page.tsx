@@ -25,8 +25,9 @@ const FAQ: { q: string; a: React.ReactNode }[] = [
     q: "What do I need to start?",
     a: (
       <>
-        A wallet on Base (browser wallet, Coinbase Smart Wallet, or a phone wallet via WalletConnect), USDC on Base (at least
-        $1 per stock) and a little ETH on Base for network fees. You must be outside the United States and meet the{" "}
+        A wallet on Base (browser wallet, Coinbase Smart Wallet, or a phone wallet via WalletConnect), USDC or ETH on Base
+        (at least $1 per stock), plus a little ETH on Base for network fees. No USDC? Choose <em>Pay with ETH</em> in the
+        Swap panel. You must be outside the United States and meet the{" "}
         <Link href="/terms" className="text-cyan-300 underline">
           eligibility terms
         </Link>
@@ -38,7 +39,7 @@ const FAQ: { q: string; a: React.ReactNode }[] = [
     q: "How does a purchase work?",
     a: (
       <ol className="list-decimal pl-5 space-y-1">
-        <li>Choose an amount in the Swap panel, or a basket in the Agent tab.</li>
+        <li>Choose an amount in the Swap panel (paid in USDC or ETH), or a basket in the Agent tab.</li>
         <li>MAXXAGENT finds a route on KyberSwap and shows a review: amount, estimate, guaranteed minimum, cost and price vs NAV.</li>
         <li>
           Only after <em>Confirm in wallet</em> does your wallet open. It asks for an exact-amount USDC approval (once per
@@ -83,7 +84,8 @@ const FAQ: { q: string; a: React.ReactNode }[] = [
     q: "Why does my wallet ask for an approval?",
     a: (
       <>
-        Token swaps need permission for the KyberSwap router to take the exact amount you are swapping. MAXXAGENT always
+        Token swaps need permission for the KyberSwap router to take the exact amount you are swapping (paying with ETH
+        needs no approval). MAXXAGENT always
         requests the exact amount, never an unlimited approval, and only for KyberSwap&apos;s official router on Base.
       </>
     ),

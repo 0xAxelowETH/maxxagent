@@ -314,6 +314,31 @@ await step("Agent basket: buy opens a multi-stock review or a clear funds messag
   return "clear message shown (test wallet has little USDC)";
 });
 
+await step("Rebalance panel: plans against real holdings; step 1 opens a sell review, step 2 waits for it", async () => {
+  await dismissToast();
+  await setMock({ sendCalls: "reject" });
+  await tab("Agent");
+  await waitText(/Rebalance my portfolio to this basket/, 60000);
+  const panel = await page.$eval("#rebalance", (e) => e.innerText);
+  assert(/now/i.test(panel) && /target/i.test(panel), "plan table missing"); // innerText follows CSS uppercase
+  const step2Disabled = await page.evaluate(() => [...document.querySelectorAll("#rebalance button")].find((b) => /^2\. Buy/.test(b.textContent.trim()))?.disabled);
+  if (/Too small for these weights/.test(panel)) {
+    // A tiny portfolio must not be sold into USDC when nothing can be bought back
+    const step1Disabled = await page.evaluate(() => [...document.querySelectorAll("#rebalance button")].find((b) => /^1\. Sell/.test(b.textContent.trim()))?.disabled);
+    assert(step1Disabled === true, "step 1 should be blocked when the buys can't happen");
+    return "too small: warning shown, step 1 blocked";
+  }
+  if (await click("#rebalance button", /^1\. Sell overweight \(/, 3000)) {
+    assert(step2Disabled === true, "step 2 should wait until the sales are done");
+    await page.waitForSelector('[role="dialog"]', { timeout: 60000 });
+    const d = await page.$eval('[role="dialog"]', (e) => e.innerText);
+    assert(/Sell rebalance/i.test(d), "not the rebalance sell review");
+    await click('[role="dialog"] button', /^Cancel$/);
+    return "sell review opened";
+  }
+  return /Already balanced|none/.test(panel) ? "nothing to sell for this wallet" : "panel shown";
+});
+
 await step("Basket where one swap reverts (one-by-one): reports 'Partly completed' with the failed stock", async () => {
   await dismissToast();
   await setMock({ usdc: 1000, sendCalls: "unsupported", sendTx: "fake", revertSwap: 2 });

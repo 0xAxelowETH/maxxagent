@@ -56,6 +56,7 @@ import {
 } from "@/lib/basketExecutor";
 import { MaxxAgentLogo, MaxxAgentMark } from "@/components/BrandLogo";
 import { OrderReview } from "@/components/OrderReview";
+import { RebalancePanel } from "@/components/RebalancePanel";
 import { TermsGate, TERMS_STORAGE_KEY } from "@/components/TermsGate";
 import {
   connectExternalWallet,
@@ -2412,6 +2413,20 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                       </div>
                     )}
                   </div>
+
+                  {/* Rebalance the wallet's current stocks toward this basket (sell overweight, then buy underweight) */}
+                  {walletAddress && balancesFor === walletAddress.toLowerCase() && (
+                    <RebalancePanel
+                      stocks={stocks}
+                      balances={walletBalances}
+                      usdcBalance={usdcBalance}
+                      targets={agentReport.allocations.map((a) => ({ symbol: a.symbol, b20Address: a.b20Address, weightBps: a.targetWeightBps }))}
+                      targetLabel={agentReport.strategyName}
+                      pending={basketPending}
+                      onSell={(legs, label) => sellStocks(legs, label)}
+                      onBuy={(legs, label) => buyStocks(legs, label)}
+                    />
+                  )}
 
                   {/* Interactive SVG Donut Chart for Agent Portfolio */}
                   <div className="rounded-2xl border border-slate-800/90 bg-[#050914]/90 p-4">
