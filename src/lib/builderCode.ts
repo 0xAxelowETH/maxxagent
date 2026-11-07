@@ -82,3 +82,17 @@ export function parseErc8021Calldata(calldata: string): {
     return { isValid: false, codes: [], schemaId: null, rawSuffix: null };
   }
 }
+
+/**
+ * Appends an ERC-8021 suffix with zero padding BEFORE it, so the result is a multiple of 32 bytes.
+ * Batching wallets (EIP-7702 `execute`, ERC-4337 `executeBatch`) ABI-encode each call's data and pad it
+ * to 32 bytes; padding after the suffix hides it from indexers, which read from the very end of the
+ * input. With aligned data there is no padding, so the wallet's outer calldata ends with our suffix.
+ * Only use on calls whose target ignores trailing calldata (e.g. the swap router).
+ */
+export function alignedWithSuffix(calldata: string, suffix: string): `0x${string}` {
+  const body = calldata.replace(/^0x/, "");
+  const sfx = suffix.replace(/^0x/, "");
+  const pad = (32 - ((body.length / 2 + sfx.length / 2) % 32)) % 32;
+  return `0x${body}${"00".repeat(pad)}${sfx}`;
+}

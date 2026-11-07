@@ -4,6 +4,7 @@ import { createPublicClient, parseAbi } from "viem";
 import { base } from "viem/chains";
 import { BASE_TOKENIZED_STOCKS } from "@/lib/tokenizedStocks";
 import { baseTransport } from "@/lib/rpc";
+import { alignedWithSuffix } from "@/lib/builderCode";
 
 /**
  * Swap builder between USDC and Coinbase B20 tokenized stocks (KyberSwap Aggregator on Base).
@@ -236,9 +237,12 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // 3. Append ERC-8021 Builder Code (routers ignore trailing calldata)
-    const suffix = Attribution.toDataSuffix({ codes: [BUILDER_CODE] });
-    const data = `${build.data.data}${suffix.slice(2)}`;
+    // 3. Append ERC-8021 Builder Code (routers ignore trailing calldata).
+    // Zero-pad BEFORE the suffix so the call data is a multiple of 32 bytes. Batching wallets
+    // (EIP-7702 execute, ERC-4337 executeBatch) ABI-encode the calls, and ABI padding after our
+    // suffix hid it from indexers, which read the suffix from the very end of the tx / UserOp input.
+    // With 32-byte alignment there is no padding, so the outer input ends with our suffix.
+    const data = alignedWithSuffix(build.data.data, Attribution.toDataSuffix({ codes: [BUILDER_CODE] }));
     const minAmountOutRaw = (amountOutRaw * BigInt(10_000 - slippageBps)) / 10_000n;
 
     return NextResponse.json({

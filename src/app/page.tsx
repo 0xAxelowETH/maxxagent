@@ -294,6 +294,9 @@ export default function StockMaxxingDashboard() {
   const [totalDexVolume24hUsd, setTotalDexVolume24hUsd] = useState<number>(0);
   const [fetchedAt, setFetchedAt] = useState<string>("");
   const [loadingStocks, setLoadingStocks] = useState<boolean>(true);
+  // Wallet whose balances are currently shown (lowercase); "" = none loaded yet
+  const [balancesFor, setBalancesFor] = useState<string>("");
+  const [balancesError, setBalancesError] = useState<string>("");
 
   // Wallet & Builder Code State
   const [walletAddress, setWalletAddress] = useState<string>("");
@@ -536,10 +539,13 @@ export default function StockMaxxingDashboard() {
         setFetchedAt(data.fetchedAt || new Date().toISOString());
         if (data.walletBalances) {
           setWalletBalances(data.walletBalances);
+          if (walletToQuery) setBalancesFor(walletToQuery.toLowerCase());
         }
+        if (walletToQuery) setBalancesError(data.walletBalances ? "" : data.walletError || "Could not read your balances.");
         if (typeof data.walletUsdc === "number") setUsdcBalance(data.walletUsdc);
       }
     } catch (err) {
+      if (walletToQuery) setBalancesError("Could not reach the server. Check your connection.");
       console.error("Failed to fetch live tokenized stocks:", err);
     } finally {
       setLoadingStocks(false);
@@ -2699,7 +2705,31 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                   Connect a wallet to see your holdings.
                 </div>
               ) : (
-                (() => {
+                balancesFor !== walletAddress.toLowerCase() ? (
+                  <div className="space-y-3" aria-busy="true">
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                      {[0, 1, 2].map((i) => (
+                        <div key={i} className="h-[62px] rounded-xl border border-slate-800 bg-[#070b14] animate-pulse" />
+                      ))}
+                    </div>
+                    {balancesError && !loadingStocks ? (
+                      <div className="flex flex-wrap items-center justify-center gap-3 rounded-xl border border-dashed border-amber-500/40 p-6 text-xs text-amber-200">
+                        {balancesError}
+                        <button
+                          onClick={() => fetchLiveStocks(walletAddress)}
+                          className="rounded-lg border border-slate-700 px-3 py-1.5 font-semibold text-white hover:bg-slate-800 cursor-pointer"
+                        >
+                          Retry
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="flex items-center justify-center gap-2 rounded-xl border border-dashed border-slate-800 p-6 text-xs text-slate-400">
+                        <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                        Reading your balances from Base…
+                      </div>
+                    )}
+                  </div>
+                ) : (() => {
                   const rows = stocks
                     .map((st) => ({ st, bal: walletBalances[st.symbol] }))
                     .filter((r) => (r.bal?.rawTokens ?? 0) > 0);
@@ -2737,10 +2767,10 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                               <tr className="text-left text-[10px] uppercase tracking-wider text-slate-500 border-b border-slate-800">
                                 <th className="py-2 pr-3">Stock</th>
                                 <th className="py-2 pr-3 text-right">Tokens</th>
-                                <th className="py-2 pr-3 text-right">Share-equivalent</th>
-                                <th className="py-2 pr-3 text-right">NAV</th>
+                                <th className="hidden sm:table-cell py-2 pr-3 text-right">Share-equivalent</th>
+                                <th className="hidden sm:table-cell py-2 pr-3 text-right">NAV</th>
                                 <th className="py-2 pr-3 text-right">Value</th>
-                                <th className="py-2 pr-3 text-right">Weight</th>
+                                <th className="hidden sm:table-cell py-2 pr-3 text-right">Weight</th>
                                 <th className="py-2 text-right">Sell</th>
                               </tr>
                             </thead>
@@ -2748,16 +2778,16 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                               {rows.map(({ st, bal }) => (
                                 <tr key={st.symbol} className="border-b border-slate-800/60 font-mono">
                                   <td className="py-2.5 pr-3">
-                                    <span className="inline-flex items-center gap-2 font-sans font-semibold text-white">
-                                      <img src={st.logoUrl} alt="" className="h-5 w-5 rounded-full" />
+                                    <span className="inline-flex items-center gap-2 whitespace-nowrap font-sans font-semibold text-white">
+                                      <img src={st.logoUrl} alt="" className="h-5 w-5 shrink-0 rounded-full" />
                                       {st.symbol}
                                     </span>
                                   </td>
                                   <td className="py-2.5 pr-3 text-right text-slate-300">{(bal?.rawTokens ?? 0).toFixed(6)}</td>
-                                  <td className="py-2.5 pr-3 text-right text-slate-300">{(bal?.sharesUI ?? 0).toFixed(6)}</td>
-                                  <td className="py-2.5 pr-3 text-right text-slate-300">${st.navPrice.toFixed(2)}</td>
+                                  <td className="hidden sm:table-cell py-2.5 pr-3 text-right text-slate-300">{(bal?.sharesUI ?? 0).toFixed(6)}</td>
+                                  <td className="hidden sm:table-cell py-2.5 pr-3 text-right text-slate-300">${st.navPrice.toFixed(2)}</td>
                                   <td className="py-2.5 pr-3 text-right font-bold text-white">${(bal?.usdValue ?? 0).toFixed(2)}</td>
-                                  <td className="py-2.5 pr-3 text-right text-cyan-300">
+                                  <td className="hidden sm:table-cell py-2.5 pr-3 text-right text-cyan-300">
                                     {totalUsd > 0 ? (((bal?.usdValue ?? 0) / totalUsd) * 100).toFixed(1) : "0.0"}%
                                   </td>
                                   <td className="py-2.5 text-right font-sans">

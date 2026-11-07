@@ -14,6 +14,7 @@ const publicClient = createPublicClient({
   chain: base,
   transport: baseTransport({ timeout: 8000 }),
 });
+const USDC_BASE = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" as const;
 
 interface DexScreenerPair {
   chainId?: string;
@@ -180,8 +181,29 @@ async function fetchLiveBaseDexPools(): Promise<Record<string, DexScreenerPair>>
   return bestPoolByAddress;
 }
 
-export async function GET(request: NextRequest) {
-  const walletParam = request.nextUrl.searchParams.get("wallet");
+// Market data is the same for every visitor: build it at most every 15s and share it.
+// Wallet requests reuse it and only add their own balance reads (one multicall).
+const MARKET_TTL_MS = 15_000;
+let marketCache: { at: number; stocks: LiveTokenizedStock[] } | null = null;
+let marketInflight: Promise<LiveTokenizedStock[]> | null = null;
+
+async function getMarket(): Promise<LiveTokenizedStock[]> {
+  if (marketCache && Date.now() - marketCache.at < MARKET_TTL_MS) return marketCache.stocks;
+  if (!marketInflight) {
+    marketInflight = buildMarket()
+      .then((stocks) => {
+        // Don't pin a fully-fallback snapshot for 15s: retry on the next request
+        if (stocks.some((s) => s.source !== "fallback-snapshot")) marketCache = { at: Date.now(), stocks };
+        return stocks;
+      })
+      .finally(() => {
+        marketInflight = null;
+      });
+  }
+  return marketInflight;
+}
+
+async function buildMarket(): Promise<LiveTokenizedStock[]> {
   const nowSec = Math.floor(Date.now() / 1000);
 
   // 1. Run Live Base DEX Pool discovery + DoH Coinbase API enrichment in parallel
@@ -328,6 +350,12 @@ export async function GET(request: NextRequest) {
       }
     })
   );
+  return liveStocks;
+}
+
+export async function GET(request: NextRequest) {
+  const walletParam = request.nextUrl.searchParams.get("wallet");
+  const liveStocks = await getMarket();
 
   // 3. Optional wallet B20 `balanceOfUI` & policy compliance inspection on Base Mainnet
   const walletBalances: Record<
@@ -335,84 +363,64 @@ export async function GET(request: NextRequest) {
     { rawTokens: number; sharesUI: number; usdValue: number; b20Authorized: boolean }
   > = {};
 
-  if (walletParam && /^0x[a-fA-F0-9]{40}$/.test(walletParam)) {
-    const walletAddr = walletParam as `0x${string}`;
-    await Promise.all(
-      liveStocks.map(async (stock) => {
-        try {
-          const [rawBal, rawBalUI, policyIdVal] = await Promise.all([
-            publicClient.readContract({
-              address: stock.b20Address,
-              abi: B20_AND_CHAINLINK_ABI,
-              functionName: "balanceOf",
-              args: [walletAddr],
-            }),
-            publicClient
-              .readContract({
-                address: stock.b20Address,
-                abi: B20_AND_CHAINLINK_ABI,
-                functionName: "balanceOfUI",
-                args: [walletAddr],
-              })
-              .catch(() => null),
-            publicClient
-              .readContract({
-                address: stock.b20Address,
-                abi: B20_AND_CHAINLINK_ABI,
-                functionName: "policyId",
-              })
-              .catch(() => 0n),
-          ]);
-
-          let b20Authorized = true;
-          if (policyIdVal && Number(policyIdVal) > 0) {
-            b20Authorized = await publicClient
-              .readContract({
-                address: stock.b20Address,
-                abi: B20_AND_CHAINLINK_ABI,
-                functionName: "isAuthorized",
-                args: [BigInt(policyIdVal), walletAddr],
-              })
-              .catch(() => false);
-          }
-
-          const rawTokens = Number(rawBal) / Math.pow(10, stock.decimals);
-          const sharesUI =
-            rawBalUI !== null
-              ? Number(rawBalUI) / Math.pow(10, stock.decimals)
-              : rawTokens * stock.uiMultiplier;
-
-          walletBalances[stock.symbol] = {
-            rawTokens,
-            sharesUI,
-            usdValue: rawTokens * stock.navPrice,
-            b20Authorized,
-          };
-        } catch {
-          walletBalances[stock.symbol] = {
-            rawTokens: 0,
-            sharesUI: 0,
-            usdValue: 0,
-            b20Authorized: true,
-          };
-        }
-      })
-    );
-  }
-
   // USDC balance on Base for the connected wallet (needed before buying)
   let walletUsdc: number | undefined;
+  let walletError: string | undefined;
+
   if (walletParam && /^0x[a-fA-F0-9]{40}$/.test(walletParam)) {
+    const walletAddr = walletParam as `0x${string}`;
     try {
-      const raw = await publicClient.readContract({
-        address: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+      // Every balance in ONE multicall (was ~30 separate RPC calls)
+      const perStock = liveStocks.flatMap((stock) => [
+        { address: stock.b20Address, abi: B20_AND_CHAINLINK_ABI, functionName: "balanceOf" as const, args: [walletAddr] as const },
+        { address: stock.b20Address, abi: B20_AND_CHAINLINK_ABI, functionName: "balanceOfUI" as const, args: [walletAddr] as const },
+        { address: stock.b20Address, abi: B20_AND_CHAINLINK_ABI, functionName: "policyId" as const },
+      ]);
+      const usdcCall = {
+        address: USDC_BASE,
         abi: B20_AND_CHAINLINK_ABI,
-        functionName: "balanceOf",
-        args: [walletParam as `0x${string}`],
+        functionName: "balanceOf" as const,
+        args: [walletAddr] as const,
+      };
+      const results = await publicClient.multicall({ allowFailure: true, contracts: [...perStock, usdcCall] });
+      const val = (i: number) => (results[i]?.status === "success" ? (results[i].result as bigint) : null);
+
+      // Policy checks only where a policy is set (second, usually empty, multicall)
+      const policyChecks = liveStocks
+        .map((stock, i) => ({ stock, policy: val(i * 3 + 2) }))
+        .filter((x) => x.policy !== null && x.policy > 0n);
+      const authResults = policyChecks.length
+        ? await publicClient.multicall({
+            allowFailure: true,
+            contracts: policyChecks.map((x) => ({
+              address: x.stock.b20Address,
+              abi: B20_AND_CHAINLINK_ABI,
+              functionName: "isAuthorized" as const,
+              args: [x.policy as bigint, walletAddr] as const,
+            })),
+          })
+        : [];
+      const authorized = new Map(
+        policyChecks.map((x, i) => [x.stock.symbol, authResults[i]?.status === "success" ? Boolean(authResults[i].result) : false])
+      );
+
+      liveStocks.forEach((stock, i) => {
+        const rawBal = val(i * 3);
+        if (rawBal === null) return; // unknown, not zero: the client keeps what it had
+        const rawBalUI = val(i * 3 + 1);
+        const rawTokens = Number(rawBal) / Math.pow(10, stock.decimals);
+        walletBalances[stock.symbol] = {
+          rawTokens,
+          sharesUI: rawBalUI !== null ? Number(rawBalUI) / Math.pow(10, stock.decimals) : rawTokens * stock.uiMultiplier,
+          usdValue: rawTokens * stock.navPrice,
+          b20Authorized: authorized.get(stock.symbol) ?? true,
+        };
       });
-      walletUsdc = Number(raw) / 1e6;
+      const usdcRaw = val(perStock.length);
+      walletUsdc = usdcRaw !== null ? Number(usdcRaw) / 1e6 : undefined;
+      if (Object.keys(walletBalances).length < liveStocks.length) walletError = "Some balances could not be read. Retry in a moment.";
     } catch {
-      walletUsdc = undefined;
+      walletError = "Wallet balances are unavailable right now. Retry in a moment.";
     }
   }
 
@@ -433,5 +441,6 @@ export async function GET(request: NextRequest) {
     stocks: liveStocks,
     walletBalances: Object.keys(walletBalances).length > 0 ? walletBalances : undefined,
     walletUsdc,
+    walletError,
   });
 }
