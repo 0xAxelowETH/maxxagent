@@ -60,6 +60,7 @@ import { TermsGate, TERMS_STORAGE_KEY } from "@/components/TermsGate";
 import {
   connectExternalWallet,
   disconnectExternalWallets,
+  restoreExternalWallet,
   walletConnectConfigured,
   ExternalWalletKind,
 } from "@/lib/walletConnectors";
@@ -698,6 +699,42 @@ export default function StockMaxxingDashboard() {
   };
 
 
+  // Remember the wallet the user picked, so a page refresh reconnects silently (no popup)
+  const WALLET_STORAGE_KEY = "maxxagent_wallet";
+  type SavedWallet = { kind: "injected"; rdns: string; name: string } | { kind: ExternalWalletKind };
+  const saveWallet = (w: SavedWallet | null) => {
+    try {
+      if (w) localStorage.setItem(WALLET_STORAGE_KEY, JSON.stringify(w));
+      else localStorage.removeItem(WALLET_STORAGE_KEY);
+    } catch {}
+  };
+
+  // Shared by manual connect and silent restore: show the account, read balances, listen for changes
+  const attachWallet = (eth: EthereumProvider, account: string, chainId: string) => {
+    setWalletAddress(account);
+    setInspectAddress(account);
+    setChainIdHex(chainId);
+    fetchLiveStocks(account);
+    // One set of listeners at a time: reconnecting must not stack duplicates
+    detachListenersRef.current?.();
+    const onAccounts = (...args: unknown[]) => {
+      const next = (args[0] as string[] | undefined)?.[0] || "";
+      setWalletAddress(next);
+      setInspectAddress(next);
+      setWalletBalances({});
+      setUsdcBalance(null);
+      if (next) fetchLiveStocks(next);
+      else saveWallet(null); // disconnected from inside the wallet: don't auto-reconnect
+    };
+    const onChain = (...args: unknown[]) => setChainIdHex(String(args[0] || ""));
+    eth.on?.("accountsChanged", onAccounts);
+    eth.on?.("chainChanged", onChain);
+    detachListenersRef.current = () => {
+      eth.removeListener?.("accountsChanged", onAccounts);
+      eth.removeListener?.("chainChanged", onChain);
+    };
+  };
+
   // Connect EVM Wallet & switch to Base Mainnet (8453)
   const connectWallet = async (picked?: Eip6963ProviderDetail, external?: ExternalWalletKind) => {
     setTxError("");
@@ -733,32 +770,50 @@ export default function StockMaxxingDashboard() {
       })) as string[];
       const chainId = (await eth.request({ method: "eth_chainId" })) as string;
       if (accounts && accounts[0]) {
-        setWalletAddress(accounts[0]);
-        setInspectAddress(accounts[0]);
-        setChainIdHex(chainId);
-        fetchLiveStocks(accounts[0]);
-        // One set of listeners at a time: reconnecting must not stack duplicates
-        detachListenersRef.current?.();
-        const onAccounts = (...args: unknown[]) => {
-          const next = (args[0] as string[] | undefined)?.[0] || "";
-          setWalletAddress(next);
-          setInspectAddress(next);
-          setWalletBalances({});
-          setUsdcBalance(null);
-          if (next) fetchLiveStocks(next);
-        };
-        const onChain = (...args: unknown[]) => setChainIdHex(String(args[0] || ""));
-        eth.on?.("accountsChanged", onAccounts);
-        eth.on?.("chainChanged", onChain);
-        detachListenersRef.current = () => {
-          eth.removeListener?.("accountsChanged", onAccounts);
-          eth.removeListener?.("chainChanged", onChain);
-        };
+        attachWallet(eth, accounts[0], chainId);
+        if (external) saveWallet({ kind: external });
+        else if (picked) saveWallet({ kind: "injected", rdns: picked.info.rdns, name: picked.info.name });
       }
     } catch (err: unknown) {
       setTxError(err instanceof Error ? err.message : "Wallet connection rejected");
     }
   };
+
+  // Silent reconnect after a refresh. Never opens a popup: eth_accounts / stored SDK sessions only.
+  const restoreTried = useRef(false);
+  useEffect(() => {
+    if (restoreTried.current || walletAddress) return;
+    let saved: SavedWallet | null = null;
+    try {
+      saved = JSON.parse(localStorage.getItem(WALLET_STORAGE_KEY) || "null");
+    } catch {}
+    if (!saved) {
+      restoreTried.current = true;
+      return;
+    }
+    const finish = async (eth: EthereumProvider, name: string) => {
+      const accounts = (await eth.request({ method: "eth_accounts" }).catch(() => [])) as string[];
+      if (!accounts?.[0]) return; // the wallet no longer authorizes this site: stay disconnected
+      const chainId = (await eth.request({ method: "eth_chainId" }).catch(() => "")) as string;
+      providerRef.current = eth;
+      setConnectedWalletName(name);
+      attachWallet(eth, accounts[0], chainId);
+    };
+    if (saved.kind === "injected") {
+      // Wait for the extension to announce itself (EIP-6963); give up quietly if it never does
+      const match = walletProviders.find((p) => p.info.rdns === (saved as { rdns: string }).rdns);
+      if (!match) return; // re-runs when walletProviders updates
+      restoreTried.current = true;
+      finish(match.provider as EthereumProvider, match.info.name);
+    } else {
+      restoreTried.current = true;
+      const kind = saved.kind;
+      restoreExternalWallet(kind).then((p) => {
+        if (p) finish(p as EthereumProvider, kind === "coinbase" ? "Coinbase Smart Wallet" : "WalletConnect");
+      });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [walletProviders, walletAddress]);
 
   const switchToBaseMainnet = async (modeOverride?: "sepolia" | "mainnet") => {
     const mode = modeOverride || txTargetNetwork;
@@ -1111,6 +1166,9 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                   onClick={async () => {
                     detachListenersRef.current?.();
                     detachListenersRef.current = null;
+                    try {
+                      localStorage.removeItem("maxxagent_wallet");
+                    } catch {}
                     await disconnectExternalWallets();
                     providerRef.current = null;
                     setWalletAddress("");
