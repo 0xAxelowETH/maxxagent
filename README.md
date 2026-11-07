@@ -23,7 +23,7 @@ Built for the **Base Builder Quest: Stocks Maxxing Season** (Nov 5 – Dec 5, 20
 ## Trust & safety
 
 - **Terms gate:** the first visit requires 6 explicit confirmations (non-US/OFAC, 18+, not advice, risks, non-custodial, Terms). See `/terms`.
-- **Geo-block:** U.S. visitors get HTTP 451, using the host's geo header (Vercel/Cloudflare).
+- **Geo-block:** U.S. visitors see a "not available" page and every API returns HTTP 451 (host geo header, Vercel/Cloudflare). The mini app manifest, brand images and link-preview tags stay public so shared links and the Farcaster manifest work for crawlers that run in the U.S.
 - **Security headers:** anti-clickjacking via CSP `frame-ancestors` (only the site itself and mini app hosts: Farcaster, Base App), HSTS, nosniff and Permissions-Policy. `x-powered-by` is removed.
 - **API hardening:** per-IP rate limits, input validation (whitelisted tokens, size limits, bounded slippage), and secrets redacted from errors.
 - **Private RPC:** kept server-side only (`BASE_RPC_URL`), with automatic failover to public RPCs.
