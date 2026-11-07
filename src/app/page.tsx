@@ -307,6 +307,17 @@ export default function StockMaxxingDashboard() {
   // Wallet whose balances are currently shown (lowercase); "" = none loaded yet
   const [balancesFor, setBalancesFor] = useState<string>("");
   const [balancesError, setBalancesError] = useState<string>("");
+  // P/L rebuilt from the wallet's onchain history (/api/pnl). Loads after balances and never blocks them.
+  const [pnl, setPnl] = useState<{
+    for: string;
+    error: string;
+    data: {
+      since: string | null;
+      complete: boolean;
+      realizedUsd: number;
+      positions: { symbol: string; avgCostUsd: number | null; realizedUsd: number; estimated: boolean }[];
+    } | null;
+  }>({ for: "", error: "", data: null });
 
   // Wallet & Builder Code State
   const [walletAddress, setWalletAddress] = useState<string>("");
@@ -649,6 +660,23 @@ export default function StockMaxxingDashboard() {
   useEffect(() => {
     if (balanceRefreshNonce > 0 && walletAddress) fetchLiveStocks(walletAddress);
   }, [balanceRefreshNonce, walletAddress, fetchLiveStocks]);
+
+  useEffect(() => {
+    if (!walletAddress || balancesFor !== walletAddress.toLowerCase()) return;
+    let cancelled = false;
+    const w = walletAddress.toLowerCase();
+    fetch(`/api/pnl?wallet=${w}`)
+      .then((r) => r.json())
+      .then((d) => {
+        if (!cancelled) setPnl({ for: w, data: d?.ok ? d : null, error: d?.ok ? "" : d?.error || "P/L unavailable" });
+      })
+      .catch(() => {
+        if (!cancelled) setPnl({ for: w, data: null, error: "P/L unavailable right now." });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [walletAddress, balancesFor, walletBalances]);
 
   useEffect(() => {
     if (stocks.length > 0 && !agentReport) {
@@ -2795,9 +2823,25 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                     .map((st) => ({ st, bal: walletBalances[st.symbol] }))
                     .filter((r) => (r.bal?.rawTokens ?? 0) > 0);
                   const totalUsd = rows.reduce((a, r) => a + (r.bal?.usdValue ?? 0), 0);
+                  const pnlData = pnl.for === walletAddress.toLowerCase() ? pnl.data : null;
+                  const pnlPending = pnl.for !== walletAddress.toLowerCase();
+                  // Unrealized P/L = live value (NAV x live balance) - average cost x live balance
+                  const rowPnl = (sym: string, value: number, tokens: number) => {
+                    const pos = pnlData?.positions.find((x) => x.symbol === sym);
+                    if (!pos || pos.avgCostUsd === null) return null;
+                    const cost = pos.avgCostUsd * tokens;
+                    return { cost, pl: value - cost, pct: cost > 0 ? ((value - cost) / cost) * 100 : 0, est: pos.estimated };
+                  };
+                  const rowsPnl = rows.map((r) => rowPnl(r.st.symbol, r.bal?.usdValue ?? 0, r.bal?.rawTokens ?? 0));
+                  const totalCost = rowsPnl.reduce((a, x) => a + (x?.cost ?? 0), 0);
+                  const totalPl = rowsPnl.reduce((a, x) => a + (x?.pl ?? 0), 0);
+                  const anyEst = rowsPnl.some((x) => x?.est);
+                  const money = (n: number) => `${n >= 0 ? "+" : "−"}$${Math.abs(n).toFixed(Math.abs(n) < 1 ? 4 : 2)}`;
+                  const tone = (n: number) => (n > 0 ? "text-emerald-300" : n < 0 ? "text-rose-300" : "text-slate-300");
+                  const pnlPlaceholder = pnlPending ? "…" : "—";
                   return (
                     <div className="space-y-3">
-                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 font-mono">
+                      <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 font-mono">
                         <div className="rounded-xl border border-slate-800 bg-[#070b14] p-3">
                           <div className="text-[10px] font-sans text-slate-400">Stocks value</div>
                           <div className="text-lg font-extrabold text-white">${totalUsd.toFixed(2)}</div>
@@ -2811,6 +2855,21 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                         <div className="rounded-xl border border-slate-800 bg-[#070b14] p-3">
                           <div className="text-[10px] font-sans text-slate-400">Positions</div>
                           <div className="text-lg font-extrabold text-cyan-300">{rows.length}</div>
+                        </div>
+                        <div className="rounded-xl border border-slate-800 bg-[#070b14] p-3" title="Live value minus what you paid (average cost)">
+                          <div className="text-[10px] font-sans text-slate-400">Unrealized P/L{anyEst ? " (est.)" : ""}</div>
+                          <div className={`text-lg font-extrabold ${pnlData && totalCost > 0 ? tone(totalPl) : "text-slate-300"}`}>
+                            {pnlData && totalCost > 0 ? money(totalPl) : pnlPlaceholder}
+                          </div>
+                          {pnlData && totalCost > 0 && (
+                            <div className={`text-[10px] ${tone(totalPl)}`}>{((totalPl / totalCost) * 100).toFixed(2)}%</div>
+                          )}
+                        </div>
+                        <div className="rounded-xl border border-slate-800 bg-[#070b14] p-3" title="Gains or losses already locked in by selling">
+                          <div className="text-[10px] font-sans text-slate-400">Realized P/L</div>
+                          <div className={`text-lg font-extrabold ${pnlData ? tone(pnlData.realizedUsd) : "text-slate-300"}`}>
+                            {pnlData ? money(pnlData.realizedUsd) : pnlPlaceholder}
+                          </div>
                         </div>
                       </div>
                       {rows.length === 0 ? (
@@ -2827,16 +2886,18 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                             <thead>
                               <tr className="text-left text-[10px] uppercase tracking-wider text-slate-500 border-b border-slate-800">
                                 <th className="py-2 pr-3">Stock</th>
-                                <th className="py-2 pr-3 text-right">Tokens</th>
+                                <th className="hidden sm:table-cell py-2 pr-3 text-right">Tokens</th>
                                 <th className="hidden sm:table-cell py-2 pr-3 text-right">Share-equivalent</th>
                                 <th className="hidden sm:table-cell py-2 pr-3 text-right">NAV</th>
                                 <th className="py-2 pr-3 text-right">Value</th>
+                                <th className="hidden sm:table-cell py-2 pr-3 text-right">Avg cost</th>
+                                <th className="py-2 pr-3 text-right">P/L</th>
                                 <th className="hidden sm:table-cell py-2 pr-3 text-right">Weight</th>
                                 <th className="py-2 text-right">Sell</th>
                               </tr>
                             </thead>
                             <tbody>
-                              {rows.map(({ st, bal }) => (
+                              {rows.map(({ st, bal }, ri) => (
                                 <tr key={st.symbol} className="border-b border-slate-800/60 font-mono">
                                   <td className="py-2.5 pr-3">
                                     <span className="inline-flex items-center gap-2 whitespace-nowrap font-sans font-semibold text-white">
@@ -2844,10 +2905,29 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                                       {st.symbol}
                                     </span>
                                   </td>
-                                  <td className="py-2.5 pr-3 text-right text-slate-300">{(bal?.rawTokens ?? 0).toFixed(6)}</td>
+                                  <td className="hidden sm:table-cell py-2.5 pr-3 text-right text-slate-300">{(bal?.rawTokens ?? 0).toFixed(6)}</td>
                                   <td className="hidden sm:table-cell py-2.5 pr-3 text-right text-slate-300">{(bal?.sharesUI ?? 0).toFixed(6)}</td>
                                   <td className="hidden sm:table-cell py-2.5 pr-3 text-right text-slate-300">${st.navPrice.toFixed(2)}</td>
                                   <td className="py-2.5 pr-3 text-right font-bold text-white">${(bal?.usdValue ?? 0).toFixed(2)}</td>
+                                  <td className="hidden sm:table-cell py-2.5 pr-3 text-right text-slate-300">
+                                    {(() => {
+                                      const avg = pnlData?.positions.find((x) => x.symbol === st.symbol)?.avgCostUsd;
+                                      return typeof avg === "number" ? `$${avg.toFixed(2)}` : pnlPlaceholder;
+                                    })()}
+                                  </td>
+                                  <td className="py-2.5 pr-3 text-right whitespace-nowrap">
+                                    {rowsPnl[ri] ? (
+                                      <span className={tone(rowsPnl[ri]!.pl)}>
+                                        {money(rowsPnl[ri]!.pl)}
+                                        <span className="block text-[10px]">
+                                          {rowsPnl[ri]!.pct >= 0 ? "+" : ""}
+                                          {rowsPnl[ri]!.pct.toFixed(2)}%{rowsPnl[ri]!.est ? " est." : ""}
+                                        </span>
+                                      </span>
+                                    ) : (
+                                      <span className="text-slate-500">{pnlPlaceholder}</span>
+                                    )}
+                                  </td>
                                   <td className="hidden sm:table-cell py-2.5 pr-3 text-right text-cyan-300">
                                     {totalUsd > 0 ? (((bal?.usdValue ?? 0) / totalUsd) * 100).toFixed(1) : "0.0"}%
                                   </td>
@@ -2882,6 +2962,11 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                               ))}
                             </tbody>
                           </table>
+                          <p className="mt-2 text-[10px] leading-relaxed text-slate-500">
+                            P/L uses the USDC you actually paid, read from your onchain history, against the live Chainlink NAV.
+                            {anyEst ? " est. = part of the cost is valued at the Chainlink NAV when the stock arrived (bought with another token, sent from another wallet, or bought before the history scanned so far)." : ""}
+                            {pnl.for === walletAddress.toLowerCase() && pnl.error ? ` ${pnl.error}` : ""}
+                          </p>
                         </div>
                       )}
                     </div>
