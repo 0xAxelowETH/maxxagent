@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Plus_Jakarta_Sans, JetBrains_Mono } from "next/font/google";
 import { Analytics } from "@vercel/analytics/next";
+import { MiniAppReady } from "@/components/MiniAppReady";
 import "./globals.css";
 
 const jakarta = Plus_Jakarta_Sans({
@@ -72,6 +73,7 @@ export default function RootLayout({
     <html lang="en" className={`dark ${jakarta.variable} ${jetbrainsMono.variable}`}>
       <body className="min-h-screen bg-[#03060e] text-slate-100 antialiased selection:bg-[#4C6FFF] selection:text-white">
         {children}
+        <MiniAppReady />
         {/* Cookieless page-view analytics (no wallet addresses or personal data are sent) */}
         <Analytics />
       </body>

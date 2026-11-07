@@ -40,6 +40,12 @@ export function GET() {
       ogTitle: "MAXXAGENT",
       ogDescription: "Build and buy your own index of tokenized stocks on Base, from your own wallet.",
       ogImageUrl: `${SITE}/brand/maxxagent-og.png`,
+      screenshotUrls: [1, 2, 3].map((n) => `${SITE}/brand/screens/screen-${n}.png`),
+      // legacy embed fields, for older clients (the fc:miniapp meta tag is the current form)
+      imageUrl: `${SITE}/brand/miniapp-embed-1200x800.png`,
+      buttonTitle: "Build a stock index",
+      // "Share to MAXXAGENT": the stocks a cast mentions open as a stock page or a basket
+      castShareUrl: `${SITE}/share`,
       requiredChains: ["eip155:8453"],
       requiredCapabilities: ["wallet.getEthereumProvider"],
     },
