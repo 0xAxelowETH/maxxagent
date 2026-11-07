@@ -573,7 +573,8 @@ export function B20DividendSplitSimulator({ stocks }: { stocks: LiveTokenizedSto
     stockList.find((s) => s.symbol === selectedSymbol) || stockList[0];
 
   const liveActive = "navPrice" in activeStock ? (activeStock as LiveTokenizedStock) : null;
-  const liveNavPrice: number = liveActive ? liveActive.navPrice : 186.73;
+  // 0 until live data has loaded (no made-up price)
+  const liveNavPrice: number = liveActive ? liveActive.navPrice : 0;
   const currentMultiplier: number = liveActive
     ? liveActive.uiMultiplier
     : activeStock.defaultMultiplier;

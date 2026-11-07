@@ -47,6 +47,12 @@ import { encodeFunctionData } from "viem";
 import { executeBasket, BasketLeg, BasketResult } from "@/lib/basketExecutor";
 import { MaxxAgentLogo, MaxxAgentMark } from "@/components/BrandLogo";
 import { TermsGate, TERMS_STORAGE_KEY } from "@/components/TermsGate";
+import {
+  connectExternalWallet,
+  disconnectExternalWallets,
+  walletConnectConfigured,
+  ExternalWalletKind,
+} from "@/lib/walletConnectors";
 
 type ActiveTab = "terminal" | "agent" | "indexes" | "traction" | "public";
 
@@ -254,6 +260,7 @@ export default function StockMaxxingDashboard() {
   const [walletProviders, setWalletProviders] = useState<Eip6963ProviderDetail[]>([]);
   const [showWalletMenu, setShowWalletMenu] = useState<boolean>(false);
   const [connectedWalletName, setConnectedWalletName] = useState<string>("");
+  const [connectingWallet, setConnectingWallet] = useState<boolean>(false);
   const providerRef = useRef<EthereumProvider | null>(null);
   useEffect(() => {
     const onAnnounce = (event: Event) => {
@@ -533,17 +540,31 @@ export default function StockMaxxingDashboard() {
 
 
   // Connect EVM Wallet & switch to Base Mainnet (8453)
-  const connectWallet = async (picked?: Eip6963ProviderDetail) => {
+  const connectWallet = async (picked?: Eip6963ProviderDetail, external?: ExternalWalletKind) => {
     setTxError("");
     setShowWalletMenu(false);
     if (picked) {
       providerRef.current = picked.provider;
       setConnectedWalletName(picked.info.name);
     }
+    if (external) {
+      // Coinbase Smart Wallet (passkey popup) or WalletConnect (QR / mobile deep link)
+      setConnectingWallet(true);
+      try {
+        providerRef.current = (await connectExternalWallet(external)) as EthereumProvider;
+        setConnectedWalletName(external === "coinbase" ? "Coinbase Smart Wallet" : "WalletConnect");
+      } catch (err: unknown) {
+        setConnectingWallet(false);
+        const msg = err instanceof Error ? err.message : "";
+        setTxError(/reject|closed|cancel/i.test(msg) ? "Wallet connection cancelled." : "Could not connect the wallet. Please try again.");
+        return;
+      }
+      setConnectingWallet(false);
+    }
     const eth = getEthProvider();
     if (!eth) {
       setTxError(
-        "No Web3 wallet detected in browser. Install Coinbase Wallet, Rabby, or MetaMask to send live onchain transactions."
+        "No wallet found in this browser. Choose Coinbase Smart Wallet or WalletConnect from the Connect menu."
       );
       return;
     }
@@ -760,10 +781,11 @@ export default function StockMaxxingDashboard() {
   });
 
   // Compute Build-in-Public X Post with live Base Mainnet telemetry
-  const nvdaPrice = stocks.find((s) => s.symbol === "NVDAc")?.navPrice ?? 186.73;
-  const tslaPrice = stocks.find((s) => s.symbol === "TSLAc")?.navPrice ?? 349.06;
-  const spcxPrice = stocks.find((s) => s.symbol === "SPCXc")?.navPrice ?? 125.94;
-  const nvdaMult = stocks.find((s) => s.symbol === "NVDAc")?.uiMultiplier ?? 1.000538;
+  // No made-up fallbacks: 0 until live data has loaded
+  const nvdaPrice = stocks.find((s) => s.symbol === "NVDAc")?.navPrice ?? 0;
+  const tslaPrice = stocks.find((s) => s.symbol === "TSLAc")?.navPrice ?? 0;
+  const spcxPrice = stocks.find((s) => s.symbol === "SPCXc")?.navPrice ?? 0;
+  const nvdaMult = stocks.find((s) => s.symbol === "NVDAc")?.uiMultiplier ?? 1;
 
   const buildInPublicPost = `Day ${dayNumber} building MAXXAGENT for #StocksMaxxing on @base 🔵
 
@@ -804,8 +826,9 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
           {[...(stocks.length > 0 ? stocks : BASE_TOKENIZED_STOCKS), ...(stocks.length > 0 ? stocks : BASE_TOKENIZED_STOCKS)].map(
             (item, idx) => {
               const live = "navPrice" in item ? (item as LiveTokenizedStock) : null;
-              const price = live ? live.navPrice : 225.0;
-              const chg = live ? live.change24hPct : 2.1;
+              // No placeholder numbers: show "…" until live data has loaded
+              const price = live ? live.navPrice : null;
+              const chg = live ? live.change24hPct : null;
               const mult = live ? live.uiMultiplier : item.defaultMultiplier;
               const gap = live ? live.weekendGapPct : 0;
               return (
@@ -821,27 +844,31 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                   />
                   <span className="font-mono font-bold text-white">{item.symbol}</span>
                   <span className="font-mono font-semibold text-slate-200">
-                    ${price.toFixed(2)}
+                    {price === null ? "…" : `$${price.toFixed(2)}`}
                   </span>
-                  <span
-                    className={`font-mono text-[10px] font-bold px-1.5 py-0.5 rounded ${
-                      chg >= 0
-                        ? "bg-emerald-500/15 text-emerald-400"
-                        : "bg-rose-500/15 text-rose-400"
-                    }`}
-                  >
-                    {chg >= 0 ? "+" : ""}
-                    {chg.toFixed(2)}%
-                  </span>
+                  {chg !== null && (
+                    <span
+                      className={`font-mono text-[10px] font-bold px-1.5 py-0.5 rounded ${
+                        chg >= 0
+                          ? "bg-emerald-500/15 text-emerald-400"
+                          : "bg-rose-500/15 text-rose-400"
+                      }`}
+                    >
+                      {chg >= 0 ? "+" : ""}
+                      {chg.toFixed(2)}%
+                    </span>
+                  )}
                   {mult > 1.00001 && (
                     <span className="font-mono text-[10px] text-cyan-300 bg-cyan-500/10 border border-cyan-500/30 px-1.5 py-0.5 rounded">
                       {mult.toFixed(4)}x UI
                     </span>
                   )}
-                  <span className="font-mono text-[10px] text-slate-400">
-                    DEX {gap >= 0 ? "+" : ""}
-                    {gap.toFixed(2)}%
-                  </span>
+                  {live && (
+                    <span className="font-mono text-[10px] text-slate-400">
+                      DEX {gap >= 0 ? "+" : ""}
+                      {gap.toFixed(2)}%
+                    </span>
+                  )}
                 </div>
               );
             }
@@ -913,21 +940,37 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                     {usdcBalance === null ? "… USDC" : `${usdcBalance.toFixed(2)} USDC`}
                   </span>
                 </div>
+                <button
+                  onClick={async () => {
+                    await disconnectExternalWallets();
+                    providerRef.current = null;
+                    setWalletAddress("");
+                    setInspectAddress("");
+                    setWalletBalances({});
+                    setUsdcBalance(null);
+                    setConnectedWalletName("");
+                  }}
+                  className="rounded-xl border border-slate-700 px-2.5 py-2 text-xs text-slate-400 hover:text-white hover:border-slate-500 cursor-pointer"
+                  title="Disconnect"
+                  aria-label="Disconnect wallet"
+                >
+                  ✕
+                </button>
               </div>
             ) : (
               <div className="relative">
                 <button
-                  onClick={() => (walletProviders.length > 1 ? setShowWalletMenu((v) => !v) : connectWallet(walletProviders[0]))}
+                  onClick={() => setShowWalletMenu((v) => !v)}
                   className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-[#4C6FFF] to-[#2563eb] px-4 py-2.5 text-xs font-bold text-white shadow-lg shadow-[#4C6FFF]/35 hover:brightness-110 transition cursor-pointer border border-blue-400/30"
                 >
                   <Wallet className="h-3.5 w-3.5" />
-                  <span className="hidden sm:inline">Connect wallet</span>
-                  <span className="sm:hidden">Connect</span>
+                  <span className="hidden sm:inline">{connectingWallet ? "Connecting…" : "Connect wallet"}</span>
+                  <span className="sm:hidden">{connectingWallet ? "…" : "Connect"}</span>
                 </button>
                 {showWalletMenu && (
-                  <div className="absolute right-0 mt-2 w-64 rounded-2xl border border-slate-700 bg-[#0b1120] p-2 shadow-2xl z-50">
+                  <div className="absolute right-0 mt-2 w-72 max-w-[calc(100vw-1.5rem)] rounded-2xl border border-slate-700 bg-[#0b1120] p-2 shadow-2xl z-50">
                     <div className="px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-500">
-                      Choose a wallet
+                      {walletProviders.length > 0 ? "Wallets in this browser" : "Choose a wallet"}
                     </div>
                     {walletProviders.map((p) => (
                       <button
@@ -939,6 +982,33 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                         {p.info.name}
                       </button>
                     ))}
+                    {walletProviders.length > 0 && (
+                      <div className="px-2 pt-2 pb-1 text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                        No extension? Use one of these
+                      </div>
+                    )}
+                    <button
+                      onClick={() => connectWallet(undefined, "coinbase")}
+                      className="w-full flex items-start gap-2.5 rounded-xl px-2.5 py-2 text-left hover:bg-slate-800 cursor-pointer"
+                    >
+                      <img src="/logos/brands/coinbase-wordmark.svg" alt="" className="mt-1 h-3 w-auto" />
+                      <span>
+                        <span className="block text-xs font-semibold text-slate-200">Coinbase Smart Wallet</span>
+                        <span className="block text-[10px] text-slate-500">Passkey wallet in a popup — works on phones</span>
+                      </span>
+                    </button>
+                    {walletConnectConfigured() && (
+                      <button
+                        onClick={() => connectWallet(undefined, "walletconnect")}
+                        className="w-full flex items-start gap-2.5 rounded-xl px-2.5 py-2 text-left hover:bg-slate-800 cursor-pointer"
+                      >
+                        <Wallet className="mt-0.5 h-4 w-4 text-blue-300" />
+                        <span>
+                          <span className="block text-xs font-semibold text-slate-200">WalletConnect</span>
+                          <span className="block text-[10px] text-slate-500">MetaMask, Trust, Rainbow & more via QR or app link</span>
+                        </span>
+                      </button>
+                    )}
                   </div>
                 )}
               </div>
@@ -2546,7 +2616,10 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                   </button>
                 ) : (
                   <button
-                    onClick={() => (walletProviders.length > 1 ? setShowWalletMenu(true) : connectWallet(walletProviders[0]))}
+                    onClick={() => {
+                      window.scrollTo({ top: 0, behavior: "smooth" });
+                      setShowWalletMenu(true);
+                    }}
                     className="inline-flex items-center gap-2 rounded-xl bg-[#4C6FFF] px-4 py-2 text-xs font-bold text-white hover:brightness-110 transition cursor-pointer"
                   >
                     <Wallet className="h-3.5 w-3.5" />
