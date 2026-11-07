@@ -45,10 +45,28 @@ const MOCK = (wallet) => {
   window.__mock = state;
   window.__calls = [];
   const save = () => sessionStorage.setItem("__mock", JSON.stringify(window.__mock));
-  const rpc = (method, params) =>
-    fetch("https://mainnet.base.org", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }) })
-      .then((r) => r.json())
-      .then((j) => (j.error ? Promise.reject(j.error) : j.result));
+  // Real wallets read through their own RPC. The mock uses public Base RPCs, which rate-limit: try each
+  // with a short timeout so a throttled endpoint doesn't stall the test (and look like an app bug)
+  const RPCS = ["https://base-rpc.publicnode.com", "https://mainnet.base.org"];
+  const rpc = async (method, params) => {
+    let last;
+    for (const url of RPCS) {
+      try {
+        const r = await fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+          signal: AbortSignal.timeout(8000),
+        });
+        const j = await r.json();
+        if (j.error) throw j.error;
+        return j.result;
+      } catch (e) {
+        last = e;
+      }
+    }
+    throw last;
+  };
   const reject = () => Promise.reject(Object.assign(new Error("User rejected the request."), { code: 4001 }));
   const USDC = "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913";
   const ROUTER = "0x6131b5fae19ea4f9d964eac0408e4408b66337b5";
@@ -168,7 +186,10 @@ const buyOneDollar = async () => {
   const input = await page.$("#swap-panel input");
   await input.click({ clickCount: 3 });
   await input.type("1");
-  assert(await click("#swap-panel button", /^Buy \$1\.00/), "Buy $1.00 button not found");
+  if (!(await click("#swap-panel button", /^Buy \$1\.00/, 15000))) {
+    const panel = await page.$eval("#swap-panel", (e) => e.innerText.replace(/\s+/g, " ").slice(0, 200)).catch(() => "?");
+    throw new Error(`Buy $1.00 button not found/enabled. Panel: ${panel}`);
+  }
 };
 
 console.log(`E2E — ${URL_BASE} — mock wallet ${shortAddr}\n`);
