@@ -3,9 +3,11 @@ import { Attribution } from "ox/erc8021";
 import { BASE_TOKENIZED_STOCKS } from "@/lib/tokenizedStocks";
 
 /**
- * USDC -> Coinbase B20 tokenized stock swap builder (KyberSwap Aggregator on Base).
+ * Swap builder between USDC and Coinbase B20 tokenized stocks (KyberSwap Aggregator on Base).
+ *   side "buy"  (default): USDC -> stock, sized by `amountUsd`
+ *   side "sell":           stock -> USDC, sized by `amountTokens` (stock token units)
  *
- * - Only the 10 official Coinbase-issued B20 addresses are allowed as output tokens.
+ * - Only the 10 official Coinbase-issued B20 addresses are allowed.
  * - The project's ERC-8021 Builder Code is appended server-side, so every swap is attributed.
  * - Routes whose total cost (price impact + fees) exceeds MAX_COST_PCT are refused.
  * - Returns an unsigned transaction: the user signs it from their own wallet (non-custodial).
@@ -16,6 +18,7 @@ const USDC_BASE = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
 const BUILDER_CODE = process.env.NEXT_PUBLIC_BASE_BUILDER_CODE || "bc_ewm6gcvz";
 
 const MIN_USD = 1;
+const MIN_SELL_USD = 0.25; // allow selling small positions
 const MAX_USD_PER_LEG = 2500;
 const MAX_COST_PCT = 1.5;
 const DEFAULT_SLIPPAGE_BPS = 50; // 0.50%
@@ -39,9 +42,11 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ ok: false, error: "Invalid JSON body." }, { status: 400 });
   }
   try {
+    const side = body?.side === "sell" ? "sell" : "buy";
     const stockAddress = String(body?.stockAddress || "").toLowerCase();
     const sender = String(body?.sender || "");
     const amountUsd = Number(body?.amountUsd);
+    const amountTokens = Number(body?.amountTokens);
     const slippageBps = Math.min(
       MAX_SLIPPAGE_BPS,
       Math.max(10, Number(body?.slippageBps) || DEFAULT_SLIPPAGE_BPS)
@@ -54,14 +59,26 @@ export async function POST(request: NextRequest) {
     if (!/^0x[a-fA-F0-9]{40}$/.test(sender)) {
       return NextResponse.json({ ok: false, error: "Invalid wallet address." }, { status: 400 });
     }
-    if (!Number.isFinite(amountUsd) || amountUsd < MIN_USD || amountUsd > MAX_USD_PER_LEG) {
+    if (side === "buy" && (!Number.isFinite(amountUsd) || amountUsd < MIN_USD || amountUsd > MAX_USD_PER_LEG)) {
       return NextResponse.json(
         { ok: false, error: `Amount per stock must be between $${MIN_USD} and $${MAX_USD_PER_LEG}.` },
         { status: 400 }
       );
     }
+    if (side === "sell" && (!Number.isFinite(amountTokens) || amountTokens <= 0 || amountTokens > 1_000_000)) {
+      return NextResponse.json({ ok: false, error: "Invalid amount of stock tokens to sell." }, { status: 400 });
+    }
 
-    const amountIn = BigInt(Math.floor(amountUsd * 1e6)); // USDC has 6 decimals
+    // Buy: USDC (6 decimals) in. Sell: stock tokens (B20 decimals) in.
+    const tokenIn = side === "buy" ? USDC_BASE : stock.b20Address;
+    const tokenOut = side === "buy" ? stock.b20Address : USDC_BASE;
+    const amountIn =
+      side === "buy"
+        ? BigInt(Math.floor(amountUsd * 1e6))
+        : BigInt(Math.floor(amountTokens * 10 ** stock.decimals));
+    if (amountIn <= 0n) {
+      return NextResponse.json({ ok: false, error: "Amount too small." }, { status: 400 });
+    }
 
     type Build = { code?: number; message?: string; data?: { data: string; routerAddress: string; transactionValue?: string; amountOut: string } };
     const getQuote = async (excluded: string[]) => {
@@ -70,7 +87,7 @@ export async function POST(request: NextRequest) {
       for (let attempt = 0; attempt < 3; attempt++) {
         if (attempt > 0) await sleep(700 * attempt);
         const res = await fetch(
-          `${KYBER_API}/routes?tokenIn=${USDC_BASE}&tokenOut=${stock.b20Address}&amountIn=${amountIn}${exclude}`,
+          `${KYBER_API}/routes?tokenIn=${tokenIn}&tokenOut=${tokenOut}&amountIn=${amountIn}${exclude}`,
           { headers: KYBER_HEADERS, cache: "no-store" }
         );
         const q = await res.json().catch(() => null);
@@ -124,6 +141,12 @@ export async function POST(request: NextRequest) {
     const amountOutUsd = Number(routeSummary.amountOutUsd) || 0;
     const costPct = amountInUsd > 0 ? ((amountInUsd - amountOutUsd) / amountInUsd) * 100 : 100;
 
+    if (side === "sell" && (amountInUsd < MIN_SELL_USD || amountInUsd > MAX_USD_PER_LEG)) {
+      return NextResponse.json(
+        { ok: false, symbol: stock.symbol, error: `Sell value must be between $${MIN_SELL_USD} and $${MAX_USD_PER_LEG}.` },
+        { status: 400 }
+      );
+    }
     if (costPct > MAX_COST_PCT) {
       return NextResponse.json(
         {
@@ -151,8 +174,11 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({
       ok: true,
+      side,
       symbol: stock.symbol,
       b20Address: stock.b20Address,
+      tokenIn,
+      tokenOut,
       routerAddress: build.data.routerAddress,
       tx: {
         to: build.data.routerAddress,
@@ -162,7 +188,10 @@ export async function POST(request: NextRequest) {
       amountInRaw: amountIn.toString(),
       amountOutRaw: amountOutRaw.toString(),
       minAmountOutRaw: minAmountOutRaw.toString(),
-      amountOutShares: Number(amountOutRaw) / 10 ** stock.decimals,
+      // buy: stock tokens out · sell: USDC out
+      amountOutShares: side === "buy" ? Number(amountOutRaw) / 10 ** stock.decimals : undefined,
+      amountOutUsdc: side === "sell" ? Number(amountOutRaw) / 1e6 : undefined,
+      amountInTokens: side === "sell" ? Number(amountIn) / 10 ** stock.decimals : undefined,
       amountInUsd,
       amountOutUsd,
       costPct,

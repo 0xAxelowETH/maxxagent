@@ -44,7 +44,7 @@ import {
 import { AgentAnalysisReport } from "@/lib/agentEngine";
 import { INDEX_REGISTRY_ABI } from "@/lib/contracts/StockMaxxIndexRegistryABI";
 import { encodeFunctionData } from "viem";
-import { executeBasket, BasketLeg, BasketResult } from "@/lib/basketExecutor";
+import { executeBasket, executeSell, BasketLeg, BasketResult, SellLeg } from "@/lib/basketExecutor";
 import { MaxxAgentLogo, MaxxAgentMark } from "@/components/BrandLogo";
 import { TermsGate, TERMS_STORAGE_KEY } from "@/components/TermsGate";
 import {
@@ -432,6 +432,43 @@ export default function StockMaxxingDashboard() {
         setBasketStatus("");
       } catch (err: unknown) {
         setBasketError(err instanceof Error ? err.message : "Purchase cancelled or failed");
+        setBasketStatus("");
+      } finally {
+        setBasketPending(false);
+      }
+    },
+    [nonUsComplianceAccepted, walletAddress, builderCode, recordOnchainActivity, getEthProvider]
+  );
+
+  // Sell B20 stocks back to USDC from the user's own wallet (exact approval, one batch when supported)
+  const sellStocks = useCallback(
+    async (legs: SellLeg[], label: string) => {
+      setBasketError("");
+      setBasketResult(null);
+      if (!nonUsComplianceAccepted) {
+        setBasketError("Please accept the terms first (reload the page to see them).");
+        return;
+      }
+      const validLegs = legs.filter((l) => l.tokens > 0);
+      const eth = getEthProvider();
+      if (!eth || !walletAddress) {
+        setBasketError("Connect your wallet first.");
+        return;
+      }
+      if (validLegs.length === 0) return;
+      setBasketPending(true);
+      try {
+        const result = await executeSell({ eth, sender: walletAddress, legs: validLegs, builderCode, onStatus: setBasketStatus });
+        setBasketResult(result);
+        setTimeout(() => setBalanceRefreshNonce((n) => n + 1), 6000);
+        const usdc = result.received.find((r) => r.symbol === "USDC");
+        const soldLabel = `${result.bought.map((b) => `${(b.amountInTokens ?? 0).toFixed(6)} ${b.symbol}`).join(", ")} → ${
+          usdc ? `${usdc.tokens.toFixed(2)} USDC` : "USDC"
+        }`;
+        result.txHashes.forEach((h) => recordOnchainActivity(`SELL ${label}: ${soldLabel}`, h, "Base Mainnet (8453)"));
+        setBasketStatus("");
+      } catch (err: unknown) {
+        setBasketError(err instanceof Error ? err.message : "Sale cancelled or failed");
         setBasketStatus("");
       } finally {
         setBasketPending(false);
@@ -2674,7 +2711,8 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                                 <th className="py-2 pr-3 text-right">Share-equivalent</th>
                                 <th className="py-2 pr-3 text-right">NAV</th>
                                 <th className="py-2 pr-3 text-right">Value</th>
-                                <th className="py-2 text-right">Weight</th>
+                                <th className="py-2 pr-3 text-right">Weight</th>
+                                <th className="py-2 text-right">Sell</th>
                               </tr>
                             </thead>
                             <tbody>
@@ -2690,8 +2728,35 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                                   <td className="py-2.5 pr-3 text-right text-slate-300">{(bal?.sharesUI ?? 0).toFixed(6)}</td>
                                   <td className="py-2.5 pr-3 text-right text-slate-300">${st.navPrice.toFixed(2)}</td>
                                   <td className="py-2.5 pr-3 text-right font-bold text-white">${(bal?.usdValue ?? 0).toFixed(2)}</td>
-                                  <td className="py-2.5 text-right text-cyan-300">
+                                  <td className="py-2.5 pr-3 text-right text-cyan-300">
                                     {totalUsd > 0 ? (((bal?.usdValue ?? 0) / totalUsd) * 100).toFixed(1) : "0.0"}%
+                                  </td>
+                                  <td className="py-2.5 text-right font-sans">
+                                    <div className="inline-flex gap-1.5">
+                                      {[
+                                        { label: "50%", pct: 0.5 },
+                                        { label: "All", pct: 1 },
+                                      ].map((o) => (
+                                        <button
+                                          key={o.label}
+                                          onClick={() =>
+                                            sellStocks(
+                                              [{ symbol: st.symbol, b20Address: st.b20Address, tokens: (bal?.rawTokens ?? 0) * o.pct }],
+                                              st.symbol
+                                            )
+                                          }
+                                          disabled={basketPending || (bal?.usdValue ?? 0) * o.pct < 0.25}
+                                          title={
+                                            (bal?.usdValue ?? 0) * o.pct < 0.25
+                                              ? "Minimum sell value is $0.25"
+                                              : `Sell ${o.label} of ${st.symbol} for USDC`
+                                          }
+                                          className="rounded-lg border border-rose-500/40 bg-rose-500/10 px-2.5 py-1.5 text-[11px] font-bold text-rose-200 hover:bg-rose-500/20 disabled:opacity-40 cursor-pointer"
+                                        >
+                                          {o.label}
+                                        </button>
+                                      ))}
+                                    </div>
                                   </td>
                                 </tr>
                               ))}
@@ -3135,7 +3200,7 @@ const walletClient = createWalletClient({
         <div className="fixed bottom-24 md:bottom-4 left-3 right-3 sm:left-auto sm:right-4 sm:w-96 z-50 rounded-2xl border border-slate-700 bg-[#0b1120]/95 p-4 text-xs shadow-2xl backdrop-blur space-y-2">
           <div className="flex items-start justify-between gap-3">
             <div className="font-bold text-white">
-              {basketPending ? basketStatus || "Working…" : basketError ? "Purchase not completed" : "Purchase confirmed"}
+              {basketPending ? basketStatus || "Working…" : basketError ? "Order not completed" : basketResult?.side === "sell" ? "Sale confirmed" : "Purchase confirmed"}
             </div>
             {!basketPending && (
               <button
