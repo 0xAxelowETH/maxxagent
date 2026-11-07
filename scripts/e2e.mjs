@@ -187,8 +187,13 @@ const buyOneDollar = async () => {
   await input.click({ clickCount: 3 });
   await input.type("1");
   if (!(await click("#swap-panel button", /^Buy \$1\.00/, 15000))) {
-    const panel = await page.$eval("#swap-panel", (e) => e.innerText.replace(/\s+/g, " ").slice(0, 200)).catch(() => "?");
-    throw new Error(`Buy $1.00 button not found/enabled. Panel: ${panel}`);
+    const state = await page
+      .$eval("#swap-panel", (e) => ({
+        input: e.querySelector("input")?.value,
+        buttons: [...e.querySelectorAll("button")].map((b) => `${b.textContent.trim()}${b.disabled ? "(disabled)" : ""}`).slice(-4),
+      }))
+      .catch(() => "?");
+    throw new Error(`Buy $1.00 button not found/enabled. Swap panel: ${JSON.stringify(state)}`);
   }
 };
 

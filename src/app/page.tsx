@@ -1205,7 +1205,6 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
       <div className="relative z-30 border-b border-slate-800/80 bg-[#040814]/95 px-4 py-1.5 text-[11px] backdrop-blur-md">
         <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-2 text-slate-400">
           <span className="inline-flex items-center gap-1.5">
-            <img src="/logos/partners/base.svg" alt="" className="h-3 w-3 rounded-xs" />
             Built for Base Stocks Maxxing Season · independent project
           </span>
           <MarketStatus />
@@ -1284,7 +1283,6 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
           <div className="ml-auto flex flex-wrap items-center justify-end gap-3">
             <div className="hidden xl:flex items-center gap-5 rounded-2xl border border-slate-800/90 bg-[#091022]/90 px-4 py-2 shadow-inner">
               <div className="flex items-center gap-2.5">
-                <img src="/logos/brands/coinbase-wordmark.svg" alt="Coinbase" className="logo-wordmark h-3 w-auto" />
                 <div>
                   <div className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold">
                     Base B20 Stock TVL
@@ -1297,7 +1295,6 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
               </div>
               <div className="h-7 w-px bg-slate-800" />
               <div className="flex items-center gap-2">
-                <img src="/logos/brands/chainlink.svg" alt="Chainlink" className="h-5 w-5" />
                 <div>
                   <div className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold">
                     24h Base DEX Vol
@@ -1660,15 +1657,12 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                 <div className="space-y-4 relative z-10">
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="inline-flex items-center gap-2 rounded-full bg-[#4C6FFF]/20 border border-[#4C6FFF]/45 px-3 py-1 text-xs font-semibold text-blue-200">
-                      <img src="/logos/partners/base.svg" alt="Base" className="h-3.5 w-3.5 rounded-xs" />
-                      <img src="/logos/brands/coinbase-wordmark.svg" alt="Coinbase" className="logo-wordmark h-2.5 w-auto" />
-                      <img src="/logos/brands/chainlink.svg" alt="Chainlink" className="h-3.5 w-3.5" />
-                      <span>Coinbase B20 Precompiles + Chainlink Total-Return + DEX price 24/7</span>
+                      <span>Coinbase-issued B20 tokens · Chainlink NAV · DEX price 24/7</span>
                     </span>
                   </div>
 
                   <h2 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-white leading-tight">
-                    Own a basket of real tokenized stocks.{" "}
+                    Own a basket of tokenized stocks.{" "}
                     <span className="bg-gradient-to-r from-[#60a5fa] via-cyan-300 to-emerald-300 bg-clip-text text-transparent">
                       Picked by an agent, bought from your wallet.
                     </span>
@@ -1738,7 +1732,6 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                 <div className="glass-panel glass-panel-hover rounded-2xl p-4 flex flex-col justify-between">
                   <div className="flex items-center justify-between">
                     <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Verifiable</span>
-                    <img src="/logos/partners/base.svg" alt="" className="h-5 w-5 rounded-xs" />
                   </div>
                   <div className="my-2">
                     <div className="font-mono text-xl font-extrabold text-cyan-300">Open source</div>
@@ -1759,7 +1752,6 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                     <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
                       ERC-8056 Multipliers
                     </span>
-                    <img src="/logos/brands/chainlink.svg" alt="Chainlink" className="h-5 w-5" />
                   </div>
                   <div className="my-2 space-y-1 font-mono text-xs">
                     {(stocks.length > 0
@@ -1822,11 +1814,6 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                             src={stock.logoUrl}
                             alt={stock.companyName}
                             className="h-10 w-10 rounded-full border border-slate-700 bg-slate-900 object-cover shadow-md"
-                          />
-                          <img
-                            src="/logos/partners/base.svg"
-                            alt="Base"
-                            className="absolute -bottom-0.5 -right-0.5 h-3.5 w-3.5 rounded-full ring-2 ring-[#070d1d]"
                           />
                         </div>
                         <div>
@@ -1940,10 +1927,9 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
             <div className="glass-panel rounded-3xl overflow-hidden">
               <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 px-6 py-4">
                 <div className="flex items-center gap-3">
-                  <img src="/logos/brands/coinbase-wordmark.svg" alt="Coinbase" className="logo-wordmark h-3.5 w-auto" />
                   <div>
                     <h3 className="text-sm font-semibold text-white">
-                      Live Base B20 Tokenized Stock Precompiles & Chainlink Oracles
+                      Tokenized stocks on Base · live NAV and DEX prices
                     </h3>
                     <p className="text-xs text-slate-400">
                       Last synced from Base Mainnet RPC:{" "}
@@ -1955,7 +1941,6 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                 </div>
                 <div className="flex items-center gap-2 text-xs">
                   <span className="inline-flex items-center gap-1.5 rounded-md bg-emerald-500/10 border border-emerald-500/30 px-2.5 py-1 font-mono text-emerald-300">
-                    <img src="/logos/brands/chainlink.svg" alt="Chainlink" className="h-3.5 w-3.5" />
                     Dividend-Adjusted Multiplier Active (NVDAc, METAc, GOOGLc &gt; 1.000x)
                   </span>
                 </div>
@@ -2011,7 +1996,7 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                 <table className="w-full text-left border-collapse">
                   <thead>
                     <tr className="border-b border-slate-800/80 bg-[#070b14] text-[11px] font-semibold uppercase tracking-wider text-slate-400">
-                      <th className="py-3.5 px-4">Official Asset / ISIN</th>
+                      <th className="py-3.5 px-4">Asset / ISIN</th>
                       <th className="py-3.5 px-4">Sector</th>
                       <th className="py-3.5 px-4 text-right">Chainlink 24/5 NAV</th>
                       <th className="py-3.5 px-4 text-right">24/7 DEX vs Oracle Gap</th>
@@ -2021,7 +2006,7 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                       {Object.keys(walletBalances).length > 0 && (
                         <th className="py-3.5 px-4 text-right text-cyan-400">Wallet balanceOfUI</th>
                       )}
-                      <th className="py-3.5 px-4 text-center">Official Contracts & Prospectus</th>
+                      <th className="py-3.5 px-4 text-center">Contracts & prospectus</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-800/60 text-xs">
@@ -2045,11 +2030,6 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                                   src={stock.logoUrl}
                                   alt={stock.companyName}
                                   className="h-10 w-10 rounded-full border border-slate-700 bg-slate-900 object-cover shadow-md"
-                                />
-                                <img
-                                  src="/logos/partners/base.svg"
-                                  alt="Base"
-                                  className="absolute -bottom-0.5 -right-0.5 h-4 w-4 rounded-full ring-2 ring-[#0b1120]"
                                 />
                               </div>
                               <div>
@@ -2082,11 +2062,6 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                           </td>
                           <td className="py-3.5 px-4 text-right font-mono">
                             <div className="inline-flex items-center justify-end gap-1.5 text-sm font-bold text-white">
-                              <img
-                                src="/logos/brands/chainlink.svg"
-                                alt="Chainlink"
-                                className="h-3.5 w-3.5"
-                              />
                               ${stock.navPrice.toFixed(2)}
                             </div>
                             <div
@@ -2196,11 +2171,6 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                                 title="View B20 Precompile on BaseScan"
                                 className="inline-flex items-center gap-1.5 rounded-md border border-slate-700 bg-slate-800/70 px-2 py-1 font-mono text-[11px] text-slate-300 hover:border-[#4C6FFF] hover:text-white transition"
                               >
-                                <img
-                                  src="/logos/brands/basescan.svg"
-                                  alt="BaseScan"
-                                  className="h-3.5 w-3.5"
-                                />
                                 {stock.b20Address.slice(0, 6)}..{stock.b20Address.slice(-4)}
                               </a>
                               <a
@@ -2210,18 +2180,13 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                                 title="View Chainlink Oracle Proxy on BaseScan"
                                 className="inline-flex items-center gap-1 rounded-md border border-slate-700 bg-slate-800/70 px-2 py-1 text-[11px] text-cyan-300 hover:border-cyan-400 transition"
                               >
-                                <img
-                                  src="/logos/brands/chainlink.svg"
-                                  alt="Chainlink"
-                                  className="h-3.5 w-3.5"
-                                />
                                 Feed
                               </a>
                               <a
                                 href={stock.prospectusUrl}
                                 target="_blank"
                                 rel="noopener noreferrer"
-                                title="Official Coinbase Tokenized Stock Prospectus PDF"
+                                title="Issuer prospectus (PDF, published by Coinbase)"
                                 className="inline-flex items-center gap-1 rounded-md border border-slate-700 bg-slate-800/70 px-2 py-1 text-[11px] text-amber-300 hover:border-amber-400 transition"
                               >
                                 <FileText className="h-3 w-3" />
@@ -2387,32 +2352,6 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                     : "Run agent"}
                 </button>
               </div>
-
-              {/* Optional: draft prompt for Bankr (manual copy, not executed by MAXXAGENT) */}
-              {agentReport && (
-                <div className="rounded-2xl border border-slate-800 bg-[#0b1120] p-5 space-y-3">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="inline-flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-slate-300">
-                      <img src="/logos/partners/bankr.svg" alt="" className="h-4 w-4 rounded-xs" />
-                      Draft prompt for Bankr (optional)
-                    </span>
-                    <button
-                      onClick={() => copyToClipboard(agentReport.bankrDraftPrompt, "bankr-cmd")}
-                      className="inline-flex items-center gap-1 text-xs text-cyan-400 hover:underline cursor-pointer"
-                    >
-                      <Copy className="h-3 w-3" />
-                      {copiedKey === "bankr-cmd" ? "Copied!" : "Copy"}
-                    </button>
-                  </div>
-                  <pre className="overflow-x-auto rounded-lg border border-slate-800 bg-[#050811] p-3 font-mono text-[11px] text-emerald-300 whitespace-pre-wrap">
-                    {agentReport.bankrDraftPrompt}
-                  </pre>
-                  <p className="text-[11px] text-slate-500">
-                    MAXXAGENT does not send this to Bankr. Bankr support for B20 tokenized stocks is not verified —
-                    the in-app &quot;Buy basket&quot; button is the supported path.
-                  </p>
-                </div>
-              )}
 
             </div>
 
@@ -2695,7 +2634,7 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                                 )
                               </span>
                               <span className="text-emerald-400">
-                                ≈ {alloc.estimatedSharesUI.toFixed(3)} UI Shares
+                                ≈ {alloc.estimatedSharesUI.toFixed(3)} share-equivalent
                               </span>
                             </div>
                           </div>
@@ -3899,7 +3838,7 @@ const walletClient = createWalletClient({
         </div>
       )}
 
-      {/* Footer with Official Logos & Required Official Rules Disclaimers */}
+      {/* Footer: participation statement + disclaimers (no third-party marks: Stocks Maxxing rules 6.7 / 11) */}
       <footer className="border-t border-slate-800/80 bg-[#070b14] px-4 py-6 mt-12">
         <div className="mx-auto max-w-7xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 text-[11px] text-slate-500">
           <div className="max-w-3xl space-y-1.5">
@@ -3911,23 +3850,21 @@ const walletClient = createWalletClient({
               </span>
             </div>
             <p>
-              Compliance & Official Rules Notice (Section 6 & 14): Information and tools are
-              provided for informational and educational purposes only, not as financial,
-              investment, legal, or tax advice. Coinbase tokenized stocks are only available to
-              persons in eligible jurisdictions outside of the United States. This project is an
-              independent builder submission and is not endorsed by Coinbase, Base, or any
-              referenced public company, and does not grant voting or shareholder rights not
-              provided by the underlying B20 asset.
+              Not affiliated with, endorsed or sponsored by Coinbase, Base, Chainlink, KyberSwap, any Stocks Maxxing
+              partner, or any public company whose stock is referenced. Names are used only to identify the assets and
+              data sources. Tokenized stocks are not the shares themselves and give no voting or shareholder rights
+              beyond what the token provides. Information only, not financial, investment, legal or tax advice. Coinbase
+              tokenized stocks are available only to eligible persons outside the United States.
             </p>
           </div>
-          <div className="flex items-center gap-4 shrink-0 text-slate-400">
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-2 shrink-0 text-slate-400">
             <a
               href="https://www.base.org/stocksmaxxing"
               target="_blank"
               rel="noopener noreferrer"
               className="hover:text-white underline"
             >
-              Quest Page
+              Stocks Maxxing
             </a>
             <a href="/terms" className="hover:text-white underline">
               Terms &amp; Risks
@@ -3952,7 +3889,7 @@ const walletClient = createWalletClient({
               rel="noopener noreferrer"
               className="hover:text-white underline"
             >
-              Official Rules
+              Competition rules
             </a>
             <a
               href="https://docs.base.org/sdks/tokenized-stocks/overview"

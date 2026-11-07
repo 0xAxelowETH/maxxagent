@@ -86,7 +86,7 @@ const FAQ: { q: string; a: React.ReactNode }[] = [
       <>
         Token swaps need permission for the KyberSwap router to take the exact amount you are swapping (paying with ETH
         needs no approval). MAXXAGENT always
-        requests the exact amount, never an unlimited approval, and only for KyberSwap&apos;s official router on Base.
+        requests the exact amount, never an unlimited approval, and only for KyberSwap&apos;s router contract on Base.
       </>
     ),
   },
