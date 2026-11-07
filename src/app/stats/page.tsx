@@ -183,7 +183,11 @@ export default function StatsPage() {
               USD value). The router&apos;s Swapped event gives the wallet and the stock; the transaction data shows whether the Base
               Builder Code <code className="text-slate-300">{data.builderCode}</code> is attached.
               {data.excludesTeamTestWallet ? " The team's own test wallet is excluded." : ""} Since{" "}
-              {new Date(data.since).toISOString().slice(0, 10)} · updated {new Date(data.updatedAt).toISOString().slice(11, 16)} UTC.
+              {new Date(data.since).toISOString().slice(0, 10)} · updated {new Date(data.updatedAt).toISOString().slice(11, 16)} UTC.{" "}
+              <a href="/verify" className="text-cyan-300 underline">
+                Check it yourself
+              </a>
+              .
             </p>
           </>
         )}

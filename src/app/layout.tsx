@@ -17,7 +17,7 @@ const jetbrainsMono = JetBrains_Mono({
 
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000";
 const DESCRIPTION =
-  "Agent-picked baskets of Coinbase tokenized stocks on Base, bought from your own wallet. Live Chainlink NAV vs DEX prices, non-custodial. Not financial advice.";
+  "Build your own index of Coinbase tokenized stocks on Base, or let an agent propose one, and buy it in one click from your own wallet. Live Chainlink NAV vs DEX prices, non-custodial. Not financial advice.";
 
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),

@@ -403,7 +403,7 @@ export default function StockMaxxingDashboard() {
   // Wallet & Builder Code State
   const [walletAddress, setWalletAddress] = useState<string>("");
   const [chainIdHex, setChainIdHex] = useState<string>("");
-  const [inspectAddress, setInspectAddress] = useState<string>("");
+  const [, setInspectAddress] = useState<string>("");
   const [walletBalances, setWalletBalances] = useState<
     Record<string, { rawTokens: number; sharesUI: number; usdValue: number; b20Authorized?: boolean }>
   >({});
@@ -1657,21 +1657,22 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                 <div className="space-y-4 relative z-10">
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="inline-flex items-center gap-2 rounded-full bg-[#4C6FFF]/20 border border-[#4C6FFF]/45 px-3 py-1 text-xs font-semibold text-blue-200">
-                      <span>Coinbase-issued B20 tokens · Chainlink NAV · DEX price 24/7</span>
+                      <Layers className="h-3.5 w-3.5" />
+                      <span>Programmable stock indexes on Base</span>
                     </span>
                   </div>
 
                   <h2 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-white leading-tight">
-                    Own a basket of tokenized stocks.{" "}
+                    Build your own stock index.{" "}
                     <span className="bg-gradient-to-r from-[#60a5fa] via-cyan-300 to-emerald-300 bg-clip-text text-transparent">
-                      Picked by an agent, bought from your wallet.
+                      Buy it in one click, from your wallet.
                     </span>
                   </h2>
 
                   <p className="text-xs sm:text-sm text-slate-300 leading-relaxed max-w-2xl">
-                    NVIDIA, Apple, Tesla and 7 more Coinbase tokenized stocks, live on Base. Tell the
-                    agent what you want, check the live data, and buy the whole basket with USDC or ETH in one
-                    wallet confirmation. Stocks go straight to your wallet.
+                    Mix NVIDIA, Apple, Tesla and 7 more Coinbase tokenized stocks into a custom index, or let the
+                    agent propose one from live NAV, DEX prices and liquidity. Buy the whole basket with USDC or ETH
+                    in one confirmation, share it as a link, and rebalance it later. Stocks go straight to your wallet.
                   </p>
                 </div>
 
@@ -1695,19 +1696,21 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
 
                   <div className="flex flex-wrap items-center gap-2.5">
                     <button
-                      onClick={() => fetchLiveStocks(inspectAddress || undefined)}
-                      disabled={loadingStocks}
+                      onClick={() => setActiveTab("agent")}
                       className="inline-flex items-center gap-2 rounded-xl border border-slate-700 bg-slate-800/80 px-3.5 py-2 text-xs font-semibold text-white hover:bg-slate-700 transition cursor-pointer"
                     >
-                      <RefreshCw className={`h-3.5 w-3.5 ${loadingStocks ? "animate-spin" : ""}`} />
-                      {loadingStocks ? "Syncing..." : "Refresh RPC"}
+                      <Bot className="h-3.5 w-3.5" />
+                      Ask the agent
                     </button>
                     <button
-                      onClick={() => setActiveTab("agent")}
+                      onClick={() => {
+                        setActiveTab("indexes");
+                        setTimeout(() => document.getElementById("index-builder")?.scrollIntoView({ behavior: "smooth", block: "start" }), 300);
+                      }}
                       className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-[#4C6FFF] to-cyan-600 px-4 py-2 text-xs font-bold text-white shadow-lg shadow-[#4C6FFF]/30 hover:brightness-110 transition cursor-pointer"
                     >
-                      <Zap className="h-4 w-4" />
-                      Buy a basket
+                      <Layers className="h-4 w-4" />
+                      Build an index
                     </button>
                   </div>
                 </div>
@@ -1741,6 +1744,7 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                   </div>
                   <div className="flex gap-3 text-[10px] font-mono border-t border-slate-800/80 pt-2">
                     <a href="/stats" className="text-cyan-400 hover:underline">Live stats</a>
+                    <a href="/verify" className="text-cyan-400 hover:underline">How to verify</a>
                     <a href="https://github.com/0xAxelowETH/maxxagent" target="_blank" rel="noopener noreferrer" className="text-cyan-400 hover:underline">
                       GitHub
                     </a>
@@ -3871,6 +3875,9 @@ const walletClient = createWalletClient({
             </a>
             <a href="/stats" className="hover:text-white underline">
               Live stats
+            </a>
+            <a href="/verify" className="hover:text-white underline">
+              How to verify
             </a>
             <a href="/faq" className="hover:text-white underline">
               FAQ
