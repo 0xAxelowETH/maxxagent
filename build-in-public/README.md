@@ -40,4 +40,4 @@ build-in-public/
 | --- | --- | --- | --- |
 | 1 | 2026-11-06 | Live market + agent + one-click basket | ✅ |
 | 2 | 2026-11-07 | First mainnet test buy + mobile wallets + open source | ✅ |
-| 3 | 2026-11-08 | Selling live + full mainnet round trip | ☐ |
+| 3 | 2026-11-07 | Selling live + full mainnet round trip | ☐ |

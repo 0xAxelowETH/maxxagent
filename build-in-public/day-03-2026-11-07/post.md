@@ -1,4 +1,4 @@
-# Day 3 — 2026-11-08 (planned; proof captured 2026-11-07)
+# Day 3 — 2026-11-07
 
 ## Post (copy to X) — 258 characters
 
