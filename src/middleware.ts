@@ -19,20 +19,29 @@ const previewTags = (path: string) => {
   // Only the 10 listed symbols: never reflect arbitrary URL text into the preview
   const asked = path.match(/^\/stock\/([A-Za-z]{2,8}c)$/)?.[1]?.toLowerCase();
   const stock = STOCK_SYMBOLS.find((s) => s.toLowerCase() === asked);
+  const indexId = path.match(/^\/index\/(\d{1,9})$/)?.[1];
+  const title = stock
+    ? `${stock} tokenized stock on Base — MAXXAGENT`
+    : indexId
+    ? `Onchain stock index #${indexId} — MAXXAGENT`
+    : "MAXXAGENT — Tokenized stock indexes on Base";
+  const embed = stock
+    ? { siteUrl: SITE, path: `/stock/${stock}`, buttonTitle: `Trade ${stock}` }
+    : indexId
+    ? { siteUrl: SITE, path: `/index/${indexId}`, buttonTitle: `Buy index #${indexId}` }
+    : { siteUrl: SITE };
   const tags: [string, string][] = [
     ["description", PREVIEW_DESC],
     ["og:type", "website"],
     ["og:site_name", "MAXXAGENT"],
-    ["og:title", stock ? `${stock} tokenized stock on Base — MAXXAGENT` : "MAXXAGENT — Tokenized stock indexes on Base"],
+    ["og:title", title],
     ["og:description", PREVIEW_DESC],
     ["og:image", `${SITE}/brand/maxxagent-og.png`],
     ["twitter:card", "summary_large_image"],
-    ["twitter:title", stock ? `${stock} tokenized stock on Base — MAXXAGENT` : "MAXXAGENT — Tokenized stock indexes on Base"],
+    ["twitter:title", title],
     ["twitter:description", PREVIEW_DESC],
     ["twitter:image", `${SITE}/brand/maxxagent-og.png`],
-    ...Object.entries(
-      miniappEmbedTags(stock ? { siteUrl: SITE, path: `/stock/${stock}`, buttonTitle: `Trade ${stock}` } : { siteUrl: SITE })
-    ),
+    ...Object.entries(miniappEmbedTags(embed)),
   ];
   return tags
     .map(([k, v]) => (k.startsWith("og:") ? `<meta property="${k}" content="${esc(v)}">` : `<meta name="${k}" content="${esc(v)}">`))

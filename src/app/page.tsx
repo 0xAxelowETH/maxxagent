@@ -492,6 +492,25 @@ export default function StockMaxxingDashboard() {
     </span>
   );
   const payLabel = basketPayWith === "eth" ? "in ETH" : "USDC";
+  const amountControl = (
+    <span className="inline-flex flex-wrap items-center gap-2 text-xs text-slate-300">
+      Amount
+      <span className="relative">
+        <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500">$</span>
+        <input
+          type="number"
+          min={1}
+          max={10000}
+          step={1}
+          value={basketUsd || ""}
+          onChange={(e) => setBasketUsd(Math.max(0, Number(e.target.value) || 0))}
+          className="w-24 rounded-lg border border-slate-700 bg-[#050811] py-1.5 pl-6 pr-2 font-mono text-sm text-white focus:border-emerald-500 focus:outline-none"
+          aria-label="Basket amount in USD"
+        />
+      </span>
+      {payToggle}
+    </span>
+  );
   const [basketPending, setBasketPending] = useState<boolean>(false);
   const [basketStatus, setBasketStatus] = useState<string>("");
   const [basketError, setBasketError] = useState<string>("");
@@ -1168,7 +1187,11 @@ export default function StockMaxxingDashboard() {
     const shared = parseSharedBasket(window.location.search);
     if (!shared) return;
     setCustomWeights(shared.weightsBps);
-    setCustomIndexName("Shared basket");
+    const q = new URLSearchParams(window.location.search);
+    const pay = q.get("pay");
+    if (pay === "eth" || pay === "usdc") setBasketPayWith(pay);
+    const sharedName = (q.get("name") || "").replace(/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2066-\u2069]/g, "").trim().slice(0, 64);
+    setCustomIndexName(sharedName || "Shared basket");
     if (shared.amountUsd) setBasketUsd(shared.amountUsd);
     setActiveTab("indexes");
     setSharedBasketLoaded(true);
@@ -2974,7 +2997,9 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                   })}
                 </div>
 
-                <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-800 text-xs">
+                <div className="pt-2 border-t border-slate-800">{amountControl}</div>
+
+                <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
                   <span className="text-slate-400">
                     Total Weight:{" "}
                     <strong
@@ -3079,6 +3104,7 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                   and weights. It never holds funds, charges no fees, and only an index&apos;s creator can
                   change its weights. Buying an index swaps USDC or ETH into its stocks from your own wallet.
                 </p>
+                <div className="rounded-xl border border-slate-800 bg-[#070b14] px-3 py-2">{amountControl}</div>
 
                 {publishedIndexes.length === 0 ? (
                   <div className="rounded-xl border border-dashed border-slate-800 p-4 text-center text-xs text-slate-400">
@@ -3114,10 +3140,10 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                                 ix.ticker
                               )
                             }
-                            disabled={basketPending}
+                            disabled={basketPending || basketUsd < 1}
                             className="rounded-lg bg-emerald-600 px-3 py-1.5 text-[11px] font-bold text-white hover:bg-emerald-500 disabled:opacity-50 transition cursor-pointer shrink-0"
                           >
-                            Buy ${basketUsd}
+                            Buy ${basketUsd} {payLabel}
                           </button>
                         </div>
                         <div className="flex flex-wrap gap-1.5">
@@ -3132,6 +3158,17 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                               {c.symbol} {(c.weightBps / 100).toFixed(0)}%
                             </span>
                           ))}
+                        </div>
+                        <div className="flex flex-wrap gap-3 text-[11px]">
+                          <a href={`/index/${ix.id}`} className="text-cyan-300 hover:underline">
+                            Index page
+                          </a>
+                          <button
+                            onClick={() => copyToClipboard(`${window.location.origin}/index/${ix.id}`, `index-link-${ix.id}`)}
+                            className="text-cyan-300 hover:underline cursor-pointer"
+                          >
+                            {copiedKey === `index-link-${ix.id}` ? "Link copied" : "Copy link"}
+                          </button>
                         </div>
                       </div>
                     ))}

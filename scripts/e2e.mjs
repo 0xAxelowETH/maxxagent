@@ -186,11 +186,10 @@ const buyOneDollar = async () => {
   // Clear the field reliably: a triple-click doesn't always select on touch emulation, and typing then
   // appends ("1" -> "11", above the test wallet's balance), which made buy steps fail at random
   const input = await page.$("#swap-panel input");
-  await input.click();
-  await page.keyboard.down("Control");
-  await page.keyboard.press("KeyA");
-  await page.keyboard.up("Control");
-  await page.keyboard.press("Backspace");
+  await page.$eval("#swap-panel input", (el) => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(el, "");
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+  });
   await input.type("1");
   const typed = await page.$eval("#swap-panel input", (e) => e.value);
   assert(typed === "1", `amount field holds "${typed}" instead of "1"`);
@@ -292,11 +291,10 @@ await step("Pay with ETH: review shows ETH, no approval, one wallet request afte
   // Clear the field reliably: a triple-click doesn't always select on touch emulation, and typing then
   // appends ("1" -> "11", above the test wallet's balance), which made buy steps fail at random
   const input = await page.$("#swap-panel input");
-  await input.click();
-  await page.keyboard.down("Control");
-  await page.keyboard.press("KeyA");
-  await page.keyboard.up("Control");
-  await page.keyboard.press("Backspace");
+  await page.$eval("#swap-panel input", (el) => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(el, "");
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+  });
   await input.type("1");
   const typed = await page.$eval("#swap-panel input", (e) => e.value);
   assert(typed === "1", `amount field holds "${typed}" instead of "1"`);
