@@ -807,7 +807,11 @@ export default function StockMaxxingDashboard() {
           else setPnl({ for: w, data: d?.ok ? d : null, error: d?.ok ? "" : d?.error || "P/L unavailable" });
         })
         .catch(() => {
-          if (!cancelled) setPnl({ for: w, data: null, error: "P/L unavailable right now." });
+          if (cancelled) return;
+          // A first scan of a long history can hit the host's time limit; the work done so far is cached
+          // server-side, so one more try usually completes
+          if (attempt === 0) retry = setTimeout(() => load(1), 3000);
+          else setPnl({ for: w, data: null, error: "P/L unavailable right now. Please refresh in a moment." });
         });
     load(0);
     return () => {

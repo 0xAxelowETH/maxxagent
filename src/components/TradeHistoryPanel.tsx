@@ -45,7 +45,7 @@ export function TradeHistoryPanel({
       </div>
 
       {loading ? (
-        <p className="text-xs text-slate-400">Loading your trades…</p>
+        <p className="text-xs text-slate-400">Reading your trades from Base… the first load can take up to 30 seconds.</p>
       ) : error ? (
         <p className="text-xs text-amber-200">{error}</p>
       ) : entries.length === 0 ? (

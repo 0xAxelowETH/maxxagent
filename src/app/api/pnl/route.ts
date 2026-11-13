@@ -165,8 +165,11 @@ const anyHeld = (m: Map<string, bigint>) => [...m.values()].some((v) => v > 0n);
 async function loadHistory(wallet: `0x${string}`): Promise<WalletHistory> {
   const key = wallet.toLowerCase();
   const deadline = Date.now() + TIME_BUDGET_MS;
-  const prev = cache.get(key);
   const latest = await client.getBlockNumber();
+  // Reuse a cached history only while it is fresh: catching up days of 0.2s blocks in one request (with no
+  // time budget) blew through the 60s function limit. A stale entry is rebuilt with the budgeted scan instead.
+  const cached = cache.get(key);
+  const prev = cached && Date.now() - cached.at < CACHE_TTL_MS && latest - cached.scannedTo <= FIRST_WINDOW ? cached : undefined;
   const txs = new Map(prev?.txs ?? []);
   const addTxs = async (hashes: `0x${string}`[]) => {
     const fresh = hashes.filter((h) => !txs.has(h));
