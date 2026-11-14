@@ -1,5 +1,6 @@
 "use client";
 
+import { UsdAmountInput } from "@/components/UsdAmountInput";
 import { useState } from "react";
 import { Copy, Zap } from "lucide-react";
 import { MIN_BUY_USD } from "@/lib/tokenizedStocks";
@@ -35,15 +36,12 @@ export function IndexBuyBox({
       <div className="flex flex-wrap items-center gap-2">
         <span className="relative">
           <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500 text-sm">$</span>
-          <input
-            type="number"
+          <UsdAmountInput
+            value={amount}
+            onChange={setAmount}
             min={minTotal}
-            max={10000}
-            step={1}
-            value={amount || ""}
-            onChange={(e) => setAmount(Math.max(0, Math.round(Number(e.target.value) * 100) / 100 || 0))}
             className="w-28 rounded-xl border border-slate-700 bg-[#050811] py-2 pl-6 pr-2 font-mono text-sm text-white focus:border-emerald-500 focus:outline-none"
-            aria-label="Amount in USD"
+            ariaLabel="Amount in USD"
           />
         </span>
         {[5, 10, 20, 50, 100].map((v) => (

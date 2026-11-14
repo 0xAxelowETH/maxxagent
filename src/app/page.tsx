@@ -68,6 +68,7 @@ import { RebalancePanel } from "@/components/RebalancePanel";
 import { TargetWatch, DRIFT_ALERT_PCT, driftSummary } from "@/components/TargetWatch";
 import { computeDrift, parseSavedTarget, type SavedTarget } from "@/lib/drift";
 import { TermsGate, TERMS_STORAGE_KEY } from "@/components/TermsGate";
+import { UsdAmountInput } from "@/components/UsdAmountInput";
 import {
   connectExternalWallet,
   disconnectExternalWallets,
@@ -503,16 +504,13 @@ export default function StockMaxxingDashboard() {
       Amount
       <span className="relative">
         <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500">$</span>
-        <input
-          type="number"
-          min={MIN_BUY_USD}
-          max={10000}
-          step={1}
-          value={basketUsd || ""}
-          onChange={(e) => setBasketUsd(Math.max(0, Number(e.target.value) || 0))}
-          className="w-24 rounded-lg border border-slate-700 bg-[#050811] py-1.5 pl-6 pr-2 font-mono text-sm text-white focus:border-emerald-500 focus:outline-none"
-          aria-label="Basket amount in USD"
-        />
+        <UsdAmountInput
+                            value={basketUsd}
+                            onChange={setBasketUsd}
+                            min={MIN_BUY_USD}
+                            className="w-24 rounded-lg border border-slate-700 bg-[#050811] py-1.5 pl-6 pr-2 font-mono text-sm text-white focus:border-emerald-500 focus:outline-none"
+                            ariaLabel="Basket amount in USD"
+                          />
       </span>
       {payToggle}
     </span>
@@ -2726,14 +2724,12 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                         Total
                         <span className="relative">
                           <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500">$</span>
-                          <input
-                            type="number"
-                            min={1}
-                            max={10000}
-                            step={1}
+                          <UsdAmountInput
                             value={basketUsd}
-                            onChange={(e) => setBasketUsd(Math.max(0, Number(e.target.value) || 0))}
+                            onChange={setBasketUsd}
+                            min={MIN_BUY_USD}
                             className="w-28 rounded-xl border border-slate-700 bg-[#050811] py-2 pl-6 pr-2 font-mono text-sm text-white focus:border-emerald-500 focus:outline-none"
+                            ariaLabel="Basket total in USD"
                           />
                         </span>
                         {payToggle}
@@ -3439,16 +3435,13 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                     ))}
                     <span className="relative">
                       <span className="absolute left-2 top-1/2 -translate-y-1/2 text-xs text-slate-500">$</span>
-                      <input
-                        type="number"
-                        min={MIN_BUY_USD}
-                        max={10000}
-                        step={1}
-                        value={basketUsd || ""}
-                        onChange={(e) => setBasketUsd(Math.max(0, Number(e.target.value) || 0))}
-                        className="w-20 rounded-lg border border-slate-700 bg-[#050811] py-1 pl-5 pr-1.5 font-mono text-xs text-white focus:border-emerald-500 focus:outline-none"
-                        aria-label="Amount per index buy in USD"
-                      />
+                      <UsdAmountInput
+                            value={basketUsd}
+                            onChange={setBasketUsd}
+                            min={MIN_BUY_USD}
+                            className="w-20 rounded-lg border border-slate-700 bg-[#050811] py-1 pl-5 pr-1.5 font-mono text-xs text-white focus:border-emerald-500 focus:outline-none"
+                            ariaLabel="Amount per index buy in USD"
+                          />
                     </span>
                     <span className="ml-auto">{payToggle}</span>
                   </div>
