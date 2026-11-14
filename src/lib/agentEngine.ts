@@ -61,6 +61,8 @@ export interface AgentAnalysisReport {
   limits: { label: string; status: "kept" | "adjusted" | "not possible"; detail: string; link?: { label: string; url: string } }[];
   /** things to check before buying (e.g. an order that is large for a stock's Base pool) */
   cautions?: string[];
+  /** supported stocks that are not in the basket, and why */
+  leftOut?: { symbol: string; reason: string }[];
   /** checkable numbers behind the picks, each with where to verify it */
   facts: { symbol: string; text: string; links: { label: string; url: string }[] }[];
   /** what the agent assumed because the request didn't say */
@@ -157,10 +159,19 @@ export function runAutonomousStockAgent(params: {
 
   const themeOf = (sym: string) => mandate.themes.filter((t) => THEMES.find((x) => x.id === t)!.symbols.includes(sym));
   // Pool: everything except exclusions; "only …" narrows it to the named themes / stocks
+  // Why each supported stock that isn't in the basket was left out (first reason wins)
+  const leftOut = new Map<string, string>();
+  const drop = (sym: string, why: string) => {
+    if (!leftOut.has(sym)) leftOut.set(sym, why);
+  };
   let pool = stocks.filter((st) => !mandate.exclude.includes(st.symbol));
+  for (const st of stocks) if (mandate.exclude.includes(st.symbol)) drop(st.symbol, "you asked to leave it out");
   if (mandate.only) {
     const narrowed = pool.filter((st) => mandate.include.includes(st.symbol) || themeOf(st.symbol).length > 0);
-    if (narrowed.length) pool = narrowed;
+    if (narrowed.length) {
+      for (const st of pool) if (!narrowed.includes(st)) drop(st.symbol, "not one of the stocks or themes you limited the basket to");
+      pool = narrowed;
+    }
   }
   // "Profitable": leave out companies whose last 10-K shows a net loss, or that have no 10-K yet.
   // Stocks the user named stay in; figures SEC hasn't returned yet are not held against a stock.
@@ -188,6 +199,11 @@ export function runAutonomousStockAgent(params: {
       return true;
     });
     if (kept.length) {
+      for (const st of pool) {
+        if (kept.includes(st)) continue;
+        const f = fundamentals[st.symbol];
+        drop(st.symbol, f ? `net loss ${big(Math.abs(f.netIncomeUsd!))} in its last 10-K, and you asked for profitable companies` : "no annual report (10-K) with the SEC yet, so its profit can't be checked");
+      }
       pool = kept;
       profitLimit.push({
         label: "Profitable companies only",
@@ -202,6 +218,7 @@ export function runAutonomousStockAgent(params: {
   if (riskProfile === "Conservative") {
     const wild = pool.filter((st) => !mandate.include.includes(st.symbol) && (risk[st.symbol]?.volPct ?? 0) > 60);
     if (wild.length && pool.length - wild.length >= 2) {
+      for (const st of wild) drop(st.symbol, `volatility ${risk[st.symbol]!.volPct.toFixed(0)}% a year, above 60% for a conservative basket`);
       pool = pool.filter((st) => !wild.includes(st));
       interpretation.push(
         `For a conservative basket I left out ${wild.map((st) => `${st.symbol} (${risk[st.symbol]!.volPct.toFixed(0)}% a year)`).join(", ")}: volatility above 60% a year on recent Chainlink NAV.`
@@ -210,6 +227,7 @@ export function runAutonomousStockAgent(params: {
   }
   if (pool.length === 0) {
     pool = stocks;
+    leftOut.clear();
     interpretation.push("Every stock was excluded, so the exclusions were ignored.");
   }
 
@@ -412,6 +430,18 @@ export function runAutonomousStockAgent(params: {
     selected = selected.filter((_, i) => keep[i]);
     weights = weights.filter((w) => w > 0);
   }
+  // Candidates that scored but didn't make it in: say whether the user's weights, the basket size or the
+  // rule score kept them out, with the weakest factor when there is one
+  scored.forEach((x, rank) => {
+    if (selected.includes(x)) return;
+    const weak = x.reasons.find((r) => /thin liquidity|above NAV|stale/.test(r));
+    if (fixedSyms.length && fixedSum >= 99.5) drop(x.stock.symbol, "the weights you set already fill the basket");
+    else
+      drop(
+        x.stock.symbol,
+        `ranked ${rank + 1} of ${scored.length} by rule score, below the ${selected.length} picks${weak ? ` (${weak})` : ""}`
+      );
+  });
   if (askedCashPct) limits.push({ label: `Keep ${askedCashPct}% in USDC`, status: "kept", detail: `${askedCashPct}% of the amount is not invested.` });
   for (const sym of mandate.exclude) {
     if (stocks.some((st) => st.symbol === sym) && pool.every((p) => p.symbol !== sym))
@@ -610,6 +640,8 @@ export function runAutonomousStockAgent(params: {
     maxWeightPct: capPct,
     maxWeightOfStocksPct,
     limits,
+    // Filter reasons first (in the order they were applied), then the rest by rank
+    leftOut: [...leftOut.entries()].filter(([sym]) => !selected.some((x) => x.stock.symbol === sym)).map(([symbol, reason]) => ({ symbol, reason })),
     cautions,
     facts,
     assumptions,

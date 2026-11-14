@@ -2960,6 +2960,21 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                         </div>
                       ))}
                     </div>
+                    {(agentReport.leftOut?.length ?? 0) > 0 && (
+                      <details className="mt-3 rounded-xl border border-slate-800 bg-[#070b14] px-3 py-2" data-testid="agent-left-out">
+                        <summary className="cursor-pointer text-[11px] font-bold text-slate-300">
+                          Not picked ({agentReport.leftOut!.length}) and why
+                          <span className="ml-1 font-normal text-slate-500">(rule-based, not advice)</span>
+                        </summary>
+                        <ul className="mt-2 space-y-1 text-[11px] text-slate-400">
+                          {agentReport.leftOut!.map((l) => (
+                            <li key={l.symbol}>
+                              <span className="font-mono font-bold text-slate-200">{l.symbol}</span>: {l.reason}
+                            </li>
+                          ))}
+                        </ul>
+                      </details>
+                    )}
                   </div>
 
                   {/* Facts (checkable, with sources) and assumptions, kept apart from the opinions above */}
