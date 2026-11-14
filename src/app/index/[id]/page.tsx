@@ -8,6 +8,7 @@ import { IndexBuys } from "@/components/IndexBuys";
 import { REGISTRY, readIndex } from "@/lib/indexRegistry";
 import { BASE_TOKENIZED_STOCKS } from "@/lib/tokenizedStocks";
 import { miniappEmbedTags } from "@/lib/miniappEmbed";
+import { basketImagePath } from "@/lib/shareBasket";
 
 export const revalidate = 60;
 
@@ -26,11 +27,23 @@ export async function generateMetadata({ params }: { params: Promise<{ id: strin
   const ix = await load((await params).id);
   if (!ix) return { title: "Index not found — MAXXAGENT" };
   const legs = ix.constituents.map((c) => `${c.symbol} ${(c.weightBps / 100).toFixed(0)}%`).join(", ");
+  const title = `${ix.name} (${ix.ticker}) — onchain stock index on Base`;
+  const description = `${legs}. A tokenized stock index published onchain on Base; buy the whole basket from your own wallet with USDC or ETH. Not financial advice.`;
+  const weights = Object.fromEntries(ix.constituents.map((c) => [c.symbol, c.weightBps]));
+  const card = { name: ix.name, ticker: `${ix.ticker} · onchain index #${ix.id}` };
+  const image = basketImagePath(weights, card);
   return {
-    title: `${ix.name} (${ix.ticker}) — onchain stock index on Base — MAXXAGENT`,
-    description: `${legs}. A tokenized stock index published onchain on Base; buy the whole basket from your own wallet with USDC or ETH. Not financial advice.`,
+    title: `${title} — MAXXAGENT`,
+    description,
     alternates: { canonical: `/index/${ix.id}` },
-    other: miniappEmbedTags({ siteUrl: SITE, path: `/index/${ix.id}`, buttonTitle: `Buy ${ix.ticker}` }),
+    openGraph: { type: "website", siteName: "MAXXAGENT", title, description, images: [{ url: image, width: 1200, height: 630, alt: `${ix.name}: ${legs}` }] },
+    twitter: { card: "summary_large_image", title, description, images: [image] },
+    other: miniappEmbedTags({
+      siteUrl: SITE,
+      path: `/index/${ix.id}`,
+      buttonTitle: `Buy ${ix.ticker}`,
+      imageUrl: `${SITE}${basketImagePath(weights, { ...card, tall: true })}`,
+    }),
   };
 }
 

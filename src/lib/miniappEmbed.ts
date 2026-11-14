@@ -2,12 +2,13 @@
  * Mini app embed tags (fc:miniapp + legacy fc:frame) so a shared link renders as a launch card.
  * Per the Farcaster Mini Apps spec, action.url is optional and defaults to the page URL.
  */
-export function miniappEmbedTags(opts: { siteUrl: string; path?: string; buttonTitle?: string }): Record<string, string> {
+export function miniappEmbedTags(opts: { siteUrl: string; path?: string; buttonTitle?: string; imageUrl?: string }): Record<string, string> {
   const base = opts.siteUrl.replace(/\/$/, "");
   const embed = (type: string) =>
     JSON.stringify({
       version: "1",
-      imageUrl: `${base}/brand/miniapp-embed-1200x800.png`,
+      // 3:2 card image (1200x800)
+      imageUrl: opts.imageUrl || `${base}/brand/miniapp-embed-1200x800.png`,
       button: {
         title: (opts.buttonTitle || "Build a stock index").slice(0, 32),
         action: {
