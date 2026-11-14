@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { runAutonomousStockAgent } from "@/lib/agentEngine";
 import { BASE_TOKENIZED_STOCKS, LiveTokenizedStock } from "@/lib/tokenizedStocks";
 import { GET as getStocks } from "../stocks/route";
+import { getSecFundamentals } from "@/lib/secFundamentals";
 
 /**
  * Runs the rule-based stock agent over LIVE market data only.
@@ -95,7 +96,11 @@ export async function POST(request: NextRequest) {
     const currentWeights =
       body.currentWeights && typeof body.currentWeights === "object" ? (body.currentWeights as Record<string, number>) : {};
 
+    // Company figures from SEC filings, used as sourced facts; left out if SEC is slow
+    const fundamentals = await getSecFundamentals(stocksToAnalyze.map((s) => s.symbol));
+
     const report = runAutonomousStockAgent({
+      fundamentals,
       stocks: stocksToAnalyze,
       userPrompt,
       riskProfile,

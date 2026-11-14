@@ -5,6 +5,7 @@ import { encodeFunctionData, keccak256, toHex } from "viem";
 import { THEMES, parseMandate } from "./mandate";
 import { capWeightsBps } from "./weights";
 import { usMarketStatus } from "./marketHours";
+import { SEC_CIK, type SecFundamentals } from "./secFundamentals";
 
 export interface AgentAllocationRecommendation {
   symbol: string;
@@ -133,8 +134,10 @@ export function runAutonomousStockAgent(params: {
   capitalUsd: number;
   builderCode: string;
   currentWeights?: Record<string, number>;
+  /** latest annual figures from each company's SEC filing, by B20 symbol (optional, server-fetched) */
+  fundamentals?: Record<string, SecFundamentals | null>;
 }): AgentAnalysisReport {
-  const { stocks, userPrompt, capitalUsd, builderCode, currentWeights = {} } = params;
+  const { stocks, userPrompt, capitalUsd, builderCode, currentWeights = {}, fundamentals = {} } = params;
   const mandate = parseMandate(userPrompt);
   // Words in the request ("safe", "aggressive") refine the selected profile only when it was left on Balanced
   const riskProfile = params.riskProfile === "Balanced" && mandate.riskHint ? mandate.riskHint : params.riskProfile;
@@ -373,6 +376,20 @@ export function runAutonomousStockAgent(params: {
     } else parts.push("no live DEX quote, NAV used");
     if (s.uiMultiplier > 1.0001) parts.push(`multiplier ${s.uiMultiplier.toFixed(4)}x`);
     links.push({ label: "Token", url: `https://basescan.org/token/${s.b20Address}` });
+    const f = fundamentals[s.symbol];
+    if (f) {
+      const big = (n: number) => `${n < 0 ? "-" : ""}$${Math.abs(n) >= 1e9 ? `${(Math.abs(n) / 1e9).toFixed(1)}B` : `${(Math.abs(n) / 1e6).toFixed(0)}M`}`;
+      const fy = new Date(`${f.periodEnd}T00:00:00Z`).toLocaleString("en-US", { month: "short", year: "numeric", timeZone: "UTC" });
+      let t = `company revenue ${big(f.revenueUsd)} in the fiscal year to ${fy}`;
+      if (f.revenueGrowthPct !== null) t += ` (${f.revenueGrowthPct >= 0 ? "+" : ""}${f.revenueGrowthPct.toFixed(0)}% vs the year before)`;
+      if (f.netIncomeUsd !== null) t += `, net income ${big(f.netIncomeUsd)}`;
+      parts.push(`${t} (${f.form} filed ${f.filed})`);
+      links.push({ label: `SEC ${f.form}`, url: f.filingUrl });
+    } else if (f === null && SEC_CIK[s.symbol]) {
+      parts.push("no annual report (10-K) filed with the SEC yet");
+      links.push({ label: "SEC filings", url: `https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=${SEC_CIK[s.symbol]}` });
+    }
+    if (s.prospectusUrl) links.push({ label: "Token prospectus", url: s.prospectusUrl });
     return { symbol: s.symbol, text: parts.join(" · "), links };
   });
 
