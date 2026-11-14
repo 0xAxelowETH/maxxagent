@@ -11,7 +11,8 @@ import fs from "node:fs";
 
 const arg = (n, d) => process.argv.find((a) => a.startsWith(`--${n}=`))?.split("=").slice(1).join("=") ?? d;
 const URL_BASE = arg("url", "http://localhost:3000").replace(/\/$/, "");
-// Test wallet: holds a little USDC and NVDAc on Base (read-only here)
+// Test wallet (read-only here). Its real balances change, so the suite gives it fixed simulated ones:
+// see FIXTURE below. Nothing is ever sent: the injected wallet rejects or fakes every transaction.
 const WALLET = arg("wallet", "0xD986C711F575C71dA22Bd08742b9DB2091Ba9e33");
 const BROWSER =
   process.env.CHROME_PATH ||
@@ -46,8 +47,18 @@ const assert = (cond, msg) => {
 };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// Simulated balances, so the steps don't depend on what the real test wallet holds today
+const FIXTURE = {
+  usdc: 5,
+  stocks: {
+    NVDAc: { address: "0xb20000000000000000000078ee7ce2fe4908108c", tokens: 0.0107 },
+    MSFTc: { address: "0xb200000000000000000000ab99cfa739e253872b", tokens: 0.0019 },
+    GOOGLc: { address: "0xb2000000000000000000002d0ba3164cc74f58b7", tokens: 0.0037 },
+  },
+};
+
 // Injected before any page script. window.__mock controls behaviour; window.__calls records requests.
-const MOCK = (wallet) => {
+const MOCK = (wallet, fixture) => {
   const state = JSON.parse(sessionStorage.getItem("__mock") || "null") || { chain: "0x2105", sendCalls: "reject", sendTx: "reject" };
   window.__mock = state;
   window.__calls = [];
@@ -92,11 +103,17 @@ const MOCK = (wallet) => {
         (listeners.chainChanged || []).forEach((f) => f(m.chain));
         return null;
       }
-      if (method === "eth_call" && typeof m.usdc === "number") {
+      if (method === "eth_call") {
         const c = params?.[0] || {};
-        // balanceOf(address) on USDC -> simulated balance
-        if (String(c.to).toLowerCase() === USDC && String(c.data).startsWith("0x70a08231")) {
-          return "0x" + BigInt(Math.round(m.usdc * 1e6)).toString(16).padStart(64, "0");
+        const to = String(c.to).toLowerCase();
+        // balanceOf(address) -> simulated balance (USDC: m.usdc when a step sets it, else the fixture)
+        if (String(c.data).startsWith("0x70a08231")) {
+          if (to === USDC) {
+            const usdc = typeof m.usdc === "number" ? m.usdc : fixture.usdc;
+            return "0x" + BigInt(Math.round(usdc * 1e6)).toString(16).padStart(64, "0");
+          }
+          const held = Object.values(fixture.stocks).find((s) => s.address === to);
+          if (held) return "0x" + BigInt(Math.round(held.tokens * 1e8)).toString(16).padStart(64, "0");
         }
       }
       if (method === "eth_getTransactionReceipt" && window.__fakeTx[params?.[0]]) {
@@ -157,7 +174,29 @@ page.on("response", async (r) => {
 });
 const WIDTH = Number(arg("width", "390"));
 await page.setViewport({ width: WIDTH, height: 900, isMobile: WIDTH < 768, hasTouch: WIDTH < 768 });
-await page.evaluateOnNewDocument(MOCK, WALLET);
+await page.evaluateOnNewDocument(MOCK, WALLET, FIXTURE);
+// The app reads wallet balances through /api/stocks?wallet=: answer with the real data plus the fixture balances
+await page.setRequestInterception(true);
+page.on("request", async (req) => {
+  const u = req.url();
+  if (!(u.includes("/api/stocks") && u.includes("wallet=")) || req.method() !== "GET") return req.continue().catch(() => {});
+  try {
+    const res = await fetch(u);
+    const d = await res.json();
+    if (d && Array.isArray(d.stocks)) {
+      d.walletUsdc = FIXTURE.usdc;
+      d.walletBalances = d.walletBalances || {};
+      for (const s of d.stocks) {
+        const held = FIXTURE.stocks[s.symbol]?.tokens ?? 0;
+        d.walletBalances[s.symbol] = { rawTokens: held, sharesUI: held * (s.uiMultiplier || 1), usdValue: held * s.navPrice, b20Authorized: true };
+      }
+      delete d.walletError;
+    }
+    await req.respond({ status: res.status, contentType: "application/json", body: JSON.stringify(d) });
+  } catch {
+    req.continue().catch(() => {});
+  }
+});
 
 const text = () => page.evaluate(() => document.body.innerText);
 // Waits (up to `timeout`) for a visible element whose text matches, then clicks it. false if it never shows.
@@ -409,7 +448,8 @@ await step(`Portfolio: balances, P/L and visible Sell buttons at ${WIDTH}px`, as
   await dismissToast();
   await tab("Portfolio");
   await page.waitForFunction(() => [...document.querySelectorAll("table button")].some((b) => b.textContent.trim() === "All"), { timeout: 40000 });
-  await page.waitForFunction(() => /Unrealized P\/L[^\n]*\n\s*[+−-]\$/.test(document.body.innerText), { timeout: 60000 });
+  // The real wallet can hold nothing (the balances here are simulated), so either P/L figure proves the history loaded
+  await page.waitForFunction(() => /(Unrealized|Realized) P\/L[^\n]*\n\s*[+−-]\$/.test(document.body.innerText), { timeout: 60000 });
   const box = await page.evaluate(() => {
     const b = [...document.querySelectorAll("table button")].find((x) => x.textContent.trim() === "All");
     const r = b.getBoundingClientRect();

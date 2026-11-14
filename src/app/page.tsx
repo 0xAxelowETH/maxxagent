@@ -36,6 +36,7 @@ import {
   BASE_TOKENIZED_STOCKS,
   LiveTokenizedStock,
   PROGRAMMABLE_INDEX_PRESETS,
+  MIN_BUY_USD,
   ProgrammableIndexPreset,
   STOCKS_MAXXING_PARTNERS,
 } from "@/lib/tokenizedStocks";
@@ -61,6 +62,7 @@ import { MaxxAgentLogo, MaxxAgentMark } from "@/components/BrandLogo";
 import { OrderReview } from "@/components/OrderReview";
 import { TradeHistoryPanel, type TradeHistoryEntry } from "@/components/TradeHistoryPanel";
 import { MarketStatus } from "@/components/MarketStatus";
+import { usMarketStatus } from "@/lib/marketHours";
 import { detectMiniApp } from "@/lib/miniApp";
 import { RebalancePanel } from "@/components/RebalancePanel";
 import { TermsGate, TERMS_STORAGE_KEY } from "@/components/TermsGate";
@@ -278,7 +280,7 @@ function basketToQuery(weightsBps: Record<string, number>, amountUsd?: number): 
     .filter(([, w]) => w > 0)
     .map(([sym, w]) => `${sym}-${Number((w / 100).toFixed(2))}`);
   const q = new URLSearchParams({ basket: parts.join(",") });
-  if (amountUsd && amountUsd >= 1) q.set("amount", String(amountUsd));
+  if (amountUsd && amountUsd >= MIN_BUY_USD) q.set("amount", String(amountUsd));
   return q.toString();
 }
 
@@ -302,7 +304,7 @@ function parseSharedBasket(search: string): { weightsBps: Record<string, number>
   const largest = Object.entries(weightsBps).sort((a, b) => b[1] - a[1])[0][0];
   weightsBps[largest] += diff;
   const amount = Number(q.get("amount"));
-  return { weightsBps, amountUsd: Number.isFinite(amount) && amount >= 1 && amount <= 10000 ? Math.round(amount * 100) / 100 : undefined };
+  return { weightsBps, amountUsd: Number.isFinite(amount) && amount >= MIN_BUY_USD && amount <= 10000 ? Math.round(amount * 100) / 100 : undefined };
 }
 
 export default function StockMaxxingDashboard() {
@@ -499,7 +501,7 @@ export default function StockMaxxingDashboard() {
         <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500">$</span>
         <input
           type="number"
-          min={1}
+          min={MIN_BUY_USD}
           max={10000}
           step={1}
           value={basketUsd || ""}
@@ -580,13 +582,13 @@ export default function StockMaxxingDashboard() {
         setBasketError("Please accept the terms first (reload the page to see them).");
         return;
       }
-      const validLegs = legs.filter((l) => l.usd >= 1);
+      const validLegs = legs.filter((l) => l.usd >= MIN_BUY_USD);
       if (validLegs.length < legs.length) {
         // Never silently drop part of a basket: tell the user the smallest total that funds every stock
         const total = legs.reduce((a, l) => a + l.usd, 0);
         const smallest = Math.min(...legs.map((l) => l.usd));
-        const needed = smallest > 0 ? Math.ceil(total / smallest) : 0;
-        setBasketError(`Each stock needs at least $1.${needed > 0 ? ` For this basket, use at least $${needed}.` : ""}`);
+        const needed = smallest > 0 ? Math.ceil((MIN_BUY_USD * total) / smallest) : 0;
+        setBasketError(`Each stock needs at least $${MIN_BUY_USD.toFixed(2)}.${needed > 0 ? ` For this basket, use at least $${needed}.` : ""}`);
         return;
       }
       const eth = getEthProvider();
@@ -1852,6 +1854,55 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
               </div>
             </div>
 
+            {/* Stocks whose DEX price is under the Chainlink NAV right now (only with a live DEX quote; never synthesized) */}
+            {(() => {
+              const below = stocks
+                .filter((s) => s.dexPriceSource !== "onchain-nav-model" && (s.weekendGapPct ?? 0) <= -0.15)
+                .sort((a, b) => (a.weekendGapPct ?? 0) - (b.weekendGapPct ?? 0))
+                .slice(0, 4);
+              if (below.length === 0) return null;
+              const marketOpen = usMarketStatus().state === "open";
+              return (
+                <section aria-label="Stocks trading below NAV" data-testid="below-nav-strip" className="rounded-2xl border border-emerald-500/30 bg-emerald-500/5 p-4">
+                  <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+                    <h3 className="text-sm font-bold text-white">Below NAV right now</h3>
+                    <p className="text-[11px] text-slate-400">
+                      {marketOpen
+                        ? "DEX price under the Chainlink NAV. The exact price is shown before you sign."
+                        : "US market is closed: NAV is the last close, so a gap can simply reflect news since then."}{" "}
+                      Not advice.
+                    </p>
+                  </div>
+                  <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
+                    {below.map((s) => (
+                      <div key={s.symbol} className="flex items-center justify-between gap-2 rounded-xl border border-slate-800 bg-[#070b14] px-3 py-2">
+                        <div className="flex min-w-0 items-center gap-2">
+                          <img src={s.logoUrl} alt="" className="h-7 w-7 shrink-0 rounded-full border border-slate-700 bg-slate-900 object-cover" />
+                          <div className="min-w-0">
+                            <div className="font-mono text-xs font-bold text-white">{s.symbol}</div>
+                            <div className="font-mono text-[11px] text-slate-400">
+                              ${s.dexPrice24_7.toFixed(2)} <span className="text-emerald-300">{(s.weekendGapPct ?? 0).toFixed(2)}%</span>
+                            </div>
+                          </div>
+                        </div>
+                        <button
+                          onClick={() => {
+                            setChartSelectedSymbol(s.symbol);
+                            document.getElementById("swap-panel")?.scrollIntoView({ behavior: "smooth", block: "center" });
+                          }}
+                          className="shrink-0 inline-flex items-center gap-1 rounded-lg bg-emerald-600 px-3 py-1.5 text-[11px] font-bold text-white hover:bg-emerald-500 cursor-pointer"
+                          aria-label={`Buy ${s.symbol}`}
+                        >
+                          <Zap className="h-3 w-3" />
+                          Buy
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+              );
+            })()}
+
             {/* Spotlight B20 Equity Bento Cards with Live SVG Sparklines (phones: the chart's stock picker covers this) */}
             <div className="hidden sm:grid grid-cols-2 lg:grid-cols-4 gap-4">
               {(stocks.length > 0 ? stocks.slice(0, 4) : []).map((stock) => {
@@ -2588,11 +2639,11 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                           <span
                             key={a.symbol}
                             className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 font-mono text-[11px] ${
-                              legUsd >= 1
+                              legUsd >= MIN_BUY_USD
                                 ? "border-slate-700 bg-slate-900 text-slate-200"
                                 : "border-slate-800 bg-slate-900/40 text-slate-500 line-through"
                             }`}
-                            title={legUsd >= 1 ? undefined : "Below $1 minimum — will be skipped"}
+                            title={legUsd >= MIN_BUY_USD ? undefined : "Below the $0.50 minimum per stock"}
                           >
                             <img src={a.logoUrl || STOCK_LOGO_MAP[a.symbol]} alt="" className="h-3.5 w-3.5 rounded-full" />
                             {a.symbol} ${legUsd.toFixed(2)}
@@ -2613,7 +2664,7 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                           agentReport.strategyName
                         )
                       }
-                      disabled={basketPending || basketUsd < 1}
+                      disabled={basketPending || basketUsd < MIN_BUY_USD}
                       className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-3 text-sm font-bold text-white shadow-lg shadow-emerald-600/25 hover:bg-emerald-500 disabled:opacity-60 transition cursor-pointer"
                     >
                       <Zap className="h-4 w-4" />
@@ -2843,6 +2894,11 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               {PROGRAMMABLE_INDEX_PRESETS.map((preset) => {
                 const isSelected = selectedPreset.id === preset.id;
+                // The same ticker with exactly the same weights in the registry = this preset, published
+                const presetKey = preset.allocations.map((a) => `${a.symbol}:${a.weightBps}`).join(",");
+                const onchain = publishedIndexes.find(
+                  (ix) => ix.ticker === preset.ticker && ix.constituents.map((c) => `${c.symbol}:${c.weightBps}`).join(",") === presetKey
+                );
                 return (
                   <div
                     key={preset.id}
@@ -2866,7 +2922,19 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                       <span className="rounded-md bg-[#4C6FFF]/20 border border-[#4C6FFF]/40 px-2.5 py-0.5 font-mono text-xs font-bold text-blue-300">
                         {preset.ticker}
                       </span>
-<span className="text-[11px] font-mono text-slate-400">{preset.riskLevel}</span>
+<span className="flex items-center gap-2">
+                        {onchain && (
+                          <a
+                            href={`/index/${onchain.id}`}
+                            onClick={(e) => e.stopPropagation()}
+                            className="rounded-md border border-emerald-500/40 bg-emerald-500/10 px-2 py-0.5 text-[11px] font-bold text-emerald-200 hover:border-emerald-400"
+                            title="This index is published onchain: open its public page"
+                          >
+                            Onchain #{onchain.id}
+                          </a>
+                        )}
+                        <span className="text-[11px] font-mono text-slate-400">{preset.riskLevel}</span>
+                      </span>
                     </div>
 
                     <div className="flex items-center justify-between gap-3">
@@ -3172,7 +3240,7 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                 <div className="rounded-2xl border border-slate-800 bg-[#070b14] p-3 space-y-2">
                   <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Amount per buy</div>
                   <div className="flex flex-wrap items-center gap-1.5">
-                    {[10, 20, 50, 100].map((v) => (
+                    {[5, 10, 20, 50, 100].map((v) => (
                       <button
                         key={v}
                         onClick={() => setBasketUsd(v)}
@@ -3277,7 +3345,7 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                                 ix.ticker
                               )
                             }
-                            disabled={basketPending || basketUsd < 1}
+                            disabled={basketPending || basketUsd < MIN_BUY_USD}
                             className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-xl bg-emerald-600 px-3 py-2.5 text-xs font-bold text-white shadow-lg shadow-emerald-600/20 hover:bg-emerald-500 disabled:opacity-50 transition cursor-pointer"
                           >
                             <Zap className="h-3.5 w-3.5" />

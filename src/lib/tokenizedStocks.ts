@@ -385,10 +385,13 @@ export const BASE_TOKENIZED_STOCKS: TokenizedStockMetadata[] = [
   },
 ];
 
+/** Smallest buy per stock, in USD. One number for the swap API, every amount field and the rebalancer. */
+export const MIN_BUY_USD = 0.5;
+
 export const PROGRAMMABLE_INDEX_PRESETS: ProgrammableIndexPreset[] = [
   {
     id: "maxx-ai-compute",
-    name: "AI & Compute Dominance Index",
+    name: "AI and Compute Index",
     ticker: "MAXX-AI",
     tagline: "AI infrastructure basket: GPU silicon, hyperscale cloud, and AI memory.",
     riskLevel: "Balanced",
@@ -405,7 +408,7 @@ export const PROGRAMMABLE_INDEX_PRESETS: ProgrammableIndexPreset[] = [
   },
   {
     id: "maxx-frontier",
-    name: "Frontier Tech Basket",
+    name: "Frontier Tech Index",
     ticker: "MAXX-FRNT",
     tagline: "High-beta tokenized exposure to orbital aerospace, autonomous robotics, and Bitcoin treasury.",
     riskLevel: "High-Octane",
@@ -420,9 +423,9 @@ export const PROGRAMMABLE_INDEX_PRESETS: ProgrammableIndexPreset[] = [
     ],
   },
   {
-    id: "maxx-mag7-tr",
-    name: "Mega-Cap Tech Basket",
-    ticker: "MAXX-MAG7",
+    id: "maxx-mega-cap",
+    name: "Mega-Cap Tech Index",
+    ticker: "MAXX-MEGA",
     tagline: "Mega-cap tech basket tracked with Chainlink total-return feeds.",
     riskLevel: "Conservative",
     rebalanceCadence: "Creator-updated weights",

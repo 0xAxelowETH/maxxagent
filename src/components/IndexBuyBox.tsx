@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { Copy, Zap } from "lucide-react";
+import { MIN_BUY_USD } from "@/lib/tokenizedStocks";
 
 /**
  * Amount + USDC/ETH picker for a published index. "Buy" opens the app with this index loaded in the
@@ -22,7 +23,10 @@ export function IndexBuyBox({
   const [amount, setAmount] = useState(20);
   const [pay, setPay] = useState<"usdc" | "eth">("usdc");
   const [copied, setCopied] = useState(false);
-  const valid = amount >= 1 && amount <= 10000;
+  // Every stock needs MIN_BUY_USD, so the smallest total depends on the smallest weight
+  const smallestPct = Math.min(...basket.split(",").map((p) => Number(p.split("-")[1]) || 100));
+  const minTotal = Math.ceil(((MIN_BUY_USD * 100) / smallestPct) * 100) / 100;
+  const valid = amount >= minTotal && amount <= 10000;
   const href = `/?basket=${basket}&amount=${amount}&pay=${pay}&name=${encodeURIComponent(name)}&from=index-${id}`;
 
   return (
@@ -33,7 +37,7 @@ export function IndexBuyBox({
           <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500 text-sm">$</span>
           <input
             type="number"
-            min={1}
+            min={minTotal}
             max={10000}
             step={1}
             value={amount || ""}
@@ -89,7 +93,7 @@ export function IndexBuyBox({
       </div>
       <p className="text-[11px] text-slate-400">
         Opens MAXXAGENT with this index loaded. You review the order (estimate, minimum received, cost vs NAV) and
-        sign each swap in your own wallet. Each stock needs at least $1.
+        sign each swap in your own wallet. Each stock needs at least $0.50, so this index starts at ${minTotal.toFixed(2)}.
       </p>
     </div>
   );

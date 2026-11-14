@@ -16,7 +16,7 @@ import {
   TrendingUp,
   Zap,
 } from "lucide-react";
-import { BASE_TOKENIZED_STOCKS, LiveTokenizedStock, TokenizedStockMetadata } from "@/lib/tokenizedStocks";
+import { BASE_TOKENIZED_STOCKS, LiveTokenizedStock, MIN_BUY_USD, TokenizedStockMetadata } from "@/lib/tokenizedStocks";
 
 interface GuidedQuickStartBarProps {
   activeTab: string;
@@ -628,7 +628,7 @@ export function InteractiveB20TradingChart({
 }
 
 /** Same limits as /api/swap, so the panel never offers an amount the server would refuse */
-const BUY_MIN_USD = 1;
+const BUY_MIN_USD = MIN_BUY_USD;
 const BUY_MAX_USD = 2500;
 const SELL_MIN_USD = 0.25;
 // ETH kept back for network fees when paying with ETH (~$0.2): Max never spends the gas money
@@ -678,7 +678,7 @@ function SwapPanel({
 
   let problem = "";
   if (side === "buy") {
-    if (!(tradeUsd >= BUY_MIN_USD)) problem = `Minimum is $${BUY_MIN_USD}`;
+    if (!(tradeUsd >= BUY_MIN_USD)) problem = `Minimum is $${BUY_MIN_USD.toFixed(2)}`;
     else if (tradeUsd > BUY_MAX_USD) problem = `Maximum is $${BUY_MAX_USD.toLocaleString("en-US")} per order`;
     else if (payWith === "usdc" && walletConnected && usdcBalance !== null && tradeUsd > usdcBalance) problem = "Not enough USDC on Base";
     else if (payWith === "eth" && !ethUsd) problem = "Loading ETH price…";
@@ -771,7 +771,7 @@ function SwapPanel({
             </div>
           </label>
           <div className="flex flex-wrap gap-1.5">
-            {[5, 10, 25, 50, 100].map((v) => (
+            {[1, 2, 5, 10, 25, 50, 100].map((v) => (
               <button
                 key={v}
                 onClick={() => onTradeUsdChange(v)}

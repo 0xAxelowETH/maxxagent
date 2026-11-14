@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { Attribution } from "ox/erc8021";
 import { createPublicClient, parseAbi } from "viem";
 import { base } from "viem/chains";
-import { BASE_TOKENIZED_STOCKS } from "@/lib/tokenizedStocks";
+import { BASE_TOKENIZED_STOCKS, MIN_BUY_USD } from "@/lib/tokenizedStocks";
 import { baseTransport } from "@/lib/rpc";
 import { alignedWithSuffix } from "@/lib/builderCode";
 
@@ -24,7 +24,7 @@ const NATIVE_ETH = "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE";
 const ETH_USD_FEED = "0x71041dddad3595F9CEd3DcCFBe3D1F4b0a16Bb70"; // Chainlink ETH / USD on Base (8 decimals)
 const BUILDER_CODE = process.env.NEXT_PUBLIC_BASE_BUILDER_CODE || "bc_ewm6gcvz";
 
-const MIN_USD = 1;
+const MIN_USD = MIN_BUY_USD;
 const MIN_SELL_USD = 0.25; // allow selling small positions
 const MAX_USD_PER_LEG = 2500;
 const MAX_COST_PCT = 1.5;
@@ -96,7 +96,7 @@ export async function POST(request: NextRequest) {
     }
     if (side === "buy" && (!Number.isFinite(amountUsd) || amountUsd < MIN_USD || amountUsd > MAX_USD_PER_LEG)) {
       return NextResponse.json(
-        { ok: false, error: `Amount per stock must be between $${MIN_USD} and $${MAX_USD_PER_LEG}.` },
+        { ok: false, error: `Amount per stock must be between $${MIN_USD.toFixed(2)} and $${MAX_USD_PER_LEG}.` },
         { status: 400 }
       );
     }
@@ -172,7 +172,8 @@ export async function POST(request: NextRequest) {
       if (!(costR <= MAX_COST_PCT)) break; // handled below (also catches NaN)
       build = await buildRoute(routeSummary);
       if (!build) {
-        const pmm = exchanges.filter((x) => /pmm|prop|rfq|tidefi|kipseli|metric/i.test(x));
+        // A split hop can be reported as "a/b": exclude the private-maker half by its own id
+        const pmm = [...new Set(exchanges.flatMap((x) => x.split("/")))].filter((x) => /pmm|prop|rfq|tidefi|kipseli|metric/i.test(x));
         if (pmm.length === 0) break;
         excluded.push(...pmm);
       }

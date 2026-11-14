@@ -46,7 +46,7 @@ p = planRebalance([N(0.25)], T(5000, 5000), { usdcAvailable: 49.7, addUsd: 49.7 
 ok(p.sells.length === 0 && p.buys.length === 1 && p.buys[0].usd > 49, `step 2 reinvests the proceeds (got ${p.buys[0]?.usd})`);
 
 p = planRebalance([N(0.005)], T(5000, 5000));
-ok(p.buys.every((b) => b.usd >= 1), "never proposes a buy under the $1 minimum");
+ok(p.buys.every((b) => b.usd >= 0.5), "never proposes a buy under the $0.50 minimum");
 
 console.log(fail ? `\n❌ ${fail} check(s) failed` : "\n✅ All rebalance checks passed");
 process.exitCode = fail ? 1 : 0;

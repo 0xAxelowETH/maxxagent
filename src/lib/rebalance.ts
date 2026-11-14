@@ -47,7 +47,7 @@ export function planRebalance(
   targets: Target[],
   opts: { usdcAvailable?: number; addUsd?: number; minBuyUsd?: number; minSellUsd?: number; bandPct?: number; swapCostPct?: number } = {}
 ): RebalancePlan {
-  const { usdcAvailable = 0, addUsd = 0, minBuyUsd = 1, minSellUsd = 0.25, bandPct = 2, swapCostPct = 0.6 } = opts;
+  const { usdcAvailable = 0, addUsd = 0, minBuyUsd = 0.5 /* = MIN_BUY_USD in tokenizedStocks.ts (kept literal: this file has no imports) */, minSellUsd = 0.25, bandPct = 2, swapCostPct = 0.6 } = opts;
   const bySymbol = new Map<string, { symbol: string; b20Address: string; tokens: number; price: number; weightBps: number }>();
   for (const h of holdings) if (h.tokens > 0 && h.price > 0) bySymbol.set(h.symbol, { ...h, weightBps: 0 });
   const totalTargetBps = targets.reduce((a, t) => a + Math.max(0, t.weightBps), 0) || 1;
@@ -78,7 +78,7 @@ export function planRebalance(
         // Selling (almost) everything: sell the exact holding so no dust is left
         amount = targetUsd <= band || sellUsd >= currentUsd * 0.99 ? x.tokens : sellUsd / x.price;
       }
-    } else if (deltaUsd < minBuyUsd) note = `below $${minBuyUsd} minimum`;
+    } else if (deltaUsd < minBuyUsd) note = `below $${minBuyUsd.toFixed(2)} minimum`;
     else {
       action = "buy";
       amount = Math.floor(deltaUsd * 100) / 100;

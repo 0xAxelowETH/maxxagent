@@ -26,7 +26,7 @@ const FAQ: { q: string; a: React.ReactNode }[] = [
     a: (
       <>
         A wallet on Base (browser wallet, Coinbase Smart Wallet, or a phone wallet via WalletConnect), USDC or ETH on Base
-        (at least $1 per stock), plus a little ETH on Base for network fees. No USDC? Choose <em>Pay with ETH</em> in the
+        (at least $0.50 per stock), plus a little ETH on Base for network fees. No USDC? Choose <em>Pay with ETH</em> in the
         Swap panel. You must be outside the United States and meet the{" "}
         <Link href="/terms" className="text-cyan-300 underline">
           eligibility terms

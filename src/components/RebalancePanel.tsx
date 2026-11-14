@@ -53,7 +53,7 @@ export function RebalancePanel({
 
   const fmt = (n: number) => `$${n.toFixed(2)}`;
   const nothingToDo = plan.sells.length === 0 && plan.buys.length === 0;
-  // Selling while nothing can be bought back (every buy under the $1 minimum) would leave the user in USDC
+  // Selling while nothing can be bought back (every buy under the $0.50 minimum) would leave the user in USDC
   const tooSmall =
     plan.sells.length > 0 && plan.buys.length === 0 && plan.rows.some((r) => r.deltaUsd > 0 && /minimum|not enough/.test(r.note || ""));
   const weights = targets.filter((t) => t.weightBps > 0).map((t) => t.weightBps / 10000);
@@ -121,7 +121,7 @@ export function RebalancePanel({
 
       {tooSmall && (
         <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-3 text-[11px] text-amber-100">
-          Too small for these weights: every stock needs at least $1, so selling now would leave you in USDC.
+          Too small for these weights: every stock needs at least $0.50, so selling now would leave you in USDC.
           {addNeeded > 0 ? ` Add about $${addNeeded} USDC above to rebalance fully.` : ""}
         </div>
       )}
