@@ -58,8 +58,8 @@ export function RebalancePanel({
     plan.sells.length > 0 && plan.buys.length === 0 && plan.rows.some((r) => r.deltaUsd > 0 && /minimum|not enough/.test(r.note || ""));
   const weights = targets.filter((t) => t.weightBps > 0).map((t) => t.weightBps / 10000);
   const minWeight = weights.length ? Math.min(...weights) : 0;
-  // the smallest target slice must reach $1: total portfolio needed, minus what is already there
-  const addNeeded = minWeight > 0 ? Math.max(0, Math.ceil(1 / minWeight - plan.totalUsd)) : 0;
+  // the smallest target slice must reach the $0.50 minimum: total portfolio needed, minus what is already there
+  const addNeeded = minWeight > 0 ? Math.max(0, Math.ceil(0.5 / minWeight - plan.totalUsd)) : 0;
   return (
     <div className="rounded-2xl border border-cyan-500/35 bg-cyan-500/5 p-4 space-y-3" id="rebalance">
       <div className="flex flex-wrap items-start justify-between gap-3">

@@ -65,6 +65,8 @@ import { MarketStatus } from "@/components/MarketStatus";
 import { usMarketStatus } from "@/lib/marketHours";
 import { detectMiniApp } from "@/lib/miniApp";
 import { RebalancePanel } from "@/components/RebalancePanel";
+import { TargetWatch, DRIFT_ALERT_PCT, driftSummary } from "@/components/TargetWatch";
+import { computeDrift, parseSavedTarget, type SavedTarget } from "@/lib/drift";
 import { TermsGate, TERMS_STORAGE_KEY } from "@/components/TermsGate";
 import {
   connectExternalWallet,
@@ -445,6 +447,8 @@ export default function StockMaxxingDashboard() {
   // Single-stock trade amount (Swap panel), separate from the basket capital in the Agent tab
   const [tradeUsd, setTradeUsd] = useState<number>(10);
   const [agentReport, setAgentReport] = useState<AgentAnalysisReport | null>(null);
+  // The basket this wallet wants to hold (saved in this browser, per wallet). The agent checks the wallet against it on every visit.
+  const [savedTarget, setSavedTarget] = useState<SavedTarget | null>(null);
   const [runningAgent, setRunningAgent] = useState<boolean>(false);
 
   // Programmable Index Builder State
@@ -572,6 +576,34 @@ export default function StockMaxxingDashboard() {
     },
     [recordOnchainActivity]
   );
+
+  const targetKey = walletAddress ? `maxxagent_target_${walletAddress.toLowerCase()}` : "";
+  useEffect(() => {
+    if (!targetKey) return setSavedTarget(null);
+    try {
+      setSavedTarget(parseSavedTarget(JSON.parse(localStorage.getItem(targetKey) || "null"), BASE_TOKENIZED_STOCKS.map((s) => s.symbol)));
+    } catch {
+      setSavedTarget(null);
+    }
+  }, [targetKey]);
+  const saveTarget = (t: SavedTarget | null) => {
+    setSavedTarget(t);
+    if (!targetKey) return;
+    try {
+      if (t) localStorage.setItem(targetKey, JSON.stringify(t));
+      else localStorage.removeItem(targetKey);
+    } catch {}
+  };
+  // Drift of the connected wallet from its saved target (only once this wallet's balances are loaded)
+  const targetDrift =
+    savedTarget && walletAddress && balancesFor === walletAddress.toLowerCase()
+      ? computeDrift(
+          Object.entries(walletBalances).map(([symbol, b]) => ({ symbol, usd: b?.usdValue ?? 0 })),
+          savedTarget.weights
+        )
+      : null;
+  const targetReady = Boolean(savedTarget && walletAddress && balancesFor === walletAddress.toLowerCase());
+  const targetOff = targetDrift !== null && targetDrift.driftPct >= DRIFT_ALERT_PCT;
 
   // Step 1 (buy): quote one or more B20 stocks and open the review. Nothing is sent yet.
   const buyStocks = useCallback(
@@ -1731,6 +1763,23 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
            ===================================================================== */}
         {activeTab === "terminal" && (
           <div className="space-y-6">
+            {savedTarget && targetOff && targetDrift && (
+              <div data-testid="target-notice" className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-xs text-amber-100">
+                <span>
+                  <strong>Your portfolio is {targetDrift.driftPct.toFixed(targetDrift.driftPct < 10 ? 1 : 0)}% off your {savedTarget.label} target.</strong>{" "}
+                  <span className="text-amber-200/80">{driftSummary(targetDrift)}</span>
+                </span>
+                <button
+                  onClick={() => {
+                    setActiveTab("traction");
+                    setTimeout(() => document.querySelector('[data-testid="target-watch"]')?.scrollIntoView({ behavior: "smooth", block: "center" }), 300);
+                  }}
+                  className="rounded-lg bg-amber-500 px-3 py-1.5 text-[11px] font-bold text-slate-950 hover:bg-amber-400 cursor-pointer"
+                >
+                  Review
+                </button>
+              </div>
+            )}
             {/* Institutional Hero Command Center + 4-Card Bento KPI Grid */}
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
               <div className="lg:col-span-7 glass-panel rounded-3xl p-6 sm:p-7 relative overflow-hidden flex flex-col justify-between">
@@ -2692,6 +2741,33 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                       {basketPending ? basketStatus || "Working…" : `Buy basket for $${basketUsd.toFixed(2)} ${payLabel}`}
                     </button>
 
+                    {/* Remember this basket: the agent then checks the wallet against it on every visit */}
+                    {(() => {
+                      const weights = agentReport.allocations.map((a) => ({ symbol: a.symbol, weightBps: a.targetWeightBps }));
+                      const isCurrent = savedTarget !== null && JSON.stringify(savedTarget.weights) === JSON.stringify(weights);
+                      return (
+                        <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-800 bg-[#070b14] px-3 py-2 text-[11px] text-slate-400">
+                          <span>
+                            {isCurrent
+                              ? "This basket is your target. I check your wallet against it each time you come back."
+                              : walletAddress
+                              ? "Make this your target and I will tell you when your wallet drifts from it."
+                              : "Connect a wallet to keep this basket as your target."}
+                          </span>
+                          <button
+                            onClick={() =>
+                              saveTarget({ label: agentReport.strategyTicker || agentReport.strategyName, mandate: agentReport.userPrompt, weights, savedAt: new Date().toISOString() })
+                            }
+                            disabled={!walletAddress || isCurrent || weights.reduce((a, w) => a + w.weightBps, 0) !== 10000}
+                            data-testid="save-target"
+                            className="rounded-lg border border-cyan-500/40 bg-cyan-500/10 px-3 py-1.5 font-bold text-cyan-200 hover:bg-cyan-500/20 disabled:opacity-50 cursor-pointer"
+                          >
+                            {isCurrent ? "Saved as target ✓" : savedTarget ? "Replace my target" : "Set as my target"}
+                          </button>
+                        </div>
+                      );
+                    })()}
+
                     {basketError && (
                       <div className="rounded-xl border border-rose-500/35 bg-rose-500/10 px-3 py-2 text-xs text-rose-200">
                         {basketError}
@@ -3443,6 +3519,20 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                   </button>
                 )}
               </div>
+
+              {savedTarget && targetReady && (
+                <TargetWatch
+                  target={savedTarget}
+                  drift={targetDrift}
+                  stocks={stocks}
+                  balances={walletBalances}
+                  usdcBalance={usdcBalance}
+                  pending={basketPending}
+                  onSell={(legs, label) => sellStocks(legs, label)}
+                  onBuy={(legs, label) => buyStocks(legs, label)}
+                  onRemove={() => saveTarget(null)}
+                />
+              )}
 
               {!walletAddress ? (
                 <div className="rounded-xl border border-dashed border-slate-800 p-6 text-center text-xs text-slate-400 space-y-3">

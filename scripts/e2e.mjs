@@ -468,6 +468,43 @@ await step("Sell 50% opens a sell review; nothing sent before Confirm", async ()
   await click('[role="dialog"] button', /^Cancel$/);
 });
 
+await step("Saved target: set from the Agent tab, drift reported after a reload, plan opens, remove forgets it", async () => {
+  const key = "maxxagent_target_" + WALLET.toLowerCase();
+  await page.evaluate((k) => localStorage.removeItem(k), key);
+  // 1) Save the agent's basket as the target
+  await tab("Agent");
+  await waitText(/Buy basket for \$/, 60000);
+  await page.waitForSelector('[data-testid="save-target"]:not([disabled])', { timeout: 20000 });
+  await page.$eval('[data-testid="save-target"]', (b) => b.click());
+  await waitText(/Saved as target/, 10000);
+  const stored = await page.evaluate((k) => JSON.parse(localStorage.getItem(k) || "null"), key);
+  assert(stored && stored.weights.reduce((a, w) => a + w.weightBps, 0) === 10000, "target not stored with weights summing to 100%");
+  // 2) A known target the simulated wallet (NVDAc, MSFTc, GOOGLc) is far from; it must survive a reload
+  await page.evaluate((k) => localStorage.setItem(k, JSON.stringify({ label: "TEST-5050", weights: [{ symbol: "NVDAc", weightBps: 5000 }, { symbol: "TSLAc", weightBps: 5000 }], savedAt: new Date().toISOString() })), key);
+  await page.reload({ waitUntil: "load" });
+  await page.waitForSelector('[data-testid="target-notice"]', { timeout: 60000 });
+  const notice = await page.$eval('[data-testid="target-notice"]', (e) => e.innerText);
+  assert(/off your TEST-5050 target/.test(notice) && /TSLAc/.test(notice), `unexpected notice: ${notice}`);
+  // 3) Review -> Portfolio card -> rebalance plan (nothing is sent)
+  await click('[data-testid="target-notice"] button', /^Review$/);
+  await page.waitForSelector('[data-testid="target-watch"]', { timeout: 20000 });
+  await click('[data-testid="target-watch"] button', /^Show the rebalance plan$/);
+  await page.waitForFunction(() => /1\. Sell overweight/.test(document.querySelector('[data-testid="target-watch"]')?.innerText || ""), { timeout: 20000 });
+  assert(!(await calls()).some((m) => ["wallet_sendCalls", "eth_sendTransaction"].includes(m)), "something was sent");
+  const over = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+  assert(over <= 0, `horizontal overflow of ${over}px with the plan open`);
+  // 4) A corrupted entry is ignored; Remove forgets the target
+  await click('[data-testid="target-watch"] button', /^Remove$/);
+  await page.waitForFunction(() => !document.querySelector('[data-testid="target-watch"]'), { timeout: 10000 });
+  assert((await page.evaluate((k) => localStorage.getItem(k), key)) === null, "target still stored after Remove");
+  await page.evaluate((k) => localStorage.setItem(k, JSON.stringify({ label: "BAD", weights: [{ symbol: "FAKEc", weightBps: 10000 }] })), key);
+  await page.reload({ waitUntil: "load" });
+  await waitText(/NVDAc/, 60000);
+  await sleep(2500);
+  assert(!(await page.$('[data-testid="target-notice"]')), "a corrupted target was shown");
+  await page.evaluate((k) => localStorage.removeItem(k), key);
+});
+
 await step(`No horizontal scrolling on any tab at ${WIDTH}px`, async () => {
   const bad = [];
   for (const t of ["Market", "Agent", "Indexes", "Portfolio"]) {

@@ -23,6 +23,7 @@
     "test:e2e": "node scripts/e2e.mjs",
     "test:rebalance": "node scripts/test-rebalance.mjs",
     "test:indexmatch": "node scripts/test-index-match.mjs",
+    "test:drift": "node scripts/test-drift.mjs",
     "verify:registry": "node scripts/verify-registry.mjs",
     "test:agent": "node scripts/test-agent.mjs"
   },
