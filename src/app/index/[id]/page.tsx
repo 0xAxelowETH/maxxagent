@@ -4,6 +4,7 @@ import { notFound } from "next/navigation";
 import { ExternalLink } from "lucide-react";
 import { SiteNav } from "@/components/SiteNav";
 import { IndexBuyBox } from "@/components/IndexBuyBox";
+import { IndexBuys } from "@/components/IndexBuys";
 import { REGISTRY, readIndex } from "@/lib/indexRegistry";
 import { BASE_TOKENIZED_STOCKS } from "@/lib/tokenizedStocks";
 import { miniappEmbedTags } from "@/lib/miniappEmbed";
@@ -85,6 +86,8 @@ export default async function IndexPage({ params }: { params: Promise<{ id: stri
         </div>
 
         <IndexBuyBox id={ix.id} name={ix.name} ticker={ix.ticker} basket={basket} />
+
+        <IndexBuys id={ix.id} />
 
         <div className="rounded-2xl border border-slate-800 bg-[#0b1120] p-4 space-y-2 text-xs text-slate-300">
           <h2 className="text-sm font-bold text-white">Verify onchain</h2>

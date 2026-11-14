@@ -5,6 +5,8 @@ import { entryPoint06Abi, entryPoint07Abi, entryPoint06Address, entryPoint07Addr
 import { Attribution } from "ox/erc8021";
 import { baseTransport, redactSecrets } from "@/lib/rpc";
 import { BASE_TOKENIZED_STOCKS } from "@/lib/tokenizedStocks";
+import { indexCount, readIndexes } from "@/lib/indexRegistry";
+import { matchIndexBuys } from "@/lib/indexMatch";
 
 /**
  * Public traction stats for MAXXAGENT, computed only from onchain data (anyone can verify them):
@@ -197,6 +199,12 @@ export async function GET(request: NextRequest) {
       dd.wallets.add(t.wallet);
       daily.set(date, dd);
     }
+    // Buys of published indexes, recognised by their shape (same wallet, the index's stocks and weights)
+    const indexBuys = await (async () => {
+      const total = await indexCount();
+      const ids = Array.from({ length: Math.min(total, 60) }, (_, i) => total - 1 - i);
+      return matchIndexBuys(all, await readIndexes(ids));
+    })().catch(() => []);
     const body = {
       ok: true,
       builderCode: BUILDER_CODE,
@@ -211,6 +219,7 @@ export async function GET(request: NextRequest) {
         wallets: new Set(all.map((t) => t.wallet)).size,
         attributed: all.filter((t) => t.attributed).length,
       },
+      indexBuys,
       perStock: [...perStock.values()].sort((a, b) => b.volumeUsd - a.volumeUsd),
       daily: [...daily.values()].map((d) => ({ date: d.date, trades: d.trades, volumeUsd: d.volumeUsd, wallets: d.wallets.size })).sort((a, b) => (a.date < b.date ? 1 : -1)),
       recent: all.slice(0, 25).map((t) => ({

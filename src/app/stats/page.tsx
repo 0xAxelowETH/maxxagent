@@ -14,6 +14,7 @@ interface Stats {
   excludesTeamTestWallet: boolean;
   totals: { trades: number; buys: number; sells: number; volumeUsd: number; wallets: number; attributed: number };
   perStock: { symbol: string; trades: number; volumeUsd: number }[];
+  indexBuys?: { id: number; buys: number; volumeUsd: number; wallets: number }[];
   daily: { date: string; trades: number; volumeUsd: number; wallets: number }[];
   recent: { time: string; wallet: string; side: "buy" | "sell"; symbol: string; usd: number; hash: string; attributed: boolean }[];
 }
@@ -121,6 +122,38 @@ export default function StatsPage() {
                   </table>
                 </section>
 
+                {(data.indexBuys?.length ?? 0) > 0 && (
+                  <section className="rounded-2xl border border-slate-800 bg-[#0b1120] p-4 space-y-3">
+                    <h2 className="text-sm font-bold text-white">Index buys</h2>
+                    <p className="text-[11px] text-slate-400">
+                      A wallet buying exactly an index&apos;s stocks, in its weights, within a few minutes.
+                    </p>
+                    <table className="w-full text-xs">
+                      <thead>
+                        <tr className="text-left text-[10px] uppercase tracking-wider text-slate-500 border-b border-slate-800">
+                          <th className="py-2">Index</th>
+                          <th className="py-2 text-right">Buys</th>
+                          <th className="py-2 text-right">Wallets</th>
+                          <th className="py-2 text-right">Volume</th>
+                        </tr>
+                      </thead>
+                      <tbody className="font-mono">
+                        {data.indexBuys!.map((x) => (
+                          <tr key={x.id} className="border-b border-slate-800/60">
+                            <td className="py-2">
+                              <Link href={`/index/${x.id}`} className="text-cyan-300 underline">
+                                #{x.id}
+                              </Link>
+                            </td>
+                            <td className="py-2 text-right">{x.buys}</td>
+                            <td className="py-2 text-right">{x.wallets}</td>
+                            <td className="py-2 text-right">{usd(x.volumeUsd)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </section>
+                )}
                 <section className="rounded-2xl border border-slate-800 bg-[#0b1120] p-4 space-y-3">
                   <h2 className="text-sm font-bold text-white">By day (UTC)</h2>
                   <table className="w-full text-xs">

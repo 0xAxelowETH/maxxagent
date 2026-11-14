@@ -1159,6 +1159,27 @@ export default function StockMaxxingDashboard() {
     if (activeTab === "indexes") loadPublishedIndexes();
   }, [activeTab, loadPublishedIndexes]);
 
+  // How often each published index was bought (from onchain swaps; null until the stats answer)
+  const [indexBuys, setIndexBuys] = useState<Record<number, { buys: number; volumeUsd: number; wallets: number }> | null>(null);
+  useEffect(() => {
+    if (activeTab !== "indexes" || indexBuys) return;
+    let cancelled = false;
+    fetch("/api/stats")
+      .then((r) => r.json())
+      .then((d) => {
+        if (cancelled || !d?.ok || !Array.isArray(d.indexBuys)) return;
+        setIndexBuys(Object.fromEntries((d.indexBuys as { id: number; buys: number; volumeUsd: number; wallets: number }[]).map((x) => [x.id, x])));
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [activeTab, indexBuys]);
+  // Most bought first (by volume), then newest
+  const rankedIndexes = [...publishedIndexes].sort(
+    (a, b) => (indexBuys?.[b.id]?.volumeUsd ?? 0) - (indexBuys?.[a.id]?.volumeUsd ?? 0) || b.id - a.id
+  );
+
   const normalizeCustomWeights = () => {
     const entries = Object.entries(customWeights).filter(([, w]) => w > 0);
     const sum = entries.reduce((acc, [, w]) => acc + w, 0);
@@ -3255,7 +3276,7 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                       <span className="absolute left-2 top-1/2 -translate-y-1/2 text-xs text-slate-500">$</span>
                       <input
                         type="number"
-                        min={1}
+                        min={MIN_BUY_USD}
                         max={10000}
                         step={1}
                         value={basketUsd || ""}
@@ -3278,7 +3299,7 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                   </div>
                 ) : (
                   <div className="space-y-3 max-h-[640px] overflow-y-auto pr-1">
-                    {publishedIndexes.map((ix) => (
+                    {rankedIndexes.map((ix) => (
                       <div
                         key={ix.id}
                         className="rounded-2xl border border-slate-800 bg-gradient-to-br from-[#101a33] to-[#070b14] p-4 space-y-3 transition hover:border-[#4C6FFF]/60"
@@ -3304,6 +3325,16 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                                 <span className="font-mono text-slate-500">
                                   #{ix.id} · by {ix.creator.slice(0, 6)}…{ix.creator.slice(-4)}
                                 </span>
+                                {indexBuys && (
+                                  <span
+                                    className={`rounded px-1.5 py-0.5 font-semibold ${indexBuys[ix.id] ? "bg-emerald-500/15 text-emerald-200" : "bg-slate-800 text-slate-400"}`}
+                                    title="Counted from onchain swaps that match this index's stocks and weights (team test wallet excluded)"
+                                  >
+                                    {indexBuys[ix.id]
+                                      ? `${indexBuys[ix.id].buys} ${indexBuys[ix.id].buys === 1 ? "buy" : "buys"} · $${indexBuys[ix.id].volumeUsd.toLocaleString("en-US", { maximumFractionDigits: 0 })}`
+                                      : "No buys yet"}
+                                  </span>
+                                )}
                               </div>
                             </div>
                           </div>
