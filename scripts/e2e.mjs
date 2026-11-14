@@ -473,7 +473,7 @@ await step("Agent limits: an unavailable stock is named, a weight limit is kept 
   await click("button", /^AI with limits$/, 20000);
   await page.waitForSelector('[data-testid="agent-limits"]', { timeout: 60000 });
   const limits = await page.$eval('[data-testid="agent-limits"]', (e) => e.innerText);
-  assert(/Netflix/.test(limits) && /Not available/i.test(limits), `Netflix not flagged: ${limits}`);
+  assert(/Netflix/.test(limits) && /Not supported/i.test(limits) && /NFLXc/.test(limits), `Netflix not flagged: ${limits}`);
   assert(/Max 30% per stock/.test(limits) && /stays in USDC/.test(limits), `limit not kept with a USDC remainder: ${limits}`);
   const facts = await page.$eval('[data-testid="agent-facts"]', (e) => ({ text: e.innerText, links: [...e.querySelectorAll("a")].map((a) => a.href) }));
   assert(facts.links.some((h) => h.startsWith("https://basescan.org/address/0x")), "no Chainlink source link in the facts");

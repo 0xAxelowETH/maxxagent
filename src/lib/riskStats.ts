@@ -51,6 +51,9 @@ async function dailyCloses(feed: `0x${string}`, sinceSec: number): Promise<[stri
       if (!t || answer <= 0n) continue;
       oldest = Math.min(oldest, t);
       if (t < sinceSec) continue;
+      // Weekday closes only: weekend heartbeat rounds repeat Friday's price and would understate volatility
+      const dow = new Date(t * 1000).getUTCDay();
+      if (dow === 0 || dow === 6) continue;
       const day = new Date(t * 1000).toISOString().slice(0, 10);
       const prev = byDay.get(day);
       if (!prev || t > prev.t) byDay.set(day, { t, v: Number(answer) });

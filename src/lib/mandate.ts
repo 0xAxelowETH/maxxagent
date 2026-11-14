@@ -73,7 +73,8 @@ export const THEMES: { id: string; label: string; words: string[]; symbols: stri
  * "Strategy" is also an ordinary word ("a growth strategy"), so it means Strategy Inc (MSTRc) only in a list
  * of companies ("Tesla, Amazon and Strategy") or next to stock words ("Strategy shares")
  */
-const STRATEGY_RE = /(?:,|\band|\bdan|&|\bplus|\bor|\batau)\s+strategy\b(?!\s+(?:for|to|that|is|of|untuk|yang))|\bstrategy\s+(?:stock|stocks|shares|saham|token)\b/;
+const STRATEGY_IN_LIST_RE = /(?:,|\band|\bdan|&|\bplus|\bor|\batau)\s+strategy\b(?![:\-])(?!\s+(?:for|to|that|is|of|untuk|yang|driven|based))/;
+const STRATEGY_SHARES_RE = /\bstrategy\s+(?:stock|stocks|shares|saham|token)\b/;
 
 /**
  * Things people ask for that are not among the 10 stocks MAXXAGENT supports. `token` is the Coinbase
@@ -124,47 +125,58 @@ const NEGATORS = ["no", "not", "without", "exclude", "excluding", "except", "avo
 const ONLY_WORDS = ["only", "just", "purely", "exclusively", "hanya", "saja"];
 
 const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const ALL_STOCK_ALIASES = Object.values(STOCK_ALIASES).flat().map(esc).join("|");
 const wordRe = (w: string) => new RegExp(`(^|[^a-z0-9])${esc(w)}($|[^a-z0-9])`);
 const has = (text: string, words: string[]) => words.some((w) => wordRe(w).test(text));
 
 /** Symbols and themes mentioned in a piece of text */
 function mentions(text: string) {
   const symbols = Object.entries(STOCK_ALIASES).filter(([, a]) => has(text, a)).map(([s]) => s);
-  if (!symbols.includes("MSTRc") && STRATEGY_RE.test(text)) symbols.push("MSTRc");
+  // In a list it counts only next to another company the user named
+  if (!symbols.includes("MSTRc") && ((symbols.length && STRATEGY_IN_LIST_RE.test(text)) || STRATEGY_SHARES_RE.test(text))) symbols.push("MSTRc");
   const themes = THEMES.filter((t) => has(text, t.words)).map((t) => t.id);
   return { symbols, themes };
 }
 
+/** Words that make a percent a limit, not a weight ("max 30%", "no more than 25%") */
+const CAP_BEFORE = /(?:max(?:imum)?|cap(?:ped)?(?:\s+at)?|at most|no more than|not more than|up to|limit(?:ed)?(?:\s+to)?|maks(?:imal|imum)?|paling banyak|tidak lebih dari|over|above|more than|lebih dari|di atas)\s*(?:of\s+)?$/;
+/** Words that make a percent a cash amount or a per-stock rule ("20% in cash", "30% each") */
+const NOT_WEIGHT_AFTER = /^\s*(?:(?:in|as|of|di|dalam|sebagai)\s+)?(?:cash|usdc|stablecoins?|tunai|kas|reserve|cadangan)|^\s*(?:per|each|a piece|per saham|tiap|setiap|max|maks)/;
+const PCT_BEFORE_NAME = /^\s*(?:(?:in|of|on|into|to|for|di|ke|untuk)\s+)?(?:the\s+)?$/;
+const PCT_AFTER_NAME = /^\s*(?:at|:|=|-|sebesar)?\s*$/;
+
 /**
- * Weights the user set for named stocks: "60% Apple 40% Microsoft", "half in Nvidia", "30% di Tesla",
- * "Nvidia at 40%". A percent written before a name belongs to that name; one written after a name is
- * used only when it isn't already taken.
+ * Weights the user set for named stocks: "60% Apple 40% Microsoft", "Apple 60% Microsoft 40%",
+ * "half in Nvidia", "30% di Tesla", "Nvidia at 40%". Percents that are limits or cash are skipped. Whether a
+ * percent goes with the name after it or before it follows how the request starts: "60% Apple…" pairs
+ * forwards, "Apple 60%…" backwards (the other direction is only a fallback).
  */
 function explicitWeights(text: string): Record<string, number> {
   const t = text.replace(/\b(?:half|separuh|setengah)\b/g, "50%");
-  const pct = "(\\d{1,3}(?:\\.\\d+)?)\\s*(?:%|percent|persen)";
+  const names: { sym: string; start: number; end: number }[] = [];
+  for (const [sym, aliases] of Object.entries(STOCK_ALIASES))
+    for (const a of aliases)
+      for (const m of t.matchAll(new RegExp(`(^|[^a-z0-9])(${esc(a)})(?=$|[^a-z0-9])`, "g"))) {
+        const start = m.index! + m[1].length;
+        names.push({ sym, start, end: start + a.length });
+      }
+  // Longest alias wins where two overlap ("strategy inc" vs nothing else, "google" vs "goog")
+  names.sort((a, b) => a.start - b.start || b.end - a.end);
+  const tokens = names.filter((n, i) => !names.slice(0, i).some((p) => n.start < p.end && n.end > p.start));
+  const pcts = [...t.matchAll(/(\d{1,3}(?:\.\d+)?)\s*(?:%|percent|persen)/g)]
+    .map((m) => ({ val: Number(m[1]), start: m.index!, end: m.index! + m[0].length }))
+    .filter((p) => !CAP_BEFORE.test(t.slice(Math.max(0, p.start - 30), p.start)) && !NOT_WEIGHT_AFTER.test(t.slice(p.end, p.end + 30)));
+  if (!pcts.length || !tokens.length) return {};
+
+  const forwardFirst = pcts[0].start < tokens[0].start;
+  const nextName = (p: { end: number }) => tokens.find((n) => n.start >= p.end && PCT_BEFORE_NAME.test(t.slice(p.end, n.start)));
+  const prevName = (p: { start: number }) => [...tokens].reverse().find((n) => n.end <= p.start && PCT_AFTER_NAME.test(t.slice(n.end, p.start)));
   const out: Record<string, number> = {};
-  const used = new Set<number>();
-  for (const [sym, aliases] of Object.entries(STOCK_ALIASES)) {
-    const names = aliases.map(esc).join("|");
-    const before = new RegExp(`${pct}\\s*(?:(?:in|of|on|into|to|for|di|ke|untuk)\\s+)?(?:the\\s+)?(?:${names})(?![a-z0-9])`, "g");
-    for (const m of t.matchAll(before)) {
-      out[sym] = Number(m[1]);
-      used.add(m.index! + m[0].indexOf(m[1]));
-    }
+  for (const p of pcts) {
+    const order = forwardFirst ? [nextName(p), prevName(p)] : [prevName(p), nextName(p)];
+    const n = order.find((x) => x && out[x.sym] === undefined);
+    if (n && p.val > 0 && p.val <= 100) out[n.sym] = p.val;
   }
-  for (const [sym, aliases] of Object.entries(STOCK_ALIASES)) {
-    if (out[sym] !== undefined) continue;
-    const names = aliases.map(esc).join("|");
-    const after = new RegExp(`(?:^|[^a-z0-9])(?:${names})\\s*(?:at|:|=|-|sebesar)?\\s*${pct}`, "g");
-    for (const m of t.matchAll(after)) {
-      const at = m.index! + m[0].lastIndexOf(m[1]);
-      if (used.has(at)) continue;
-      out[sym] = Number(m[1]);
-      used.add(at);
-    }
-  }
-  for (const s of Object.keys(out)) if (!(out[s] > 0 && out[s] <= 100)) delete out[s];
   return out;
 }
 
@@ -247,7 +259,8 @@ export function parseMandate(input: string): ParsedMandate {
   let cashPct: number | undefined;
   const cashMatch =
     text.match(new RegExp(`${pct}\\s*(?:in\\s+|as\\s+|of\\s+|di\\s+|dalam\\s+|sebagai\\s+)?${cashWords}`)) ||
-    text.match(new RegExp(`(?:keep|hold|leave|reserve|set aside|sisakan|simpan|sisihkan)\\s+${pct}`)) ||
+    // "keep 20%" is cash, but "hold 40% nvidia" is a weight
+    text.match(new RegExp(`(?:keep|hold|leave|reserve|set aside|sisakan|simpan|sisihkan)\\s+${pct}(?!\\s*(?:(?:in|of|on|into|di|ke)\\s+)?(?:the\\s+)?(?:${ALL_STOCK_ALIASES})(?![a-z0-9]))`)) ||
     text.match(new RegExp(`${cashWords}\\s*(?:reserve\\s*)?(?:of\\s+)?${pct}`));
   if (cashMatch) {
     const v = Number(cashMatch[1]);
@@ -272,7 +285,7 @@ export function parseMandate(input: string): ParsedMandate {
 
   // 4) Preferences
   let riskHint: ParsedMandate["riskHint"];
-  if (has(positive, ["safe", "safer", "low risk", "low-risk", "conservative", "defensive", "stable", "aman", "risiko rendah", "low volatility", "low-volatility", "less volatile", "volatilitas rendah", "recession-proof", "recession proof", "recession resistant", "downturn", "tahan resesi", "defensif"])) riskHint = "Conservative";
+  if (has(positive, ["safe", "safer", "low risk", "low-risk", "conservative", "defensive", "stable", "aman", "risiko rendah", "low volatility", "low-volatility", "less volatile", "volatilitas rendah", "recession-proof", "recession proof", "recession resistant", "tahan resesi", "defensif"])) riskHint = "Conservative";
   else if (has(positive, ["aggressive", "high risk", "high-risk", "yolo", "max growth", "risiko tinggi", "agresif"])) riskHint = "Aggressive";
   const prefersDiscount = has(positive, ["cheap", "cheaper", "discount", "discounted", "below nav", "under nav", "undervalued", "bargain", "weekend", "gap", "murah", "diskon"]);
   const prefersDividends = has(positive, ["dividend", "dividends", "income", "yield", "dividen"]);

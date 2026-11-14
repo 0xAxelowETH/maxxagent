@@ -213,6 +213,7 @@ export function runAutonomousStockAgent(params: {
     interpretation.push("Every stock was excluded, so the exclusions were ignored.");
   }
 
+  const riskComplete = pool.every((st) => risk[st.symbol]);
   const scored = pool.map((stock) => {
     let score = stock.aiScoreBase;
     const reasons: string[] = [];
@@ -269,7 +270,8 @@ export function runAutonomousStockAgent(params: {
 
     // 3. Risk profile vs live volatility (Chainlink NAV, ~2 months); the fixed beta estimate only as a fallback.
     // Volatility / 30 puts both on the same scale (25%/yr ~ 0.8, 50%/yr ~ 1.7, 80%/yr ~ 2.7).
-    const rs = risk[stock.symbol];
+    // One scale for every candidate: live volatility only once every stock has it, otherwise the beta estimate
+    const rs = riskComplete ? risk[stock.symbol] : null;
     const level = rs ? rs.volPct / 30 : stock.beta;
     const riskText = rs ? `${rs.volPct.toFixed(0)}% a year over the last ${rs.days} trading days, Chainlink NAV` : `estimated beta ${stock.beta.toFixed(2)}`;
     if (riskProfile === "Conservative") {
@@ -313,12 +315,22 @@ export function runAutonomousStockAgent(params: {
   const others = scored.filter((x) => !mandate.include.includes(x.stock.symbol));
   let selected = [...named, ...others].slice(0, Math.max(1, wanted)).sort((a, b) => b.rawScore - a.rawScore);
   // Weights the user set ("60% Apple 40% Microsoft") are shares of the money; convert to shares of the
-  // stocks part. When they already fill it, the basket is just those stocks.
-  const askedCashForFixed = mandate.cashPct ?? 0;
+  // invested part (after any cash reserve, and after a weight limit that leaves money in USDC). When they
+  // already fill it, the basket is just those stocks; a remainder too small to spread (<5% per stock) is
+  // spread over fewer stocks, or none.
   const fixedSyms = Object.keys(mandate.weightsPct).filter((s) => selected.some((x) => x.stock.symbol === s));
-  const fixedOfStocks = (s: string) => (mandate.weightsPct[s] / (100 - askedCashForFixed)) * 100;
-  const fixedSum = fixedSyms.reduce((a, s) => a + fixedOfStocks(s), 0);
-  if (fixedSyms.length && fixedSum >= 99.5) selected = selected.filter((x) => fixedSyms.includes(x.stock.symbol));
+  const investedFor = (n: number) => (capPct && n * capPct < investPct - 1e-9 ? n * capPct : investPct);
+  let fixedBase = investedFor(selected.length);
+  const fixedOfStocks = (s: string) => (mandate.weightsPct[s] / fixedBase) * 100;
+  let fixedSum = fixedSyms.reduce((a, s) => a + fixedOfStocks(s), 0);
+  if (fixedSyms.length) {
+    const restIdx = selected.filter((x) => !fixedSyms.includes(x.stock.symbol));
+    const fits = fixedSum >= 99.5 ? 0 : Math.min(restIdx.length, Math.floor((100 - fixedSum) / 5));
+    const keepRest = new Set(restIdx.slice(0, fits));
+    selected = selected.filter((x) => fixedSyms.includes(x.stock.symbol) || keepRest.has(x));
+    fixedBase = investedFor(selected.length);
+    fixedSum = fixedSyms.reduce((a, s) => a + fixedOfStocks(s), 0);
+  }
   const added = selected.filter((x) => !mandate.include.includes(x.stock.symbol) && !themeOf(x.stock.symbol).length).length;
   if (added > 0 && (mandate.include.length || mandate.themes.length) && !mandate.only)
     interpretation.push(`Added ${added} more by score to diversify (say "only" to keep just what you named).`);
@@ -328,23 +340,29 @@ export function runAutonomousStockAgent(params: {
   if (fixedSyms.length) {
     const rest = selected.filter((x) => !fixedSyms.includes(x.stock.symbol));
     const setText = fixedSyms.map((s) => `${s} ${mandate.weightsPct[s]}%`).join(", ");
+    const overLimit = fixedSyms.some((s) => capPct && mandate.weightsPct[s] > capPct);
     if (!rest.length) {
-      weights = roundWeightsBps(selected.map((x) => fixedOfStocks(x.stock.symbol))) ?? selected.map(() => Math.floor(10000 / selected.length));
+      // roundWeightsBps without a cap always returns weights summing to 10,000
+      weights = roundWeightsBps(selected.map((x) => fixedOfStocks(x.stock.symbol)))!;
       fixedLimits.push(
         Math.abs(fixedSum - 100) > 0.5
-          ? { label: "Your weights", status: "adjusted", detail: `${setText} add up to ${fixedSum.toFixed(0)}% of the invested money, so they were scaled to 100% in the same proportions.` }
-          : { label: "Your weights", status: "kept", detail: `${setText}, as you set them.` }
+          ? {
+              label: "Your weights",
+              status: "adjusted",
+              detail: `${setText} add up to ${fixedSum.toFixed(0)}% of the invested money, so they were scaled to 100% in the same proportions${fixedSum < 100 ? " (the rest was too small to spread over more stocks)" : ""}.`,
+            }
+          : { label: "Your weights", status: overLimit ? "adjusted" : "kept", detail: `${setText}, as you set them.` }
       );
     } else {
       const floor = Math.min(...rest.map((x) => x.rawScore)) - 20;
       const restShares = scoresToWeightsBps(rest.map((x) => x.rawScore - floor + 45));
       const restPct = 100 - fixedSum;
       const raw = selected.map((x) => (fixedSyms.includes(x.stock.symbol) ? fixedOfStocks(x.stock.symbol) : (restShares[rest.indexOf(x)] / 10000) * restPct));
-      weights = roundWeightsBps(raw) ?? scoresToWeightsBps(raw);
+      weights = roundWeightsBps(raw)!;
       fixedLimits.push({
         label: "Your weights",
-        status: fixedSyms.some((s) => mandate.maxWeightPct && mandate.weightsPct[s] > mandate.maxWeightPct) ? "adjusted" : "kept",
-        detail: `${setText}, as you set them. The other ${(restPct * (1 - askedCashForFixed / 100)).toFixed(0)}% of your money is spread by score across ${rest.map((x) => x.stock.symbol).join(", ")}.`,
+        status: overLimit ? "adjusted" : "kept",
+        detail: `${setText}, as you set them. The other ${((restPct * fixedBase) / 100).toFixed(0)}% of your money is spread by score across ${rest.map((x) => x.stock.symbol).join(", ")}.`,
       });
     }
     const over = fixedSyms.filter((s) => mandate.maxWeightPct && mandate.weightsPct[s] > mandate.maxWeightPct);
@@ -387,6 +405,12 @@ export function runAutonomousStockAgent(params: {
       const top = Math.max(...weights) * (investPct / 10000);
       limits.push({ label: `Max ${capPct}% per stock`, status: "kept", detail: `The largest position is ${top.toFixed(1)}% of your money.` });
     }
+  }
+  // Never propose a 0% leg: the index registry rejects zero weights and a $0 swap makes no sense
+  if (weights.some((w) => w <= 0)) {
+    const keep = weights.map((w) => w > 0);
+    selected = selected.filter((_, i) => keep[i]);
+    weights = weights.filter((w) => w > 0);
   }
   if (askedCashPct) limits.push({ label: `Keep ${askedCashPct}% in USDC`, status: "kept", detail: `${askedCashPct}% of the amount is not invested.` });
   for (const sym of mandate.exclude) {
@@ -522,15 +546,18 @@ export function runAutonomousStockAgent(params: {
   // Assumptions: what the request didn't say, so the agent chose
   const assumptions: string[] = [];
   if (!mandate.count) assumptions.push(`No number of stocks given: I picked ${selected.length}${capPct ? " (enough to stay under your limit)" : ""}.`);
-  assumptions.push(mandate.equalWeight ? "Equal weights, as you asked." : "No weights given: they follow each stock's rule score.");
-  const liveRisk = selected.filter(({ stock: s }) => risk[s.symbol]).length;
+  assumptions.push(
+    fixedSyms.length
+      ? `Weights you set are used for ${fixedSyms.join(", ")}${selected.length > fixedSyms.length ? "; the others follow each stock's rule score" : ""}.`
+      : mandate.equalWeight
+      ? "Equal weights, as you asked."
+      : "No weights given: they follow each stock's rule score."
+  );
   assumptions.push(
     `Risk profile: ${riskProfile.toLowerCase()}${riskProfile === params.riskProfile ? " (the selected setting)" : " (from your words)"}. ` +
-      (liveRisk === selected.length
+      (riskComplete
         ? "Risk is measured from each stock's last ~2 months of Chainlink NAV. Past volatility doesn't predict the future."
-        : liveRisk > 0
-        ? `Risk is measured from Chainlink NAV history for ${liveRisk} of ${selected.length} picks; the rest use a fixed beta estimate while history loads.`
-        : "Live risk history is still loading, so fixed beta estimates were used this time.")
+        : "Live risk history is still loading, so fixed beta estimates were used for every stock this time.")
   );
   if (usMarketStatus().state !== "open") assumptions.push("The US market is closed: NAV is the last close, and DEX prices can drift from it until the next open.");
   assumptions.push("Prices are from now. The exact amount is quoted again in the review, before you sign.");

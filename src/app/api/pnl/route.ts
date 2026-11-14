@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse, after } from "next/server";
 import { createPublicClient, decodeEventLog, parseAbi, parseAbiItem } from "viem";
 import { base } from "viem/chains";
 import { baseTransport, redactSecrets } from "@/lib/rpc";
@@ -33,6 +33,8 @@ const CHUNK = process.env.BASE_RPC_URL ? 100_000n : 45_000n;
 const FIRST_WINDOW = 1_300_000n;
 const CONCURRENCY = 4; // more triggers the RPC's rate limit
 const TIME_BUDGET_MS = 25_000;
+// Respond by then whatever happens (Vercel stops the function at 60s and the user would get a 504)
+const RESPONSE_BUDGET_MS = 45_000;
 const MAX_TXS = 400;
 const CACHE_TTL_MS = 30 * 60 * 1000;
 const MAX_PARALLEL_SCANS = 3;
@@ -42,7 +44,7 @@ const ABI = parseAbi([
   "function latestRoundData() view returns (uint80 roundId, int256 answer, uint256 startedAt, uint256 updatedAt, uint80 answeredInRound)",
   "function balanceOf(address) view returns (uint256)",
 ]);
-const client = createPublicClient({ chain: base, transport: baseTransport({ timeout: 20_000 }), batch: { multicall: true } });
+const client = createPublicClient({ chain: base, transport: baseTransport({ timeout: 10_000 }), batch: { multicall: true } });
 
 const STOCKS = new Map(BASE_TOKENIZED_STOCKS.map((s) => [s.b20Address.toLowerCase(), s]));
 const STOCK_ADDRESSES = BASE_TOKENIZED_STOCKS.map((s) => s.b20Address);
@@ -185,9 +187,12 @@ async function loadHistory(wallet: `0x${string}`): Promise<WalletHistory> {
     scannedFrom = prev.scannedFrom;
     opening = prev.opening;
   } else {
-    // Recent window first: fast, and enough for most wallets
-    scannedFrom = latest - FIRST_WINDOW > START_BLOCK ? latest - FIRST_WINDOW : START_BLOCK;
-    await addTxs((await scanRange(wallet, scannedFrom, latest)).hashes);
+    // Recent window first: fast, and enough for most wallets. Also within the time budget: when the RPC is
+    // slow, only the gap-free newest part counts and the rest is valued from the balances at its start.
+    const windowFrom = latest - FIRST_WINDOW > START_BLOCK ? latest - FIRST_WINDOW : START_BLOCK;
+    const first = await scanRange(wallet, windowFrom, latest, deadline);
+    await addTxs(first.hashes);
+    scannedFrom = first.coveredFrom ?? latest;
     opening = scannedFrom > START_BLOCK ? await balancesAt(wallet, scannedFrom - 1n) : new Map();
   }
 
@@ -380,7 +385,15 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ ok: false, error: "P/L is busy right now. Please retry in a few seconds." }, { status: 503 });
     } else {
       if (!inflight.has(key)) inflight.set(key, loadHistory(wallet as `0x${string}`).finally(() => inflight.delete(key)));
-      history = await inflight.get(key)!;
+      // Answer before the 60s function limit (a 504 shows the user nothing useful). The scan keeps running
+      // after the response and is cached, so the next request is fast.
+      const scan = inflight.get(key)!;
+      const done = await Promise.race([scan, new Promise<null>((r) => setTimeout(() => r(null), RESPONSE_BUDGET_MS))]);
+      if (!done) {
+        after(() => scan.then(() => undefined, () => undefined));
+        return NextResponse.json({ ok: false, error: "P/L is still loading for this wallet. Please refresh in a few seconds." }, { status: 503 });
+      }
+      history = done;
     }
     const { positions, activity } = await computePositions(history);
     const fromBlock = await client.getBlock({ blockNumber: history.scannedFrom }).catch(() => null);

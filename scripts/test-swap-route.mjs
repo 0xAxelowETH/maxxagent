@@ -121,6 +121,8 @@ async function testStock(symbol, tokenOut) {
 
 console.log(`Testing USDC -> B20 stock swaps for $${usd} each (Builder Code: ${BUILDER_CODE})\n`);
 for (const [symbol, addr] of Object.entries(STOCKS)) {
+  // KyberSwap answers "Forbidden" to quick bursts from one client: space the stocks out
+  await new Promise((res) => setTimeout(res, 1500));
   const r = await testStock(symbol, addr);
   if (r.ok) {
     console.log(

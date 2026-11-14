@@ -121,6 +121,25 @@ m = parseMandate("AI and Netflix, 3 stocks, max 30% per stock");
 ok(!Object.keys(m.weightsPct).length && m.maxWeightPct === 30, "a limit is not read as a weight");
 m = parseMandate("no tesla 30% cash");
 ok(!Object.keys(m.weightsPct).length && m.cashPct === 30, "cash is not read as a weight");
+// Regressions from the code review
+m = parseMandate("Apple 60% Microsoft 40%");
+ok(m.weightsPct.AAPLc === 60 && m.weightsPct.MSFTc === 40, `name-first weights stay with their names -> ${JSON.stringify(m.weightsPct)}`);
+m = parseMandate("nvidia at 40% tesla at 60%");
+ok(m.weightsPct.NVDAc === 40 && m.weightsPct.TSLAc === 60, `"X at N%" pairs -> ${JSON.stringify(m.weightsPct)}`);
+m = parseMandate("max 30% in tesla");
+ok(!Object.keys(m.weightsPct).length && m.maxWeightPct === 30, `a cap before a name is not a weight -> ${JSON.stringify(m.weightsPct)}`);
+m = parseMandate("hold 40% nvidia and 60% apple");
+ok(m.cashPct === undefined && m.weightsPct.NVDAc === 40 && m.weightsPct.AAPLc === 60, `"hold 40% nvidia" is a weight, not cash -> cash=${m.cashPct} ${JSON.stringify(m.weightsPct)}`);
+m = parseMandate("Apple and Microsoft, 20% in cash");
+ok(!Object.keys(m.weightsPct).length && m.cashPct === 20, "cash after names is not a weight");
+m = parseMandate("aggressive picks to buy the downturn");
+ok(m.riskHint === "Aggressive", `"buy the downturn" stays aggressive -> ${m.riskHint}`);
+m = parseMandate("Build me a safe basket, strategy: long term");
+ok(!m.include.includes("MSTRc"), "\"strategy:\" in a sentence is not Strategy Inc");
+m = parseMandate("low risk and strategy-driven");
+ok(!m.include.includes("MSTRc"), "\"strategy-driven\" is not Strategy Inc");
+m = parseMandate("Strategy shares and Tesla");
+ok(m.include.includes("MSTRc"), "\"Strategy shares\" is Strategy Inc");
 
 // Weight capping
 let w = capWeightsBps([5000, 3000, 2000], 4000);
