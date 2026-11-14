@@ -704,7 +704,7 @@ export default function StockMaxxingDashboard() {
   // Build in Public State
   const [dayNumber, setDayNumber] = useState<number>(1);
   const [milestoneTitle, setMilestoneTitle] = useState<string>(
-    "Shipped live Chainlink NAV vs DEX price tracking for all 10 Coinbase tokenized stocks on Base"
+    "Shipped live Chainlink NAV vs DEX price tracking for the 10 Coinbase tokenized stocks MAXXAGENT supports on Base"
   );
 
   // Hydrate the activity log from localStorage
@@ -2612,12 +2612,30 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                                       : "bg-rose-500/15 text-rose-300"
                                   }`}
                                 >
-                                  {l.status === "kept" ? "Kept" : l.status === "adjusted" ? "Adjusted" : "Not available"}
+                                  {l.status === "kept" ? "Kept" : l.status === "adjusted" ? "Adjusted" : "Not supported"}
                                 </span>
                                 <span className="text-slate-300">
                                   <strong className="text-white">{l.label}.</strong> {l.detail}
+                                  {l.link && (
+                                    <>
+                                      {" "}
+                                      <a href={l.link.url} target="_blank" rel="noopener noreferrer" className="text-cyan-300 underline hover:text-white">
+                                        {l.link.label}
+                                      </a>
+                                    </>
+                                  )}
                                 </span>
                               </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                      {(agentReport.cautions?.length ?? 0) > 0 && (
+                        <div className="mt-3 rounded-xl border border-amber-500/40 bg-amber-500/5 px-3 py-2" data-testid="agent-cautions">
+                          <div className="text-[10px] font-bold uppercase tracking-wider text-amber-300">Check before buying</div>
+                          <ul className="mt-1 list-disc space-y-1 pl-4 text-[11px] text-slate-300">
+                            {agentReport.cautions!.map((c) => (
+                              <li key={c}>{c}</li>
                             ))}
                           </ul>
                         </div>
@@ -3200,7 +3218,7 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                   />
                 </div>
 
-                {/* Sliders for all 10 Coinbase B20 Tokenized Stocks with Official Logos */}
+                {/* Sliders for the 10 supported Coinbase B20 tokenized stocks, with official logos */}
                 <div className={`grid grid-cols-1 gap-3 ${hasRegistry ? "" : "xl:grid-cols-2"}`}>
                   {stocks.map((stock) => {
                     const weightBps = customWeights[stock.symbol] || 0;
@@ -4029,13 +4047,13 @@ const walletClient = createWalletClient({
                   </label>
                   <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5">
                     {[
-                      { dateLabel: "Day 1", day: 1, milestone: "Shipped live Chainlink NAV vs DEX price tracking for all 10 Coinbase tokenized stocks on Base" },
+                      { dateLabel: "Day 1", day: 1, milestone: "Shipped live Chainlink NAV vs DEX price tracking for the 10 Coinbase tokenized stocks MAXXAGENT supports on Base" },
                       { dateLabel: "Day 2", day: 2, milestone: "Hardened for the official rules: no synthetic data, US geo-block, non-custodial only" },
                       { dateLabel: "Day 3", day: 3, milestone: "Shipped in-app basket buying: one wallet confirmation swaps USDC into each stock" },
                       { dateLabel: "Day 4", day: 4, milestone: "Real price history: Chainlink rounds + DEX candles, replacing placeholder charts" },
                       { dateLabel: "Day 5", day: 5, milestone: "Deployed StockMaxxIndexRegistry: publish an index onchain, anyone can buy it" },
                       { dateLabel: "First buy", day: 6, milestone: "First real basket bought through MAXXAGENT on Base mainnet (tx in thread)" },
-                      { dateLabel: "Weekend", day: 7, milestone: "Weekend report: DEX vs Chainlink NAV gaps across all 10 tokenized stocks" },
+                      { dateLabel: "Weekend", day: 7, milestone: "Weekend report: DEX vs Chainlink NAV gaps across the 10 supported tokenized stocks" },
                       { dateLabel: "Users", day: 8, milestone: "Weekly numbers: wallets, baskets bought and volume attributed via Builder Code" },
                     ].map((sched) => (
                       <button
@@ -4180,7 +4198,7 @@ const walletClient = createWalletClient({
                   </h3>
                   <ol className="list-decimal list-inside space-y-2 text-xs text-slate-300 leading-relaxed">
                     <li>
-                      <strong>0:00–0:25 — Market:</strong> 10 Coinbase tokenized stocks live on Base,
+                      <strong>0:00–0:25 — Market:</strong> the 10 supported Coinbase tokenized stocks live on Base,
                       Chainlink NAV (24/5) vs DEX price (24/7) on the real chart.
                     </li>
                     <li>

@@ -6,6 +6,7 @@ import { THEMES, parseMandate } from "./mandate";
 import { capWeightsBps } from "./weights";
 import { usMarketStatus } from "./marketHours";
 import { SEC_CIK, type SecFundamentals } from "./secFundamentals";
+import { UNSUPPORTED_COINBASE_STOCKS, type UnsupportedLive } from "./unsupportedStocks";
 
 export interface AgentAllocationRecommendation {
   symbol: string;
@@ -56,7 +57,9 @@ export interface AgentAnalysisReport {
   /** the same limit as a share of the stocks part (what a saved target checks the wallet against) */
   maxWeightOfStocksPct?: number;
   /** each limit in the request and what the agent did with it */
-  limits: { label: string; status: "kept" | "adjusted" | "not possible"; detail: string }[];
+  limits: { label: string; status: "kept" | "adjusted" | "not possible"; detail: string; link?: { label: string; url: string } }[];
+  /** things to check before buying (e.g. an order that is large for a stock's Base pool) */
+  cautions?: string[];
   /** checkable numbers behind the picks, each with where to verify it */
   facts: { symbol: string; text: string; links: { label: string; url: string }[] }[];
   /** what the agent assumed because the request didn't say */
@@ -136,8 +139,10 @@ export function runAutonomousStockAgent(params: {
   currentWeights?: Record<string, number>;
   /** latest annual figures from each company's SEC filing, by B20 symbol (optional, server-fetched) */
   fundamentals?: Record<string, SecFundamentals | null>;
+  /** live Base liquidity of unsupported Coinbase stocks the request named (optional, server-fetched) */
+  unsupportedLive?: Record<string, UnsupportedLive>;
 }): AgentAnalysisReport {
-  const { stocks, userPrompt, capitalUsd, builderCode, currentWeights = {}, fundamentals = {} } = params;
+  const { stocks, userPrompt, capitalUsd, builderCode, currentWeights = {}, fundamentals = {}, unsupportedLive = {} } = params;
   const mandate = parseMandate(userPrompt);
   // Words in the request ("safe", "aggressive") refine the selected profile only when it was left on Balanced
   const riskProfile = params.riskProfile === "Balanced" && mandate.riskHint ? mandate.riskHint : params.riskProfile;
@@ -153,6 +158,42 @@ export function runAutonomousStockAgent(params: {
   if (mandate.only) {
     const narrowed = pool.filter((st) => mandate.include.includes(st.symbol) || themeOf(st.symbol).length > 0);
     if (narrowed.length) pool = narrowed;
+  }
+  // "Profitable": leave out companies whose last 10-K shows a net loss, or that have no 10-K yet.
+  // Stocks the user named stay in; figures SEC hasn't returned yet are not held against a stock.
+  const big = (n: number) => `${n < 0 ? "-" : ""}$${Math.abs(n) >= 1e9 ? `${(Math.abs(n) / 1e9).toFixed(1)}B` : `${(Math.abs(n) / 1e6).toFixed(0)}M`}`;
+  const fyLabel = (end: string) => new Date(`${end}T00:00:00Z`).toLocaleString("en-US", { month: "short", year: "numeric", timeZone: "UTC" });
+  const profitLimit: AgentAnalysisReport["limits"] = [];
+  if (mandate.prefersProfitable) {
+    const dropped: string[] = [];
+    let unknown = 0;
+    const kept = pool.filter((st) => {
+      if (mandate.include.includes(st.symbol)) return true;
+      const f = fundamentals[st.symbol];
+      if (f === undefined || (f && f.netIncomeUsd === null)) {
+        unknown++;
+        return true;
+      }
+      if (f === null) {
+        dropped.push(`${st.symbol} (no annual report filed with the SEC yet)`);
+        return false;
+      }
+      if ((f.netIncomeUsd ?? 0) < 0) {
+        dropped.push(`${st.symbol} (net loss ${big(Math.abs(f.netIncomeUsd!))} in the fiscal year to ${fyLabel(f.periodEnd)})`);
+        return false;
+      }
+      return true;
+    });
+    if (kept.length) {
+      pool = kept;
+      profitLimit.push({
+        label: "Profitable companies only",
+        status: unknown ? "adjusted" : "kept",
+        detail:
+          (dropped.length ? `Left out ${dropped.join(", ")}, from their SEC filings.` : "Every candidate reported a profit in its last 10-K.") +
+          (unknown ? ` ${unknown} stock${unknown > 1 ? "s" : ""} couldn't be checked right now (SEC data still loading), so ${unknown > 1 ? "they stay" : "it stays"} in.` : ""),
+      });
+    }
   }
   if (pool.length === 0) {
     pool = stocks;
@@ -176,6 +217,17 @@ export function runAutonomousStockAgent(params: {
     if (mandate.prefersDiscount && stock.weekendGapPct < 0) score += Math.min(25, Math.abs(stock.weekendGapPct) * 35);
     if (mandate.prefersDividends && stock.uiMultiplier > 1.0001) score += 12;
     if (mandate.prefersLiquidity) score += Math.min(12, ((stock.dexLiquidityUsd ?? 0) / 1_000_000) * 8);
+    // Fundamentals from the company's last 10-K, only when the request asks for them
+    const fund = fundamentals[stock.symbol];
+    if (mandate.prefersGrowth && fund && fund.revenueGrowthPct !== null) {
+      const g = fund.revenueGrowthPct;
+      score += Math.max(-8, Math.min(20, g * 0.25));
+      reasons.push(`revenue ${g >= 0 ? "+" : ""}${g.toFixed(0)}% in its last fiscal year (SEC 10-K)`);
+    }
+    if (mandate.prefersProfitable && fund && fund.netIncomeUsd !== null && fund.netIncomeUsd > 0) {
+      score += Math.min(10, (fund.netIncomeUsd / Math.max(1, fund.revenueUsd)) * 30);
+      reasons.push(`profitable: net income ${big(fund.netIncomeUsd)}, ${((fund.netIncomeUsd / fund.revenueUsd) * 100).toFixed(0)}% of revenue (SEC 10-K)`);
+    }
 
     // 2. Live market factors
     // A: DEX trading below Chainlink NAV (cheaper entry), penalise premiums
@@ -288,16 +340,33 @@ export function runAutonomousStockAgent(params: {
   }
   if (mandate.count && selected.length < mandate.count)
     limits.push({ label: `${mandate.count} stocks`, status: "adjusted", detail: `Only ${selected.length} match the rest of your request.` });
-  for (const u of mandate.unavailable)
+  limits.push(...profitLimit);
+  // Not supported: say plainly whether Coinbase issues it on Base, and why MAXXAGENT leaves it out
+  const closest = (u: { closest?: string }) => (u.closest ? ` Closest supported: ${u.closest}.` : "");
+  for (const u of mandate.unavailable) {
+    if (u.sector) {
+      limits.push({ label: u.name, status: "not possible", detail: "None of the 10 stocks MAXXAGENT supports is in this group." });
+      continue;
+    }
+    const meta = u.token ? UNSUPPORTED_COINBASE_STOCKS[u.token] : undefined;
+    if (!u.token || !meta) {
+      limits.push({ label: u.name, status: "not possible", detail: `Coinbase doesn't issue ${u.name} as a tokenized stock on Base.${closest(u)}` });
+      continue;
+    }
+    const live = unsupportedLive[u.token];
+    const why: string[] = [];
+    if (live?.liquidityUsd != null)
+      why.push(live.liquidityUsd < 1000 ? "it has no real pool on Base" : `its Base pools hold only about $${live.liquidityUsd >= 1e6 ? `${(live.liquidityUsd / 1e6).toFixed(1)}M` : `${Math.round(live.liquidityUsd / 1e3)}K`}`);
+    if (!meta.chainlink) why.push("Chainlink publishes no price for it on Base, so the NAV safety check can't run");
     limits.push({
       label: u.name,
       status: "not possible",
-      detail: u.sector
-        ? "None of the 10 Coinbase tokenized stocks on Base is in this group."
-        : `Not one of the 10 Coinbase tokenized stocks on Base${u.closest ? `. Closest available: ${u.closest}.` : "."}`,
+      detail: `${u.token} is a Coinbase tokenized stock on Base, but MAXXAGENT doesn't support it${why.length ? `: ${why.join(", and ")}` : " yet"}. MAXXAGENT trades only 10 stocks with deep liquidity and a Chainlink price.${closest(u)}`,
+      link: live?.poolUrl ? { label: "Pool", url: live.poolUrl } : { label: "Token", url: `https://basescan.org/token/${meta.address}` },
     });
+  }
   if (mandate.unavailable.length && !mandate.include.length && !mandate.themes.length)
-    interpretation.push("Nothing you asked for is available as a tokenized stock yet, so this basket is built from all 10 by score.");
+    interpretation.push("Nothing you asked for is among the 10 stocks MAXXAGENT supports, so this basket is built from all 10 by score.");
   const cashReservePct = Math.round((100 - investPct) * 100) / 100;
 
   const allocations: AgentAllocationRecommendation[] = selected.map((item, idx) => {
@@ -401,7 +470,17 @@ export function runAutonomousStockAgent(params: {
   if (usMarketStatus().state !== "open") assumptions.push("The US market is closed: NAV is the last close, and DEX prices can drift from it until the next open.");
   assumptions.push("Prices are from now. The exact amount is quoted again in the review, before you sign.");
 
-  const executiveSummary = `Proposed ${riskProfile.toLowerCase()} basket from live Chainlink NAV, DEX prices, liquidity and B20 multipliers across all 10 Coinbase tokenized stocks: ${topTickers}. Not financial advice — review before buying.`;
+  // Order size vs pool depth: a leg above 2% of a stock's Base liquidity can move its price
+  const cautions: string[] = [];
+  for (const a of allocations) {
+    const liq = a.dexLiquidityUsd ?? 0;
+    if (liq > 0 && a.usdAllocation > liq * 0.02)
+      cautions.push(
+        `${a.symbol}: $${a.usdAllocation.toFixed(0)} is ${((a.usdAllocation / liq) * 100).toFixed(1)}% of its Base pool liquidity ($${liq >= 1e6 ? `${(liq / 1e6).toFixed(1)}M` : `${Math.round(liq / 1e3)}K`}), so the price can move. The review shows the exact cost before you sign, and routes costing over 1.5% are skipped.`
+      );
+  }
+
+  const executiveSummary = `Proposed ${riskProfile.toLowerCase()} basket from live Chainlink NAV, DEX prices, liquidity and B20 multipliers across the 10 stocks MAXXAGENT supports: ${topTickers}. Not financial advice — review before buying.`;
 
   const researchHash = keccak256(
     toHex(`${strategyName}|${topTickers}|${new Date().toISOString().slice(0, 13)}`)
@@ -439,6 +518,7 @@ export function runAutonomousStockAgent(params: {
     maxWeightPct: capPct,
     maxWeightOfStocksPct,
     limits,
+    cautions,
     facts,
     assumptions,
     marketRegimeNote:

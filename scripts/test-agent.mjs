@@ -81,6 +81,23 @@ ok(m.unavailable.length === 2 && m.unavailable.every((u) => u.sector) && m.theme
 m = parseMandate("prefer the Chainlink oracle with fresh data, top 3 stocks below nav");
 ok(m.unavailable.length === 0 && m.maxWeightPct === undefined && m.cashPct === undefined, `no false positives from "oracle" or "3 stocks" -> ${JSON.stringify({ u: m.unavailable, cap: m.maxWeightPct, cash: m.cashPct })}`);
 
+// Stocks that exist on Base but aren't supported name their Coinbase token; ones Coinbase doesn't issue don't
+m = parseMandate("AI and Netflix, 3 stocks, max 30% per stock");
+const nf = m.unavailable.find((u) => u.name === "Netflix");
+ok(nf && nf.token === "NFLXc" && !m.notes.some((n) => /not available as a tokenized stock/.test(n)), `Netflix -> token ${nf?.token}, note "${m.notes.find((n) => /Netflix/.test(n))}"`);
+m = parseMandate("Costco and Apple");
+ok(m.unavailable.find((u) => u.name === "Costco")?.token === undefined, "Costco has no Coinbase token");
+m = parseMandate("no netflix, big tech");
+ok(!m.unavailable.length, `"no netflix" is not a request -> ${JSON.stringify(m.unavailable)}`);
+
+// Fundamentals preferences
+m = parseMandate("profitable big tech with strong revenue growth");
+ok(m.prefersProfitable && m.prefersGrowth && m.themes.includes("bigtech"), `profitable + growth -> ${JSON.stringify({ p: m.prefersProfitable, g: m.prefersGrowth, t: m.themes })}`);
+m = parseMandate("saham AI yang untung dan tumbuh cepat");
+ok(m.prefersProfitable && m.prefersGrowth, "Indonesian: untung + tumbuh");
+m = parseMandate("AI and cloud, 3 stocks");
+ok(!m.prefersProfitable && !m.prefersGrowth, "no fundamentals filter unless asked");
+
 // Weight capping
 let w = capWeightsBps([5000, 3000, 2000], 4000);
 ok(w && w.reduce((a, b) => a + b, 0) === 10000 && Math.max(...w) <= 4000 && w[1] > w[2], `cap 40%: [50,30,20] -> ${JSON.stringify(w)}`);

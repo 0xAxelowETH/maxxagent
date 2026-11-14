@@ -21,12 +21,19 @@ export interface ParsedMandate {
   prefersDiscount: boolean;
   prefersDividends: boolean;
   prefersLiquidity: boolean;
+  /** only companies with a profit in their last annual report ("profitable") */
+  prefersProfitable: boolean;
+  /** favour fast revenue growth ("growth") */
+  prefersGrowth: boolean;
   /** largest share of the money for any one stock, in percent ("max 30% per stock") */
   maxWeightPct?: number;
   /** share of the money to keep in USDC, in percent ("keep 20% in cash") */
   cashPct?: number;
-  /** companies, funds or sectors asked for that are not among the 10 tokenized stocks */
-  unavailable: { name: string; closest?: string; sector?: boolean }[];
+  /**
+   * companies, funds or sectors asked for that are not among the 10 stocks MAXXAGENT supports.
+   * `token`: the Coinbase tokenized stock that exists on Base for it (supported or not).
+   */
+  unavailable: { name: string; closest?: string; sector?: boolean; token?: string }[];
   /** human-readable lines: how the request was understood */
   notes: string[];
 }
@@ -60,36 +67,39 @@ export const THEMES: { id: string; label: string; words: string[]; symbols: stri
 ];
 
 /**
- * Things people ask for that are NOT available as Coinbase tokenized stocks on Base. A stock that has a
- * close equivalent among the 10 maps to that theme (AMD -> chips); a sector with none maps to nothing.
+ * Things people ask for that are not among the 10 stocks MAXXAGENT supports. `token` is the Coinbase
+ * tokenized stock that exists on Base for it (see lib/unsupportedStocks); without one, Coinbase doesn't
+ * issue it. A stock with a close equivalent among the 10 maps to that theme (AMD -> chips).
  * Ambiguous words are left out on purpose ("oracle" is also Chainlink's, "coin" is in "meme coin").
  */
-export const NOT_AVAILABLE: { name: string; words: string[]; theme?: string; sector?: boolean }[] = [
-  { name: "AMD", words: ["amd"], theme: "chips" },
-  { name: "Intel", words: ["intel", "intc"], theme: "chips" },
+export const NOT_AVAILABLE: { name: string; words: string[]; theme?: string; sector?: boolean; token?: string }[] = [
+  { name: "AMD", words: ["amd"], theme: "chips", token: "AMDc" },
+  { name: "Intel", words: ["intel", "intc"], theme: "chips", token: "INTCc" },
   { name: "TSMC", words: ["tsmc", "taiwan semiconductor"], theme: "chips" },
-  { name: "Broadcom", words: ["broadcom", "avgo"], theme: "chips" },
+  { name: "Broadcom", words: ["broadcom", "avgo"], theme: "chips", token: "AVGOc" },
   { name: "ASML", words: ["asml"], theme: "chips" },
-  { name: "Qualcomm", words: ["qualcomm", "qcom"], theme: "chips" },
-  { name: "Micron", words: ["micron"], theme: "storage" },
-  { name: "Palantir", words: ["palantir", "pltr"], theme: "ai" },
-  { name: "Salesforce", words: ["salesforce"], theme: "cloud" },
-  { name: "Adobe", words: ["adobe"], theme: "cloud" },
-  { name: "Oracle", words: ["orcl", "oracle corp", "oracle corporation"], theme: "cloud" },
-  { name: "Netflix", words: ["netflix", "nflx"] },
-  { name: "Walmart", words: ["walmart"], theme: "consumer" },
+  { name: "Qualcomm", words: ["qualcomm", "qcom"], theme: "chips", token: "QCOMc" },
+  { name: "Micron", words: ["micron"], theme: "storage", token: "MUc" },
+  { name: "Palantir", words: ["palantir", "pltr"], theme: "ai", token: "PLTRc" },
+  { name: "Salesforce", words: ["salesforce"], theme: "cloud", token: "CRMc" },
+  { name: "Adobe", words: ["adobe"], theme: "cloud", token: "ADBEc" },
+  { name: "Oracle", words: ["orcl", "oracle corp", "oracle corporation"], theme: "cloud", token: "ORCLc" },
+  { name: "Netflix", words: ["netflix", "nflx"], token: "NFLXc" },
+  { name: "Walmart", words: ["walmart"], theme: "consumer", token: "WMTc" },
   { name: "Costco", words: ["costco"], theme: "consumer" },
-  { name: "Disney", words: ["disney"] },
-  { name: "Uber", words: ["uber"] },
-  { name: "Berkshire Hathaway", words: ["berkshire"] },
-  { name: "JPMorgan", words: ["jpmorgan", "jp morgan", "jpm"] },
-  { name: "Visa", words: ["visa"] },
+  { name: "Disney", words: ["disney"], token: "DISc" },
+  { name: "Uber", words: ["uber"], token: "UBERc" },
+  { name: "Berkshire Hathaway", words: ["berkshire"], token: "BRK.Bc" },
+  { name: "JPMorgan", words: ["jpmorgan", "jp morgan", "jpm"], token: "JPMc" },
+  { name: "Visa", words: ["visa"], token: "Vc" },
   { name: "Mastercard", words: ["mastercard"] },
-  { name: "Eli Lilly", words: ["eli lilly", "lilly"] },
-  { name: "Pfizer", words: ["pfizer"] },
-  { name: "ExxonMobil", words: ["exxon", "exxonmobil"] },
-  { name: "Boeing", words: ["boeing"] },
-  { name: "Robinhood", words: ["robinhood"] },
+  { name: "Eli Lilly", words: ["eli lilly", "lilly"], token: "LLYc" },
+  { name: "Pfizer", words: ["pfizer"], token: "PFEc" },
+  { name: "ExxonMobil", words: ["exxon", "exxonmobil"], token: "XOMc" },
+  { name: "Boeing", words: ["boeing"], token: "BAc" },
+  { name: "Robinhood", words: ["robinhood"], token: "HOODc" },
+  { name: "Circle", words: ["crcl", "circle internet"], token: "CRCLc" },
+  { name: "Take-Two", words: ["take-two", "take two", "ttwo", "rockstar games"], token: "TTWOc" },
   { name: "Alibaba", words: ["alibaba"] },
   { name: "index funds (S&P 500, Nasdaq 100)", sector: true, words: ["s&p 500", "s&p500", "sp500", "spy", "voo", "qqq", "nasdaq 100", "nasdaq-100"] },
   { name: "healthcare and pharma", sector: true, words: ["healthcare", "health care", "pharma", "pharmaceutical", "pharmaceuticals", "biotech", "kesehatan", "farmasi"] },
@@ -166,7 +176,7 @@ export function parseMandate(input: string): ParsedMandate {
   const include = found.symbols.filter((s) => !exclude.has(s));
   const themes = found.themes.filter((t) => !excludedThemes.has(t));
 
-  // 2b) Asked for, but not available as a tokenized stock. "no netflix" is not a request: every negated
+  // 2b) Asked for, but not among the 10 supported stocks. "no netflix" is not a request: every negated
   // phrase (up to the next comma) is dropped first, including ones the exclusion pass above skipped
   let wanted = text;
   for (const c of negatedText) wanted = wanted.split(c).join(" ");
@@ -175,7 +185,7 @@ export function parseMandate(input: string): ParsedMandate {
   for (const u of NOT_AVAILABLE) {
     if (!has(wanted, u.words)) continue;
     const sub = u.theme && !excludedThemes.has(u.theme) ? THEMES.find((t) => t.id === u.theme) : undefined;
-    unavailable.push({ name: u.name, closest: sub?.label, sector: u.sector });
+    unavailable.push({ name: u.name, closest: sub?.label, sector: u.sector, token: u.token });
     // A close equivalent stands in for it (AMD -> chips), unless that theme was excluded
     if (sub && !themes.includes(sub.id)) themes.push(sub.id);
   }
@@ -218,13 +228,15 @@ export function parseMandate(input: string): ParsedMandate {
   const prefersDiscount = has(positive, ["cheap", "cheaper", "discount", "discounted", "below nav", "under nav", "undervalued", "bargain", "weekend", "gap", "murah", "diskon"]);
   const prefersDividends = has(positive, ["dividend", "dividends", "income", "yield", "dividen"]);
   const prefersLiquidity = has(positive, ["liquid", "liquidity", "low slippage", "deep pools", "likuid"]);
+  const prefersProfitable = has(positive, ["profitable", "profitability", "profit", "profits", "earnings", "money-making", "untung", "laba", "menguntungkan"]);
+  const prefersGrowth = has(positive, ["growth", "growing", "fast-growing", "fast growing", "high growth", "high-growth", "revenue growth", "tumbuh", "bertumbuh", "pertumbuhan"]);
 
   // 5) Explain
   for (const u of unavailable)
     notes.push(
       u.sector
-        ? `None of the tokenized stocks on Base is in ${u.name}, so it was left out.`
-        : `${u.name} is not available as a tokenized stock on Base${u.closest ? `: using the closest available, ${u.closest}` : ", so it was left out"}.`
+        ? `None of the 10 stocks MAXXAGENT supports is in ${u.name}, so it was left out.`
+        : `${u.name}${u.token ? ` (${u.token})` : ""} is not one of the 10 stocks MAXXAGENT supports${u.closest ? `: using the closest supported, ${u.closest}` : ", so it was left out"}.`
     );
   if (include.length) notes.push(`You named ${include.join(", ")}: always included.`);
   if (themes.length) notes.push(`Themes: ${themes.map((t) => THEMES.find((x) => x.id === t)!.label).join(", ")}${only ? " (only these)" : ""}.`);
@@ -235,6 +247,8 @@ export function parseMandate(input: string): ParsedMandate {
   if (prefersDiscount) notes.push("Prefers stocks trading below their NAV.");
   if (prefersDividends) notes.push("Prefers stocks with reinvested dividends.");
   if (prefersLiquidity) notes.push("Prefers the deepest liquidity (lower swap cost).");
+  if (prefersProfitable) notes.push("Only companies with a profit in their last annual report (SEC 10-K).");
+  if (prefersGrowth) notes.push("Prefers fast revenue growth (SEC 10-K, last fiscal year).");
   if (maxWeightPct) notes.push(`At most ${maxWeightPct}% of your money in any one stock.`);
   if (cashPct) notes.push(`Keep ${cashPct}% in USDC.`);
 
@@ -249,6 +263,8 @@ export function parseMandate(input: string): ParsedMandate {
     prefersDiscount,
     prefersDividends,
     prefersLiquidity,
+    prefersProfitable,
+    prefersGrowth,
     maxWeightPct,
     cashPct,
     unavailable,

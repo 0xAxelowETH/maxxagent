@@ -3,12 +3,14 @@ import { runAutonomousStockAgent } from "@/lib/agentEngine";
 import { BASE_TOKENIZED_STOCKS, LiveTokenizedStock } from "@/lib/tokenizedStocks";
 import { GET as getStocks } from "../stocks/route";
 import { getSecFundamentals } from "@/lib/secFundamentals";
+import { getUnsupportedLive } from "@/lib/unsupportedStocks";
+import { parseMandate } from "@/lib/mandate";
 
 /**
  * Runs the rule-based stock agent over LIVE market data only.
  *
  * Input hardening:
- *  - Only the 10 official Coinbase B20 stocks are analysed. Static metadata (score base, beta, addresses)
+ *  - Only the 10 supported Coinbase B20 stocks are analysed. Static metadata (score base, beta, addresses)
  *    always comes from the server; only live numbers are taken from the client, and only within sane ranges.
  *  - Prompt length, amount and risk profile are bounded; the Builder Code is always the project's own.
  *  - No server-side trade execution and no user API keys: users execute from their own wallet.
@@ -97,10 +99,16 @@ export async function POST(request: NextRequest) {
       body.currentWeights && typeof body.currentWeights === "object" ? (body.currentWeights as Record<string, number>) : {};
 
     // Company figures from SEC filings, used as sourced facts; left out if SEC is slow
-    const fundamentals = await getSecFundamentals(stocksToAnalyze.map((s) => s.symbol));
+    // Live Base liquidity of any unsupported Coinbase stock the request named (explains why it's left out)
+    const asked = parseMandate(userPrompt).unavailable.flatMap((u) => (u.token ? [u.token] : []));
+    const [fundamentals, unsupportedLive] = await Promise.all([
+      getSecFundamentals(stocksToAnalyze.map((s) => s.symbol)),
+      asked.length ? getUnsupportedLive(asked) : Promise.resolve({}),
+    ]);
 
     const report = runAutonomousStockAgent({
       fundamentals,
+      unsupportedLive,
       stocks: stocksToAnalyze,
       userPrompt,
       riskProfile,
