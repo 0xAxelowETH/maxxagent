@@ -48,5 +48,10 @@ ok(p.sells.length === 0 && p.buys.length === 1 && p.buys[0].usd > 49, `step 2 re
 p = planRebalance([N(0.005)], T(5000, 5000));
 ok(p.buys.every((b) => b.usd >= 0.5), "never proposes a buy under the $0.50 minimum");
 
+p = planRebalance([N(0.145), M(0.142)], T(3000, 7000), { maxWeightPct: 70 });
+ok(p.sells.some((x) => x.symbol === "MSFTc"), `MSFTc at 71% with a 70% limit is trimmed even inside the 2% band (sells: ${JSON.stringify(p.sells)})`);
+p = planRebalance([N(0.145), M(0.142)], T(3000, 7000));
+ok(p.sells.length === 0, "without a limit the same 1-point gap stays within tolerance");
+
 console.log(fail ? `\n❌ ${fail} check(s) failed` : "\n✅ All rebalance checks passed");
 process.exitCode = fail ? 1 : 0;

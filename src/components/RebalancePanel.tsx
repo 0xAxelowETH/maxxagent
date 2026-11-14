@@ -24,6 +24,7 @@ export function RebalancePanel({
   pending,
   onSell,
   onBuy,
+  maxWeightPct,
 }: {
   stocks: StockPrice[];
   balances: Record<string, { rawTokens: number }>;
@@ -33,6 +34,8 @@ export function RebalancePanel({
   pending: boolean;
   onSell: (legs: { symbol: string; b20Address: string; tokens: number }[], label: string) => void;
   onBuy: (legs: { symbol: string; b20Address: string; usd: number }[], label: string) => void;
+  /** per-stock limit (share of the stocks): a stock above it is always trimmed */
+  maxWeightPct?: number;
 }) {
   const [addUsd, setAddUsd] = useState<number>(0);
   // USDC balance right before step 1: after the sales, the increase is the proceeds that step 2 reinvests
@@ -45,9 +48,9 @@ export function RebalancePanel({
   const proceeds = usdcBaseline !== null ? Math.max(0, usdc - usdcBaseline) : 0;
   const plan = useMemo(
     // proceeds count both as money to invest and as part of the portfolio the targets apply to
-    () => planRebalance(holdings, targets, { usdcAvailable: extra + proceeds, addUsd: extra + proceeds }),
+    () => planRebalance(holdings, targets, { usdcAvailable: extra + proceeds, addUsd: extra + proceeds, maxWeightPct }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [JSON.stringify(holdings), JSON.stringify(targets), extra, proceeds]
+    [JSON.stringify(holdings), JSON.stringify(targets), extra, proceeds, maxWeightPct]
   );
   if (holdings.length === 0) return null; // nothing to rebalance yet: the buy panel above covers a first purchase
 

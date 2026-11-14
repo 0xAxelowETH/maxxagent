@@ -51,5 +51,13 @@ ok(parseSavedTarget({ ...good, weights: [{ symbol: "NVDAc", weightBps: 5000 }, {
 ok(parseSavedTarget("x", KNOWN) === null && parseSavedTarget(null, KNOWN) === null && parseSavedTarget({ label: 1, weights: [] }, KNOWN) === null, "garbage is rejected");
 ok(parseSavedTarget({ ...good, label: "A".repeat(200) }, KNOWN)?.label.length === 64, "a long label is clamped");
 
+const T3 = [{ symbol: "NVDAc", weightBps: 3000 }, { symbol: "MSFTc", weightBps: 3500 }, { symbol: "GOOGLc", weightBps: 3500 }];
+d = computeDrift([{ symbol: "NVDAc", usd: 38 }, { symbol: "MSFTc", usd: 31 }, { symbol: "GOOGLc", usd: 31 }], T3, 35);
+ok(d && d.breaches.length === 1 && d.breaches[0].symbol === "NVDAc", "a stock above the saved 35% limit is reported as a breach");
+d = computeDrift([{ symbol: "NVDAc", usd: 35.3 }, { symbol: "MSFTc", usd: 32.35 }, { symbol: "GOOGLc", usd: 32.35 }], T3, 35);
+ok(d && d.breaches.length === 0, "a tick over the limit (35.3% vs 35%) is not a breach");
+ok(parseSavedTarget({ ...good, maxWeightPct: 60 }, KNOWN)?.maxWeightPct === 60, "a saved limit is kept");
+ok(parseSavedTarget({ ...good, maxWeightPct: 30 }, KNOWN) === null, "a limit the target's own weights break (50% vs 30%) is rejected");
+
 console.log(fail ? `\n❌ ${fail} check(s) failed` : "\n✅ All drift checks passed");
 process.exit(fail ? 1 : 0);

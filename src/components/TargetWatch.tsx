@@ -16,8 +16,13 @@ interface StockPrice {
 
 const pct = (n: number) => `${n.toFixed(n < 10 ? 1 : 0)}%`;
 
-/** "NVDAc +6.2 pts" for the largest differences, overweight first */
-export function driftSummary(drift: Drift): string {
+/** "NVDAc +6.2 pts" for the largest differences, overweight first (a broken limit comes first of all) */
+export function driftSummary(drift: Drift, maxWeightPct?: number): string {
+  if (drift.breaches.length && maxWeightPct)
+    return drift.breaches
+      .slice(0, 2)
+      .map((r) => `${r.symbol} is ${r.currentPct.toFixed(1)}% of your stocks, above your ${maxWeightPct}% limit`)
+      .join(" · ");
   const part = (label: string, rows: Drift["over"]) =>
     rows.length
       ? `${label}: ${rows
@@ -55,7 +60,8 @@ export function TargetWatch({
   onBuy: (legs: { symbol: string; b20Address: string; usd: number }[], label: string) => void;
   onRemove: () => void;
 }) {
-  const off = drift !== null && drift.driftPct >= DRIFT_ALERT_PCT;
+  const breached = (drift?.breaches.length ?? 0) > 0;
+  const off = drift !== null && (drift.driftPct >= DRIFT_ALERT_PCT || breached);
   const [open, setOpen] = useState(false);
   const saved = new Date(target.savedAt);
   const targets = target.weights.flatMap((w) => {
@@ -77,6 +83,7 @@ export function TargetWatch({
           </h3>
           <p className="mt-0.5 text-[11px] text-slate-400">
             {target.weights.map((w) => `${w.symbol} ${(w.weightBps / 100).toFixed(0)}%`).join(" · ")}
+            {target.maxWeightPct ? ` · limit ${target.maxWeightPct}% per stock` : ""}
             {saved.getTime() > 0 ? ` · saved ${saved.toLocaleDateString("en-US", { month: "short", day: "numeric" })}` : ""}
           </p>
           {target.mandate && <p className="mt-0.5 text-[11px] italic text-slate-500 line-clamp-1">&ldquo;{target.mandate}&rdquo;</p>}
@@ -95,10 +102,16 @@ export function TargetWatch({
         <p className="text-xs text-slate-300">You don&apos;t hold any of these stocks yet. Buy the basket from the Agent tab to start tracking it.</p>
       ) : off ? (
         <div className="space-y-2">
-          <p className="text-xs text-amber-100">
-            <strong className="font-mono text-sm">{pct(drift.driftPct)}</strong> of your stocks are out of line with this target.{" "}
-            <span className="text-amber-200/80">{driftSummary(drift)}</span>
-          </p>
+          {breached ? (
+            <p className="text-xs text-amber-100" data-testid="limit-breach">
+              <strong>Limit broken:</strong> {driftSummary(drift, target.maxWeightPct)}. The plan trims it back to the target.
+            </p>
+          ) : (
+            <p className="text-xs text-amber-100">
+              <strong className="font-mono text-sm">{pct(drift.driftPct)}</strong> of your stocks are out of line with this target.{" "}
+              <span className="text-amber-200/80">{driftSummary(drift)}</span>
+            </p>
+          )}
           <button
             onClick={() => setOpen((v) => !v)}
             aria-expanded={open}
@@ -123,6 +136,7 @@ export function TargetWatch({
           pending={pending}
           onSell={onSell}
           onBuy={onBuy}
+          maxWeightPct={target.maxWeightPct}
         />
       )}
       <p className="text-[10px] text-slate-500">

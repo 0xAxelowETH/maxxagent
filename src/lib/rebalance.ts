@@ -45,7 +45,16 @@ export interface RebalancePlan {
 export function planRebalance(
   holdings: Holding[],
   targets: Target[],
-  opts: { usdcAvailable?: number; addUsd?: number; minBuyUsd?: number; minSellUsd?: number; bandPct?: number; swapCostPct?: number } = {}
+  opts: {
+    usdcAvailable?: number;
+    addUsd?: number;
+    minBuyUsd?: number;
+    minSellUsd?: number;
+    bandPct?: number;
+    swapCostPct?: number;
+    /** per-stock limit (share of the stocks): a stock above it is trimmed even inside the tolerance band */
+    maxWeightPct?: number;
+  } = {}
 ): RebalancePlan {
   const { usdcAvailable = 0, addUsd = 0, minBuyUsd = 0.5 /* = MIN_BUY_USD in tokenizedStocks.ts (kept literal: this file has no imports) */, minSellUsd = 0.25, bandPct = 2, swapCostPct = 0.6 } = opts;
   const bySymbol = new Map<string, { symbol: string; b20Address: string; tokens: number; price: number; weightBps: number }>();
@@ -69,7 +78,8 @@ export function planRebalance(
     let action: RebalanceRow["action"] = "hold";
     let amount = 0;
     let note: string | undefined;
-    if (Math.abs(deltaUsd) <= band) note = "within tolerance";
+    const overLimit = opts.maxWeightPct !== undefined && totalUsd > 0 && (currentUsd / totalUsd) * 100 > opts.maxWeightPct + 0.5;
+    if (Math.abs(deltaUsd) <= band && !overLimit) note = "within tolerance";
     else if (deltaUsd < 0) {
       const sellUsd = -deltaUsd;
       if (sellUsd < minSellUsd) note = `below $${minSellUsd} minimum`;

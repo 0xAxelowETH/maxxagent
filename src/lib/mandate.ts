@@ -21,6 +21,12 @@ export interface ParsedMandate {
   prefersDiscount: boolean;
   prefersDividends: boolean;
   prefersLiquidity: boolean;
+  /** largest share of the money for any one stock, in percent ("max 30% per stock") */
+  maxWeightPct?: number;
+  /** share of the money to keep in USDC, in percent ("keep 20% in cash") */
+  cashPct?: number;
+  /** companies, funds or sectors asked for that are not among the 10 tokenized stocks */
+  unavailable: { name: string; closest?: string; sector?: boolean }[];
   /** human-readable lines: how the request was understood */
   notes: string[];
 }
@@ -53,6 +59,48 @@ export const THEMES: { id: string; label: string; words: string[]; symbols: stri
   { id: "frontier", label: "frontier tech", words: ["frontier", "moonshot", "moonshots", "disruptive", "futuristic"], symbols: ["TSLAc", "SPCXc", "MSTRc"] },
 ];
 
+/**
+ * Things people ask for that are NOT available as Coinbase tokenized stocks on Base. A stock that has a
+ * close equivalent among the 10 maps to that theme (AMD -> chips); a sector with none maps to nothing.
+ * Ambiguous words are left out on purpose ("oracle" is also Chainlink's, "coin" is in "meme coin").
+ */
+export const NOT_AVAILABLE: { name: string; words: string[]; theme?: string; sector?: boolean }[] = [
+  { name: "AMD", words: ["amd"], theme: "chips" },
+  { name: "Intel", words: ["intel", "intc"], theme: "chips" },
+  { name: "TSMC", words: ["tsmc", "taiwan semiconductor"], theme: "chips" },
+  { name: "Broadcom", words: ["broadcom", "avgo"], theme: "chips" },
+  { name: "ASML", words: ["asml"], theme: "chips" },
+  { name: "Qualcomm", words: ["qualcomm", "qcom"], theme: "chips" },
+  { name: "Micron", words: ["micron"], theme: "storage" },
+  { name: "Palantir", words: ["palantir", "pltr"], theme: "ai" },
+  { name: "Salesforce", words: ["salesforce"], theme: "cloud" },
+  { name: "Adobe", words: ["adobe"], theme: "cloud" },
+  { name: "Oracle", words: ["orcl", "oracle corp", "oracle corporation"], theme: "cloud" },
+  { name: "Netflix", words: ["netflix", "nflx"] },
+  { name: "Walmart", words: ["walmart"], theme: "consumer" },
+  { name: "Costco", words: ["costco"], theme: "consumer" },
+  { name: "Disney", words: ["disney"] },
+  { name: "Uber", words: ["uber"] },
+  { name: "Berkshire Hathaway", words: ["berkshire"] },
+  { name: "JPMorgan", words: ["jpmorgan", "jp morgan", "jpm"] },
+  { name: "Visa", words: ["visa"] },
+  { name: "Mastercard", words: ["mastercard"] },
+  { name: "Eli Lilly", words: ["eli lilly", "lilly"] },
+  { name: "Pfizer", words: ["pfizer"] },
+  { name: "ExxonMobil", words: ["exxon", "exxonmobil"] },
+  { name: "Boeing", words: ["boeing"] },
+  { name: "Robinhood", words: ["robinhood"] },
+  { name: "Alibaba", words: ["alibaba"] },
+  { name: "index funds (S&P 500, Nasdaq 100)", sector: true, words: ["s&p 500", "s&p500", "sp500", "spy", "voo", "qqq", "nasdaq 100", "nasdaq-100"] },
+  { name: "healthcare and pharma", sector: true, words: ["healthcare", "health care", "pharma", "pharmaceutical", "pharmaceuticals", "biotech", "kesehatan", "farmasi"] },
+  { name: "banks and financials", sector: true, words: ["bank", "banks", "banking", "financials", "insurance", "perbankan"] },
+  { name: "energy and oil", sector: true, words: ["energy", "oil", "minyak", "energi"] },
+  { name: "gold and commodities", sector: true, words: ["gold", "silver", "commodities", "commodity", "emas"] },
+  { name: "real estate", sector: true, words: ["real estate", "reit", "reits", "properti"] },
+  { name: "bonds", sector: true, words: ["bond", "bonds", "treasuries", "t-bills", "obligasi"] },
+  { name: "defense", sector: true, words: ["defense", "defence", "military"] },
+];
+
 const NEGATORS = ["no", "not", "without", "exclude", "excluding", "except", "avoid", "skip", "minus", "ex", "tanpa", "kecuali", "jangan", "selain", "bukan"];
 const ONLY_WORDS = ["only", "just", "purely", "exclusively", "hanya", "saja"];
 
@@ -83,11 +131,13 @@ export function parseMandate(input: string): ParsedMandate {
     const s = seg.trim().replace(/^(and|or|dan|atau)\s+/, "").trim();
     return s.split(/\s+(?:and|or|dan|atau)\s+/).every((part) => allNames.includes(part.trim()));
   };
+  const negatedText: string[] = [];
   for (const m of text.matchAll(negRe)) {
     const segs = m[1].split(",");
     let end = 1;
     while (end < segs.length && bareName(segs[end])) end++;
     const clause = segs.slice(0, end).join(",");
+    negatedText.push(clause);
     const found = mentions(clause);
     if (found.symbols.length || found.themes.length) {
       clauses.push(clause.trim());
@@ -115,7 +165,45 @@ export function parseMandate(input: string): ParsedMandate {
   const found = mentions(positive);
   const include = found.symbols.filter((s) => !exclude.has(s));
   const themes = found.themes.filter((t) => !excludedThemes.has(t));
+
+  // 2b) Asked for, but not available as a tokenized stock. "no netflix" is not a request: every negated
+  // phrase (up to the next comma) is dropped first, including ones the exclusion pass above skipped
+  let wanted = text;
+  for (const c of negatedText) wanted = wanted.split(c).join(" ");
+  wanted = wanted.replace(new RegExp(`(^|[^a-z0-9])(?:${NEGATORS.map(esc).join("|")})\\s+[^,.;!?]*`, "g"), "$1 ");
+  const unavailable: ParsedMandate["unavailable"] = [];
+  for (const u of NOT_AVAILABLE) {
+    if (!has(wanted, u.words)) continue;
+    const sub = u.theme && !excludedThemes.has(u.theme) ? THEMES.find((t) => t.id === u.theme) : undefined;
+    unavailable.push({ name: u.name, closest: sub?.label, sector: u.sector });
+    // A close equivalent stands in for it (AMD -> chips), unless that theme was excluded
+    if (sub && !themes.includes(sub.id)) themes.push(sub.id);
+  }
+  themes.sort((a, b) => THEMES.findIndex((t) => t.id === a) - THEMES.findIndex((t) => t.id === b));
   const only = has(positive, ONLY_WORDS) && (themes.length > 0 || include.length > 0);
+
+  // 2c) Limits: "keep 20% in cash" and "max 30% per stock" (cash first, so "up to 20% in usdc" is a reserve)
+  const pct = "(\\d{1,3}(?:\\.\\d+)?)\\s*(?:%|percent|persen)";
+  const cashWords = "(?:cash|usdc|stablecoins?|tunai|kas|reserve|cadangan)";
+  let cashPct: number | undefined;
+  const cashMatch =
+    text.match(new RegExp(`${pct}\\s*(?:in\\s+|as\\s+|of\\s+|di\\s+|dalam\\s+|sebagai\\s+)?${cashWords}`)) ||
+    text.match(new RegExp(`(?:keep|hold|leave|reserve|set aside|sisakan|simpan|sisihkan)\\s+${pct}`)) ||
+    text.match(new RegExp(`${cashWords}\\s*(?:reserve\\s*)?(?:of\\s+)?${pct}`));
+  if (cashMatch) {
+    const v = Number(cashMatch[1]);
+    if (v > 0 && v <= 90) cashPct = v;
+  }
+  let maxWeightPct: number | undefined;
+  const maxMatch =
+    text.match(new RegExp(`(?:max(?:imum)?|cap(?:ped)?(?:\\s+at)?|at most|no more than|not more than|up to|limit(?:ed)?(?:\\s+to)?|maks(?:imal|imum)?|paling banyak|tidak lebih dari)\\s*(?:of\\s+)?${pct}(?!\\s*(?:in\\s+|as\\s+|di\\s+)?${cashWords})`)) ||
+    text.match(new RegExp(`(?:no|not|tidak ada)\\s+(?:single\\s+|one\\s+)?(?:stock|company|name|position|holding|saham)s?\\s+(?:over|above|more than|bigger than|exceeding|di atas|lebih dari)\\s+${pct}`)) ||
+    text.match(new RegExp(`(?:cap|limit|batasi)\\s+(?:each|every|any|one|single|per|tiap|setiap)?\\s*(?:stock|company|name|position|holding|saham)s?\\s+(?:at|to|di|ke)\\s+${pct}`)) ||
+    text.match(new RegExp(`${pct}\\s*(?:max(?:imum)?|cap|limit|maks(?:imal)?)(?:$|[^a-z])`));
+  if (maxMatch) {
+    const v = Number(maxMatch[1]);
+    if (v > 0 && v < 100) maxWeightPct = Math.max(5, v);
+  }
 
   // 3) Shape of the basket
   let count: number | undefined;
@@ -132,6 +220,12 @@ export function parseMandate(input: string): ParsedMandate {
   const prefersLiquidity = has(positive, ["liquid", "liquidity", "low slippage", "deep pools", "likuid"]);
 
   // 5) Explain
+  for (const u of unavailable)
+    notes.push(
+      u.sector
+        ? `None of the tokenized stocks on Base is in ${u.name}, so it was left out.`
+        : `${u.name} is not available as a tokenized stock on Base${u.closest ? `: using the closest available, ${u.closest}` : ", so it was left out"}.`
+    );
   if (include.length) notes.push(`You named ${include.join(", ")}: always included.`);
   if (themes.length) notes.push(`Themes: ${themes.map((t) => THEMES.find((x) => x.id === t)!.label).join(", ")}${only ? " (only these)" : ""}.`);
   if (exclude.size) notes.push(`Left out: ${[...exclude].join(", ")} (from "${clauses.join('", "')}").`);
@@ -141,6 +235,23 @@ export function parseMandate(input: string): ParsedMandate {
   if (prefersDiscount) notes.push("Prefers stocks trading below their NAV.");
   if (prefersDividends) notes.push("Prefers stocks with reinvested dividends.");
   if (prefersLiquidity) notes.push("Prefers the deepest liquidity (lower swap cost).");
+  if (maxWeightPct) notes.push(`At most ${maxWeightPct}% of your money in any one stock.`);
+  if (cashPct) notes.push(`Keep ${cashPct}% in USDC.`);
 
-  return { themes, include, exclude: [...exclude], only, count, equalWeight, riskHint, prefersDiscount, prefersDividends, prefersLiquidity, notes };
+  return {
+    themes,
+    include,
+    exclude: [...exclude],
+    only,
+    count,
+    equalWeight,
+    riskHint,
+    prefersDiscount,
+    prefersDividends,
+    prefersLiquidity,
+    maxWeightPct,
+    cashPct,
+    unavailable,
+    notes,
+  };
 }

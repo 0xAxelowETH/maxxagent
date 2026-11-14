@@ -29,3 +29,6 @@ build-in-public/
 
 # Vercel CLI link (project id)
 .vercel/
+
+# Claude Code personal settings
+.claude/settings.local.json

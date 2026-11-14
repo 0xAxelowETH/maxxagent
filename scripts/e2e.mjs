@@ -468,6 +468,20 @@ await step("Sell 50% opens a sell review; nothing sent before Confirm", async ()
   await click('[role="dialog"] button', /^Cancel$/);
 });
 
+await step("Agent limits: an unavailable stock is named, a weight limit is kept (rest stays in USDC), facts carry sources", async () => {
+  await tab("Agent");
+  await click("button", /^AI with limits$/, 20000);
+  await page.waitForSelector('[data-testid="agent-limits"]', { timeout: 60000 });
+  const limits = await page.$eval('[data-testid="agent-limits"]', (e) => e.innerText);
+  assert(/Netflix/.test(limits) && /Not available/i.test(limits), `Netflix not flagged: ${limits}`);
+  assert(/Max 30% per stock/.test(limits) && /stays in USDC/.test(limits), `limit not kept with a USDC remainder: ${limits}`);
+  const facts = await page.$eval('[data-testid="agent-facts"]', (e) => ({ text: e.innerText, links: [...e.querySelectorAll("a")].map((a) => a.href) }));
+  assert(facts.links.some((h) => h.startsWith("https://basescan.org/address/0x")), "no Chainlink source link in the facts");
+  assert(/Assumptions I made/i.test(facts.text), "assumptions missing");
+  assert(await page.evaluate(() => /Buy basket for \$18\.00/.test(document.body.innerText) || /you invest \$/.test(document.body.innerText)), "the cash remainder is not reflected in the buy amount");
+  return "limits, facts and assumptions shown";
+});
+
 await step("Saved target: set from the Agent tab, drift reported after a reload, plan opens, remove forgets it", async () => {
   const key = "maxxagent_target_" + WALLET.toLowerCase();
   await page.evaluate((k) => localStorage.removeItem(k), key);
@@ -493,6 +507,14 @@ await step("Saved target: set from the Agent tab, drift reported after a reload,
   assert(!(await calls()).some((m) => ["wallet_sendCalls", "eth_sendTransaction"].includes(m)), "something was sent");
   const over = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
   assert(over <= 0, `horizontal overflow of ${over}px with the plan open`);
+  // 3b) A saved per-stock limit that the wallet breaks is reported as such
+  await page.evaluate((k) => localStorage.setItem(k, JSON.stringify({ label: "TEST-CAP", maxWeightPct: 35, weights: [{ symbol: "NVDAc", weightBps: 3400 }, { symbol: "MSFTc", weightBps: 3300 }, { symbol: "GOOGLc", weightBps: 3300 }], savedAt: new Date().toISOString() })), key);
+  await page.reload({ waitUntil: "load" });
+  await page.waitForSelector('[data-testid="target-notice"]', { timeout: 60000 });
+  const capNotice = await page.$eval('[data-testid="target-notice"]', (e) => e.innerText);
+  assert(/limit is broken/.test(capNotice) && /NVDAc/.test(capNotice), `breach not reported: ${capNotice}`);
+  await click('[data-testid="target-notice"] button', /^Review$/);
+  await page.waitForSelector('[data-testid="limit-breach"]', { timeout: 20000 });
   // 4) A corrupted entry is ignored; Remove forgets the target
   await click('[data-testid="target-watch"] button', /^Remove$/);
   await page.waitForFunction(() => !document.querySelector('[data-testid="target-watch"]'), { timeout: 10000 });

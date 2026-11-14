@@ -21,9 +21,18 @@ export interface Drift {
   over: DriftRow[];
   /** most underweight first */
   under: DriftRow[];
+  /** stocks above the saved per-stock limit, largest first (empty without a limit) */
+  breaches: DriftRow[];
 }
 
-export function computeDrift(holdings: { symbol: string; usd: number }[], targets: { symbol: string; weightBps: number }[]): Drift | null {
+/** Share points a stock may sit above its limit before it counts as a breach (price ticks, rounding) */
+const BREACH_TOLERANCE_PCT = 0.5;
+
+export function computeDrift(
+  holdings: { symbol: string; usd: number }[],
+  targets: { symbol: string; weightBps: number }[],
+  maxWeightPct?: number
+): Drift | null {
   const held = holdings.filter((h) => h.usd > 0);
   const totalUsd = held.reduce((a, h) => a + h.usd, 0);
   const totalBps = targets.reduce((a, t) => a + Math.max(0, t.weightBps), 0);
@@ -41,6 +50,7 @@ export function computeDrift(holdings: { symbol: string; usd: number }[], target
     rows,
     over: rows.filter((r) => r.diffPct > 0.05).sort((a, b) => b.diffPct - a.diffPct),
     under: rows.filter((r) => r.diffPct < -0.05).sort((a, b) => a.diffPct - b.diffPct),
+    breaches: maxWeightPct ? rows.filter((r) => r.currentPct > maxWeightPct + BREACH_TOLERANCE_PCT).sort((a, b) => b.currentPct - a.currentPct) : [],
   };
 }
 
@@ -50,6 +60,8 @@ export interface SavedTarget {
   /** the request the basket was built from, if any */
   mandate?: string;
   weights: { symbol: string; weightBps: number }[];
+  /** most any one stock may be, as a share of the stocks (from "max 30% per stock") */
+  maxWeightPct?: number;
   /** ISO date */
   savedAt: string;
 }
@@ -69,11 +81,16 @@ export function parseSavedTarget(raw: unknown, knownSymbols: string[]): SavedTar
     weights.push({ symbol: x.symbol, weightBps: bps });
   }
   if (weights.length === 0 || weights.length > 10 || weights.reduce((a, w) => a + w.weightBps, 0) !== 10000) return null;
+  const cap = Number(r.maxWeightPct);
+  const maxWeightPct = Number.isFinite(cap) && cap > 0 && cap < 100 ? Math.round(cap * 100) / 100 : undefined;
+  // A limit the weights themselves break would flag the wallet forever: drop it
+  if (maxWeightPct && weights.some((w) => w.weightBps / 100 > maxWeightPct + 0.5)) return null;
   const savedAt = typeof r.savedAt === "string" && !Number.isNaN(Date.parse(r.savedAt)) ? r.savedAt : new Date(0).toISOString();
   return {
     label: r.label.replace(/[\u0000-\u001f\u007f-\u009f]/g, "").slice(0, 64) || "My target",
     mandate: typeof r.mandate === "string" ? r.mandate.replace(/[\u0000-\u001f\u007f-\u009f]/g, " ").slice(0, 300) : undefined,
     weights,
+    maxWeightPct,
     savedAt,
   };
 }

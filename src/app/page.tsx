@@ -599,11 +599,12 @@ export default function StockMaxxingDashboard() {
     savedTarget && walletAddress && balancesFor === walletAddress.toLowerCase()
       ? computeDrift(
           Object.entries(walletBalances).map(([symbol, b]) => ({ symbol, usd: b?.usdValue ?? 0 })),
-          savedTarget.weights
+          savedTarget.weights,
+          savedTarget.maxWeightPct
         )
       : null;
   const targetReady = Boolean(savedTarget && walletAddress && balancesFor === walletAddress.toLowerCase());
-  const targetOff = targetDrift !== null && targetDrift.driftPct >= DRIFT_ALERT_PCT;
+  const targetOff = targetDrift !== null && (targetDrift.driftPct >= DRIFT_ALERT_PCT || targetDrift.breaches.length > 0);
 
   // Step 1 (buy): quote one or more B20 stocks and open the review. Nothing is sent yet.
   const buyStocks = useCallback(
@@ -1765,10 +1766,17 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
           <div className="space-y-6">
             {savedTarget && targetOff && targetDrift && (
               <div data-testid="target-notice" className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-xs text-amber-100">
-                <span>
-                  <strong>Your portfolio is {targetDrift.driftPct.toFixed(targetDrift.driftPct < 10 ? 1 : 0)}% off your {savedTarget.label} target.</strong>{" "}
-                  <span className="text-amber-200/80">{driftSummary(targetDrift)}</span>
-                </span>
+                {targetDrift.breaches.length > 0 ? (
+                  <span>
+                    <strong>Your {savedTarget.label} limit is broken:</strong>{" "}
+                    <span className="text-amber-200/80">{driftSummary(targetDrift, savedTarget.maxWeightPct)}.</span>
+                  </span>
+                ) : (
+                  <span>
+                    <strong>Your portfolio is {targetDrift.driftPct.toFixed(targetDrift.driftPct < 10 ? 1 : 0)}% off your {savedTarget.label} target.</strong>{" "}
+                    <span className="text-amber-200/80">{driftSummary(targetDrift)}</span>
+                  </span>
+                )}
                 <button
                   onClick={() => {
                     setActiveTab("traction");
@@ -2503,6 +2511,11 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                         logo: "/logos/stocks/MSFTc.png",
                         prompt: "Big tech, equal weight, 4 stocks, no crypto",
                       },
+                      {
+                        label: "AI with limits",
+                        logo: "/logos/stocks/GOOGLc.png",
+                        prompt: "AI and Netflix, 3 stocks, max 30% per stock",
+                      },
                     ].map((preset) => (
                       <button
                         key={preset.label}
@@ -2619,6 +2632,31 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                           </ul>
                         </div>
                       )}
+                      {agentReport.limits?.length > 0 && (
+                        <div className="mt-3 rounded-xl border border-slate-700 bg-[#070b14] px-3 py-2" data-testid="agent-limits">
+                          <div className="text-[10px] font-bold uppercase tracking-wider text-slate-300">Your limits</div>
+                          <ul className="mt-1 space-y-1 text-[11px]">
+                            {agentReport.limits.map((l) => (
+                              <li key={l.label} className="flex gap-2">
+                                <span
+                                  className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-bold ${
+                                    l.status === "kept"
+                                      ? "bg-emerald-500/15 text-emerald-300"
+                                      : l.status === "adjusted"
+                                      ? "bg-amber-500/15 text-amber-300"
+                                      : "bg-rose-500/15 text-rose-300"
+                                  }`}
+                                >
+                                  {l.status === "kept" ? "Kept" : l.status === "adjusted" ? "Adjusted" : "Not available"}
+                                </span>
+                                <span className="text-slate-300">
+                                  <strong className="text-white">{l.label}.</strong> {l.detail}
+                                </span>
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
                     </div>
                     <div className="flex flex-wrap items-center gap-2">
                       <a
@@ -2702,9 +2740,15 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                       </label>
                     </div>
 
+                    {(agentReport.cashReservePct ?? 0) > 0 && (
+                      <p className="text-[11px] text-slate-300">
+                        {agentReport.cashReservePct}% stays in your wallet as you asked or to keep your limit: you invest $
+                        {((basketUsd * (100 - agentReport.cashReservePct)) / 100).toFixed(2)} of ${basketUsd.toFixed(2)}.
+                      </p>
+                    )}
                     <div className="flex flex-wrap gap-2">
                       {agentReport.allocations.map((a) => {
-                        const legUsd = (basketUsd * a.targetWeightBps) / 10000;
+                        const legUsd = (basketUsd * ((100 - (agentReport.cashReservePct ?? 0)) / 100) * a.targetWeightBps) / 10000;
                         return (
                           <span
                             key={a.symbol}
@@ -2728,7 +2772,7 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                           agentReport.allocations.map((a) => ({
                             symbol: a.symbol,
                             b20Address: a.b20Address,
-                            usd: Math.floor(((basketUsd * a.targetWeightBps) / 10000) * 100) / 100,
+                            usd: Math.floor(((basketUsd * ((100 - (agentReport.cashReservePct ?? 0)) / 100) * a.targetWeightBps) / 10000) * 100) / 100,
                             payWith: basketPayWith,
                           })),
                           agentReport.strategyName
@@ -2738,7 +2782,9 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                       className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-3 text-sm font-bold text-white shadow-lg shadow-emerald-600/25 hover:bg-emerald-500 disabled:opacity-60 transition cursor-pointer"
                     >
                       <Zap className="h-4 w-4" />
-                      {basketPending ? basketStatus || "Working…" : `Buy basket for $${basketUsd.toFixed(2)} ${payLabel}`}
+                      {basketPending
+                        ? basketStatus || "Working…"
+                        : `Buy basket for $${((basketUsd * (100 - (agentReport.cashReservePct ?? 0))) / 100).toFixed(2)} ${payLabel}`}
                     </button>
 
                     {/* Remember this basket: the agent then checks the wallet against it on every visit */}
@@ -2756,7 +2802,13 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                           </span>
                           <button
                             onClick={() =>
-                              saveTarget({ label: agentReport.strategyTicker || agentReport.strategyName, mandate: agentReport.userPrompt, weights, savedAt: new Date().toISOString() })
+                              saveTarget({
+                                label: agentReport.strategyTicker || agentReport.strategyName,
+                                mandate: agentReport.userPrompt,
+                                weights,
+                                maxWeightPct: agentReport.maxWeightOfStocksPct,
+                                savedAt: new Date().toISOString(),
+                              })
                             }
                             disabled={!walletAddress || isCurrent || weights.reduce((a, w) => a + w.weightBps, 0) !== 10000}
                             data-testid="save-target"
@@ -2827,6 +2879,7 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                       pending={basketPending}
                       onSell={(legs, label) => sellStocks(legs, label)}
                       onBuy={(legs, label) => buyStocks(legs, label)}
+                      maxWeightPct={agentReport.maxWeightOfStocksPct}
                     />
                   )}
 
@@ -2895,7 +2948,9 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                                 Score <strong className="text-cyan-400">{alloc.quantScore}</strong>
                               </span>
                               <span className="text-white font-bold">
-                                {(alloc.targetWeightBps / 100).toFixed(1)}% · ${alloc.usdAllocation.toFixed(2)}
+                                {(alloc.targetWeightBps / 100).toFixed(1)}%
+                                {(agentReport.cashReservePct ?? 0) > 0 ? ` of stocks (${(alloc.capitalSharePct ?? 0).toFixed(1)}% of money)` : ""} · $
+                                {alloc.usdAllocation.toFixed(2)}
                               </span>
                               <span className="text-emerald-400">
                                 ≈ {alloc.estimatedSharesUI.toFixed(3)} share-equivalent
@@ -2913,7 +2968,7 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
 
                           {alloc.reasons?.length ? (
                             <p className="text-[11px] text-slate-400">
-                              <span className="text-slate-300">Why: </span>
+                              <span className="text-slate-300">Why (rule-based opinion, not advice): </span>
                               {alloc.reasons.join(" · ")}. DEX ${alloc.dexPrice24_7.toFixed(2)} vs NAV ${alloc.navPrice.toFixed(2)}.
                             </p>
                           ) : (
@@ -2923,6 +2978,40 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                       ))}
                     </div>
                   </div>
+
+                  {/* Facts (checkable, with sources) and assumptions, kept apart from the opinions above */}
+                  {(agentReport.facts?.length ?? 0) > 0 && (
+                    <div className="grid grid-cols-1 gap-3 md:grid-cols-2" data-testid="agent-facts">
+                      <div className="rounded-xl border border-slate-800 bg-[#070b14] p-3">
+                        <h3 className="text-[10px] font-bold uppercase tracking-wider text-slate-300">Facts, with sources</h3>
+                        <ul className="mt-2 space-y-2 text-[11px] text-slate-300">
+                          {agentReport.facts.map((f) => (
+                            <li key={f.symbol}>
+                              <span className="font-mono font-bold text-white">{f.symbol}</span> {f.text}
+                              <span className="ml-1 inline-flex flex-wrap gap-x-2">
+                                {f.links.map((l) => (
+                                  <a key={l.url} href={l.url} target="_blank" rel="noopener noreferrer" className="text-cyan-300 underline hover:text-white">
+                                    {l.label}
+                                  </a>
+                                ))}
+                              </span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                      <div className="rounded-xl border border-slate-800 bg-[#070b14] p-3">
+                        <h3 className="text-[10px] font-bold uppercase tracking-wider text-slate-300">Assumptions I made</h3>
+                        <ul className="mt-2 list-disc space-y-1 pl-4 text-[11px] text-slate-300">
+                          {agentReport.assumptions.map((a) => (
+                            <li key={a}>{a}</li>
+                          ))}
+                        </ul>
+                        <p className="mt-2 text-[10px] text-slate-500">
+                          The reasons on each pick above are rule-based opinions, not facts or advice.
+                        </p>
+                      </div>
+                    </div>
+                  )}
 
                   {/* Attributed calldata preview: developer detail, team studio only (the registry is not deployed) */}
                   {studioMode && (

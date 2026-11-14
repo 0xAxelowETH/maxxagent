@@ -3,6 +3,8 @@ import { appendBuilderCodeToCalldata, toErc8021DataSuffix } from "./builderCode"
 import { INDEX_REGISTRY_ABI } from "./contracts/StockMaxxIndexRegistryABI";
 import { encodeFunctionData, keccak256, toHex } from "viem";
 import { THEMES, parseMandate } from "./mandate";
+import { capWeightsBps } from "./weights";
+import { usMarketStatus } from "./marketHours";
 
 export interface AgentAllocationRecommendation {
   symbol: string;
@@ -22,6 +24,8 @@ export interface AgentAllocationRecommendation {
   targetWeightBps: number;
   deltaBps: number;
   usdAllocation: number;
+  /** share of the user's money (cash reserve included) that goes into this stock */
+  capitalSharePct: number;
   estimatedTokens: number;
   estimatedSharesUI: number;
   action: "ACCUMULATE" | "TRIM" | "HOLD";
@@ -44,6 +48,18 @@ export interface AgentAnalysisReport {
   executiveSummary: string;
   /** how the agent read the user's request (themes, exclusions, count, weighting, risk) */
   interpretation: string[];
+  /** share of the money that stays in USDC (asked for, or left over to keep a weight limit) */
+  cashReservePct: number;
+  /** the user's per-stock limit as a share of the money, if one was given */
+  maxWeightPct?: number;
+  /** the same limit as a share of the stocks part (what a saved target checks the wallet against) */
+  maxWeightOfStocksPct?: number;
+  /** each limit in the request and what the agent did with it */
+  limits: { label: string; status: "kept" | "adjusted" | "not possible"; detail: string }[];
+  /** checkable numbers behind the picks, each with where to verify it */
+  facts: { symbol: string; text: string; links: { label: string; url: string }[] }[];
+  /** what the agent assumed because the request didn't say */
+  assumptions: string[];
   marketRegimeNote: string;
   b20MultiplierInsight: string;
   allocations: AgentAllocationRecommendation[];
@@ -211,8 +227,15 @@ export function runAutonomousStockAgent(params: {
     const lo = scored[scored.length - 1].rawScore;
     for (const x of scored) x.quantScore = Math.round(50 + (49 * (x.rawScore - lo)) / (hi - lo || 1));
   } else if (scored.length === 1) scored[0].quantScore = 99;
-  // Named stocks always make it in; the rest is filled by score
-  const wanted = Math.min(pool.length, Math.max(mandate.count ?? 5, mandate.count ? 0 : mandate.include.length));
+  // Limits: cash reserve and per-stock maximum, both as a share of the money
+  const askedCashPct = mandate.cashPct ?? 0;
+  const capPct = mandate.maxWeightPct;
+  let investPct = 100 - askedCashPct;
+  // Named stocks always make it in; the rest is filled by score. A weight limit needs enough stocks to stay
+  // under it, so without an explicit count the basket grows to fit the limit
+  let wantedBase = Math.max(mandate.count ?? 5, mandate.count ? 0 : mandate.include.length);
+  if (capPct && !mandate.count) wantedBase = Math.max(wantedBase, Math.ceil(investPct / capPct - 1e-9));
+  const wanted = Math.min(pool.length, wantedBase);
   const named = scored.filter((x) => mandate.include.includes(x.stock.symbol));
   const others = scored.filter((x) => !mandate.include.includes(x.stock.symbol));
   const selected = [...named, ...others].slice(0, Math.max(1, wanted)).sort((a, b) => b.rawScore - a.rawScore);
@@ -231,12 +254,56 @@ export function runAutonomousStockAgent(params: {
     weights = scoresToWeightsBps(selected.map((x) => x.rawScore - floor + 45));
   }
 
+  // The weight limit is never broken. When the stocks can't hold all the money under it, the rest stays
+  // in USDC instead (e.g. 3 stocks x max 30% = 90% invested, 10% kept)
+  const limits: AgentAnalysisReport["limits"] = [];
+  let maxWeightOfStocksPct: number | undefined;
+  if (capPct) {
+    const n = selected.length;
+    if (n * capPct < investPct - 1e-9) {
+      const kept = 100 - n * capPct;
+      limits.push({
+        label: `Max ${capPct}% per stock`,
+        status: "kept",
+        detail: `${n} stock${n > 1 ? "s" : ""} at ${capPct}% each can hold only ${n * capPct}% of your money, so I kept the limit and ${(kept - askedCashPct).toFixed(0)}% more stays in USDC.`,
+      });
+      investPct = n * capPct;
+    }
+    const capOfStocks = (capPct / investPct) * 10000;
+    const capBps = Math.max(capOfStocks, Math.ceil(10000 / n));
+    weights = capWeightsBps(weights, capBps) ?? weights;
+    maxWeightOfStocksPct = Math.round(capOfStocks) / 100;
+    if (!limits.length) {
+      const top = Math.max(...weights) * (investPct / 10000);
+      limits.push({ label: `Max ${capPct}% per stock`, status: "kept", detail: `The largest position is ${top.toFixed(1)}% of your money.` });
+    }
+  }
+  if (askedCashPct) limits.push({ label: `Keep ${askedCashPct}% in USDC`, status: "kept", detail: `${askedCashPct}% of the amount is not invested.` });
+  for (const sym of mandate.exclude) {
+    if (stocks.some((st) => st.symbol === sym) && pool.every((p) => p.symbol !== sym))
+      limits.push({ label: `No ${sym}`, status: "kept", detail: "Left out of the basket." });
+  }
+  if (mandate.count && selected.length < mandate.count)
+    limits.push({ label: `${mandate.count} stocks`, status: "adjusted", detail: `Only ${selected.length} match the rest of your request.` });
+  for (const u of mandate.unavailable)
+    limits.push({
+      label: u.name,
+      status: "not possible",
+      detail: u.sector
+        ? "None of the 10 Coinbase tokenized stocks on Base is in this group."
+        : `Not one of the 10 Coinbase tokenized stocks on Base${u.closest ? `. Closest available: ${u.closest}.` : "."}`,
+    });
+  if (mandate.unavailable.length && !mandate.include.length && !mandate.themes.length)
+    interpretation.push("Nothing you asked for is available as a tokenized stock yet, so this basket is built from all 10 by score.");
+  const cashReservePct = Math.round((100 - investPct) * 100) / 100;
+
   const allocations: AgentAllocationRecommendation[] = selected.map((item, idx) => {
     const s = item.stock;
     const targetWeightBps = weights[idx];
     const currentWeightBps = currentWeights[s.symbol] ?? 0;
     const deltaBps = targetWeightBps - currentWeightBps;
-    const usdAllocation = (capitalUsd * targetWeightBps) / 10000;
+    const usdAllocation = (capitalUsd * (investPct / 100) * targetWeightBps) / 10000;
+    const capitalSharePct = (targetWeightBps / 100) * (investPct / 100);
     // Chainlink NAV is the per-token (multiplier-adjusted) value
     const estimatedTokens = s.navPrice > 0 ? usdAllocation / s.navPrice : 0;
     const estimatedSharesUI = estimatedTokens * s.uiMultiplier;
@@ -266,6 +333,7 @@ export function runAutonomousStockAgent(params: {
       targetWeightBps,
       deltaBps,
       usdAllocation,
+      capitalSharePct,
       estimatedTokens,
       estimatedSharesUI,
       action,
@@ -291,6 +359,30 @@ export function runAutonomousStockAgent(params: {
   };
   const [strategyName, strategyTicker] =
     NAMES[mandate.themes[0]] ?? (riskProfile === "Conservative" ? ["MAXX Fortress Basket", "MAXX-SAFE"] : ["MAXX Agentic Stock Basket", "MAXX-MIX"]);
+
+  // Facts: the live numbers behind each pick, each with a place to check it
+  const fmt = (n: number) => `$${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const age = (m: number) => (m < 0 ? "" : m < 60 ? `, updated ${Math.round(m)} min ago` : m < 2880 ? `, updated ${Math.round(m / 60)} h ago` : `, updated ${Math.round(m / 1440)} days ago`);
+  const facts: AgentAnalysisReport["facts"] = selected.map(({ stock: s }) => {
+    const parts = [`NAV ${fmt(s.navPrice)} (Chainlink${age(s.oracleAgeMinutes ?? -1)})`];
+    const links = [{ label: "Chainlink feed", url: `https://basescan.org/address/${s.chainlinkFeed}` }];
+    if (s.dexPairAddress && /^0x[0-9a-fA-F]{40}$/.test(s.dexPairAddress)) {
+      parts.push(`DEX ${fmt(s.dexPrice24_7)}, ${s.weekendGapPct >= 0 ? "+" : ""}${s.weekendGapPct.toFixed(2)}% vs NAV`);
+      if (s.dexLiquidityUsd) parts.push(`pool liquidity ${s.dexLiquidityUsd >= 1e6 ? `$${(s.dexLiquidityUsd / 1e6).toFixed(1)}M` : `$${Math.round(s.dexLiquidityUsd / 1e3)}K`}`);
+      links.push({ label: "DEX pool", url: `https://dexscreener.com/base/${s.dexPairAddress}` });
+    } else parts.push("no live DEX quote, NAV used");
+    if (s.uiMultiplier > 1.0001) parts.push(`multiplier ${s.uiMultiplier.toFixed(4)}x`);
+    links.push({ label: "Token", url: `https://basescan.org/token/${s.b20Address}` });
+    return { symbol: s.symbol, text: parts.join(" · "), links };
+  });
+
+  // Assumptions: what the request didn't say, so the agent chose
+  const assumptions: string[] = [];
+  if (!mandate.count) assumptions.push(`No number of stocks given: I picked ${selected.length}${capPct ? " (enough to stay under your limit)" : ""}.`);
+  assumptions.push(mandate.equalWeight ? "Equal weights, as you asked." : "No weights given: they follow each stock's rule score.");
+  assumptions.push(`Risk profile: ${riskProfile.toLowerCase()}${riskProfile === params.riskProfile ? " (the selected setting)" : " (from your words)"}. Beta values are fixed estimates, not live.`);
+  if (usMarketStatus().state !== "open") assumptions.push("The US market is closed: NAV is the last close, and DEX prices can drift from it until the next open.");
+  assumptions.push("Prices are from now. The exact amount is quoted again in the review, before you sign.");
 
   const executiveSummary = `Proposed ${riskProfile.toLowerCase()} basket from live Chainlink NAV, DEX prices, liquidity and B20 multipliers across all 10 Coinbase tokenized stocks: ${topTickers}. Not financial advice — review before buying.`;
 
@@ -326,6 +418,12 @@ export function runAutonomousStockAgent(params: {
     researchHash,
     executiveSummary,
     interpretation,
+    cashReservePct,
+    maxWeightPct: capPct,
+    maxWeightOfStocksPct,
+    limits,
+    facts,
+    assumptions,
     marketRegimeNote:
       "Chainlink total-return feeds update 24/5 (frozen on weekends/holidays); DEX pools trade 24/7. Stale feeds are penalised.",
     b20MultiplierInsight:

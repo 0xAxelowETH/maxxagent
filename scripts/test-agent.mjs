@@ -12,6 +12,12 @@ const js = ts.transpileModule(readFileSync("src/lib/mandate.ts", "utf8"), {
 const file = join(mkdtempSync(join(tmpdir(), "maxx-mandate-")), "mandate.mjs");
 writeFileSync(file, js);
 const { parseMandate } = await import(pathToFileURL(file).href);
+const wjs = ts.transpileModule(readFileSync("src/lib/weights.ts", "utf8"), {
+  compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
+}).outputText;
+const wfile = join(mkdtempSync(join(tmpdir(), "maxx-weights-")), "weights.mjs");
+writeFileSync(wfile, wjs);
+const { capWeightsBps, roundWeightsBps } = await import(pathToFileURL(wfile).href);
 
 let fail = 0;
 const ok = (c, m) => {
@@ -49,6 +55,40 @@ ok(same(m.exclude, ["TSLAc"]) && m.themes.includes("ai"), `"no tesla, ai stocks"
 
 m = parseMandate("big tech except nvda, meta and amzn");
 ok(same(m.exclude, ["NVDAc", "METAc", "AMZNc"]), `"except nvda, meta and amzn" -> ${JSON.stringify(m.exclude)}`);
+
+// Limits, cash reserve and things that are not available
+m = parseMandate("AI and Netflix, 3 stocks, max 30% per stock");
+ok(m.maxWeightPct === 30 && m.count === 3 && m.unavailable.length === 1 && m.unavailable[0].name === "Netflix" && !m.unavailable[0].closest, `cap + unavailable -> ${JSON.stringify({ cap: m.maxWeightPct, n: m.count, u: m.unavailable })}`);
+
+m = parseMandate("big tech, max 20% per stock, keep 10% in USDC");
+ok(m.maxWeightPct === 20 && m.cashPct === 10, `cap and cash read separately -> ${JSON.stringify({ cap: m.maxWeightPct, cash: m.cashPct })}`);
+
+m = parseMandate("up to 15% in cash, cap each stock at 25%");
+ok(m.cashPct === 15 && m.maxWeightPct === 25, `"up to 15% in cash" is a reserve, not a cap -> ${JSON.stringify({ cap: m.maxWeightPct, cash: m.cashPct })}`);
+
+m = parseMandate("saham AI, maksimal 30% per saham, sisakan 20% di usdc");
+ok(m.maxWeightPct === 30 && m.cashPct === 20, `Indonesian limits -> ${JSON.stringify({ cap: m.maxWeightPct, cash: m.cashPct })}`);
+
+m = parseMandate("AMD and Intel only");
+ok(m.only && m.themes.includes("chips") && m.unavailable.every((u) => u.closest === "chips"), `AMD/Intel -> closest available chips -> ${JSON.stringify({ t: m.themes, u: m.unavailable })}`);
+
+m = parseMandate("AI, no tesla, no netflix");
+ok(m.unavailable.length === 0 && m.exclude.includes("TSLAc"), `"no netflix" is not a request -> ${JSON.stringify(m.unavailable)}`);
+
+m = parseMandate("healthcare and banks");
+ok(m.unavailable.length === 2 && m.unavailable.every((u) => u.sector) && m.themes.length === 0, `sectors with no tokenized stock -> ${JSON.stringify(m.unavailable)}`);
+
+m = parseMandate("prefer the Chainlink oracle with fresh data, top 3 stocks below nav");
+ok(m.unavailable.length === 0 && m.maxWeightPct === undefined && m.cashPct === undefined, `no false positives from "oracle" or "3 stocks" -> ${JSON.stringify({ u: m.unavailable, cap: m.maxWeightPct, cash: m.cashPct })}`);
+
+// Weight capping
+let w = capWeightsBps([5000, 3000, 2000], 4000);
+ok(w && w.reduce((a, b) => a + b, 0) === 10000 && Math.max(...w) <= 4000 && w[1] > w[2], `cap 40%: [50,30,20] -> ${JSON.stringify(w)}`);
+w = capWeightsBps([3400, 3300, 3300], 3334);
+ok(w && w.reduce((a, b) => a + b, 0) === 10000 && Math.max(...w) <= 3334, `tight cap (3 x 33.34%) still sums to 100% -> ${JSON.stringify(w)}`);
+ok(capWeightsBps([5000, 5000], 4000) === null, "an impossible cap (2 x 40%) is refused, never broken");
+w = roundWeightsBps([1, 1, 1]);
+ok(w && w.reduce((a, b) => a + b, 0) === 10000, `rounding thirds sums to 10000 -> ${JSON.stringify(w)}`);
 
 console.log(fail ?`\n❌ ${fail} check(s) failed` : "\n✅ All mandate checks passed");
 process.exitCode = fail ? 1 : 0;
