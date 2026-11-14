@@ -98,6 +98,30 @@ ok(m.prefersProfitable && m.prefersGrowth, "Indonesian: untung + tumbuh");
 m = parseMandate("AI and cloud, 3 stocks");
 ok(!m.prefersProfitable && !m.prefersGrowth, "no fundamentals filter unless asked");
 
+// Wider vocabulary (found by running 40 realistic requests)
+m = parseMandate("Tesla, Amazon and Strategy");
+ok(same(m.include, ["TSLAc", "AMZNc", "MSTRc"]), `Strategy in a list of companies -> ${JSON.stringify(m.include)}`);
+m = parseMandate("Elon Musk companies");
+ok(m.themes.includes("musk"), "Elon Musk companies -> musk theme");
+m = parseMandate("low volatility, keep 20% cash");
+ok(m.riskHint === "Conservative" && m.cashPct === 20, "low volatility -> conservative");
+m = parseMandate("saham teknologi besar, 4 saham, sama rata");
+ok(m.themes.includes("bigtech") && m.count === 4 && m.equalWeight, "teknologi besar -> big tech");
+m = parseMandate("Apple, Google dan Nvidia, bobot sama");
+ok(m.equalWeight && m.include.length === 3, "bobot sama -> equal weight");
+
+// Weights the user sets
+m = parseMandate("60% Apple 40% Microsoft");
+ok(m.weightsPct.AAPLc === 60 && m.weightsPct.MSFTc === 40, `60% Apple 40% Microsoft -> ${JSON.stringify(m.weightsPct)}`);
+m = parseMandate("put half in Nvidia and the rest spread out");
+ok(m.weightsPct.NVDAc === 50, "half in Nvidia -> 50%");
+m = parseMandate("30% di Tesla dan 20% di Amazon");
+ok(m.weightsPct.TSLAc === 30 && m.weightsPct.AMZNc === 20, "Indonesian weights");
+m = parseMandate("AI and Netflix, 3 stocks, max 30% per stock");
+ok(!Object.keys(m.weightsPct).length && m.maxWeightPct === 30, "a limit is not read as a weight");
+m = parseMandate("no tesla 30% cash");
+ok(!Object.keys(m.weightsPct).length && m.cashPct === 30, "cash is not read as a weight");
+
 // Weight capping
 let w = capWeightsBps([5000, 3000, 2000], 4000);
 ok(w && w.reduce((a, b) => a + b, 0) === 10000 && Math.max(...w) <= 4000 && w[1] > w[2], `cap 40%: [50,30,20] -> ${JSON.stringify(w)}`);

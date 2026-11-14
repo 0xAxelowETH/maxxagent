@@ -105,6 +105,9 @@ async function load(cik: number): Promise<SecFundamentals | null | undefined> {
 const cache = new Map<string, { at: number; value: SecFundamentals | null }>();
 let inflight: Promise<void> | null = null;
 
+/** The refresh still running, if any (the route keeps it alive after responding) */
+export const secFundamentalsPending = () => inflight ?? Promise.resolve();
+
 async function refresh(symbols: string[]) {
   // A few companies at a time: SEC allows at most 10 requests per second
   for (let i = 0; i < symbols.length; i += 3) {

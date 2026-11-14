@@ -3,10 +3,11 @@ import { appendBuilderCodeToCalldata, toErc8021DataSuffix } from "./builderCode"
 import { INDEX_REGISTRY_ABI } from "./contracts/StockMaxxIndexRegistryABI";
 import { encodeFunctionData, keccak256, toHex } from "viem";
 import { THEMES, parseMandate } from "./mandate";
-import { capWeightsBps } from "./weights";
+import { capWeightsBps, roundWeightsBps } from "./weights";
 import { usMarketStatus } from "./marketHours";
 import { SEC_CIK, type SecFundamentals } from "./secFundamentals";
 import { UNSUPPORTED_COINBASE_STOCKS, type UnsupportedLive } from "./unsupportedStocks";
+import type { RiskStats } from "./riskStats";
 
 export interface AgentAllocationRecommendation {
   symbol: string;
@@ -141,8 +142,10 @@ export function runAutonomousStockAgent(params: {
   fundamentals?: Record<string, SecFundamentals | null>;
   /** live Base liquidity of unsupported Coinbase stocks the request named (optional, server-fetched) */
   unsupportedLive?: Record<string, UnsupportedLive>;
+  /** live volatility and drawdown from each Chainlink feed (optional, server-computed) */
+  risk?: Record<string, RiskStats | null>;
 }): AgentAnalysisReport {
-  const { stocks, userPrompt, capitalUsd, builderCode, currentWeights = {}, fundamentals = {}, unsupportedLive = {} } = params;
+  const { stocks, userPrompt, capitalUsd, builderCode, currentWeights = {}, fundamentals = {}, unsupportedLive = {}, risk = {} } = params;
   const mandate = parseMandate(userPrompt);
   // Words in the request ("safe", "aggressive") refine the selected profile only when it was left on Balanced
   const riskProfile = params.riskProfile === "Balanced" && mandate.riskHint ? mandate.riskHint : params.riskProfile;
@@ -193,6 +196,16 @@ export function runAutonomousStockAgent(params: {
           (dropped.length ? `Left out ${dropped.join(", ")}, from their SEC filings.` : "Every candidate reported a profit in its last 10-K.") +
           (unknown ? ` ${unknown} stock${unknown > 1 ? "s" : ""} couldn't be checked right now (SEC data still loading), so ${unknown > 1 ? "they stay" : "it stays"} in.` : ""),
       });
+    }
+  }
+  // A conservative basket leaves out the wildest stocks (over 60% a year on live Chainlink history), unless named
+  if (riskProfile === "Conservative") {
+    const wild = pool.filter((st) => !mandate.include.includes(st.symbol) && (risk[st.symbol]?.volPct ?? 0) > 60);
+    if (wild.length && pool.length - wild.length >= 2) {
+      pool = pool.filter((st) => !wild.includes(st));
+      interpretation.push(
+        `For a conservative basket I left out ${wild.map((st) => `${st.symbol} (${risk[st.symbol]!.volPct.toFixed(0)}% a year)`).join(", ")}: volatility above 60% a year on recent Chainlink NAV.`
+      );
     }
   }
   if (pool.length === 0) {
@@ -254,14 +267,19 @@ export function runAutonomousStockAgent(params: {
       reasons.push(`thin liquidity ($${(liq / 1e3).toFixed(0)}K): higher swap cost`);
     }
 
-    // 3. Risk profile vs beta
+    // 3. Risk profile vs live volatility (Chainlink NAV, ~2 months); the fixed beta estimate only as a fallback.
+    // Volatility / 30 puts both on the same scale (25%/yr ~ 0.8, 50%/yr ~ 1.7, 80%/yr ~ 2.7).
+    const rs = risk[stock.symbol];
+    const level = rs ? rs.volPct / 30 : stock.beta;
+    const riskText = rs ? `${rs.volPct.toFixed(0)}% a year over the last ${rs.days} trading days, Chainlink NAV` : `estimated beta ${stock.beta.toFixed(2)}`;
     if (riskProfile === "Conservative") {
-      score += (2.2 - stock.beta) * 14;
-      if (stock.beta <= 1.3) reasons.push(`lower volatility (beta ${stock.beta.toFixed(2)}) for a conservative profile`);
+      // Strong enough that a "safe" request really favours the calmest stocks (AAPLc/MSFTc over SPCXc/SNDKc)
+      score += (2.2 - level) * 24;
+      if (level <= 1.3) reasons.push(`lower volatility (${riskText}) for a conservative profile`);
     } else if (riskProfile === "Aggressive") {
-      score += (stock.beta - 1.0) * 16;
-      if (stock.beta >= 1.6) reasons.push(`higher volatility (beta ${stock.beta.toFixed(2)}) for an aggressive profile`);
-    } else score += 10 - Math.abs(1.45 - stock.beta) * 8;
+      score += (level - 1.0) * 16;
+      if (level >= 1.6) reasons.push(`higher volatility (${riskText}) for an aggressive profile`);
+    } else score += 10 - Math.abs(1.45 - level) * 8;
 
     // 4. Stale oracle penalty
     if (stock.isOracleStale) {
@@ -293,13 +311,50 @@ export function runAutonomousStockAgent(params: {
   const wanted = Math.min(pool.length, wantedBase);
   const named = scored.filter((x) => mandate.include.includes(x.stock.symbol));
   const others = scored.filter((x) => !mandate.include.includes(x.stock.symbol));
-  const selected = [...named, ...others].slice(0, Math.max(1, wanted)).sort((a, b) => b.rawScore - a.rawScore);
+  let selected = [...named, ...others].slice(0, Math.max(1, wanted)).sort((a, b) => b.rawScore - a.rawScore);
+  // Weights the user set ("60% Apple 40% Microsoft") are shares of the money; convert to shares of the
+  // stocks part. When they already fill it, the basket is just those stocks.
+  const askedCashForFixed = mandate.cashPct ?? 0;
+  const fixedSyms = Object.keys(mandate.weightsPct).filter((s) => selected.some((x) => x.stock.symbol === s));
+  const fixedOfStocks = (s: string) => (mandate.weightsPct[s] / (100 - askedCashForFixed)) * 100;
+  const fixedSum = fixedSyms.reduce((a, s) => a + fixedOfStocks(s), 0);
+  if (fixedSyms.length && fixedSum >= 99.5) selected = selected.filter((x) => fixedSyms.includes(x.stock.symbol));
   const added = selected.filter((x) => !mandate.include.includes(x.stock.symbol) && !themeOf(x.stock.symbol).length).length;
   if (added > 0 && (mandate.include.length || mandate.themes.length) && !mandate.only)
     interpretation.push(`Added ${added} more by score to diversify (say "only" to keep just what you named).`);
   if (mandate.count && mandate.count > pool.length) interpretation.push(`Only ${pool.length} stock${pool.length > 1 ? "s" : ""} match, so the basket has ${pool.length}.`);
   let weights: number[];
-  if (mandate.equalWeight) {
+  const fixedLimits: AgentAnalysisReport["limits"] = [];
+  if (fixedSyms.length) {
+    const rest = selected.filter((x) => !fixedSyms.includes(x.stock.symbol));
+    const setText = fixedSyms.map((s) => `${s} ${mandate.weightsPct[s]}%`).join(", ");
+    if (!rest.length) {
+      weights = roundWeightsBps(selected.map((x) => fixedOfStocks(x.stock.symbol))) ?? selected.map(() => Math.floor(10000 / selected.length));
+      fixedLimits.push(
+        Math.abs(fixedSum - 100) > 0.5
+          ? { label: "Your weights", status: "adjusted", detail: `${setText} add up to ${fixedSum.toFixed(0)}% of the invested money, so they were scaled to 100% in the same proportions.` }
+          : { label: "Your weights", status: "kept", detail: `${setText}, as you set them.` }
+      );
+    } else {
+      const floor = Math.min(...rest.map((x) => x.rawScore)) - 20;
+      const restShares = scoresToWeightsBps(rest.map((x) => x.rawScore - floor + 45));
+      const restPct = 100 - fixedSum;
+      const raw = selected.map((x) => (fixedSyms.includes(x.stock.symbol) ? fixedOfStocks(x.stock.symbol) : (restShares[rest.indexOf(x)] / 10000) * restPct));
+      weights = roundWeightsBps(raw) ?? scoresToWeightsBps(raw);
+      fixedLimits.push({
+        label: "Your weights",
+        status: fixedSyms.some((s) => mandate.maxWeightPct && mandate.weightsPct[s] > mandate.maxWeightPct) ? "adjusted" : "kept",
+        detail: `${setText}, as you set them. The other ${(restPct * (1 - askedCashForFixed / 100)).toFixed(0)}% of your money is spread by score across ${rest.map((x) => x.stock.symbol).join(", ")}.`,
+      });
+    }
+    const over = fixedSyms.filter((s) => mandate.maxWeightPct && mandate.weightsPct[s] > mandate.maxWeightPct);
+    if (over.length)
+      fixedLimits.push({
+        label: "Your weights vs your limit",
+        status: "adjusted",
+        detail: `${over.map((s) => `${s} ${mandate.weightsPct[s]}%`).join(", ")} ${over.length > 1 ? "are" : "is"} above your ${mandate.maxWeightPct}% limit, so the limit wins.`,
+      });
+  } else if (mandate.equalWeight) {
     const base = Math.floor(10000 / selected.length / 50) * 50;
     weights = selected.map(() => base);
     weights[0] += 10000 - base * selected.length;
@@ -340,7 +395,7 @@ export function runAutonomousStockAgent(params: {
   }
   if (mandate.count && selected.length < mandate.count)
     limits.push({ label: `${mandate.count} stocks`, status: "adjusted", detail: `Only ${selected.length} match the rest of your request.` });
-  limits.push(...profitLimit);
+  limits.push(...fixedLimits, ...profitLimit);
   // Not supported: say plainly whether Coinbase issues it on Base, and why MAXXAGENT leaves it out
   const closest = (u: { closest?: string }) => (u.closest ? ` Closest supported: ${u.closest}.` : "");
   for (const u of mandate.unavailable) {
@@ -444,6 +499,8 @@ export function runAutonomousStockAgent(params: {
       links.push({ label: "DEX pool", url: `https://dexscreener.com/base/${s.dexPairAddress}` });
     } else parts.push("no live DEX quote, NAV used");
     if (s.uiMultiplier > 1.0001) parts.push(`multiplier ${s.uiMultiplier.toFixed(4)}x`);
+    const r = risk[s.symbol];
+    if (r) parts.push(`volatility ${r.volPct.toFixed(0)}% a year, largest fall ${r.maxDrawdownPct.toFixed(0)}% (${r.days} trading days of Chainlink NAV since ${r.from})`);
     links.push({ label: "Token", url: `https://basescan.org/token/${s.b20Address}` });
     const f = fundamentals[s.symbol];
     if (f) {
@@ -466,7 +523,15 @@ export function runAutonomousStockAgent(params: {
   const assumptions: string[] = [];
   if (!mandate.count) assumptions.push(`No number of stocks given: I picked ${selected.length}${capPct ? " (enough to stay under your limit)" : ""}.`);
   assumptions.push(mandate.equalWeight ? "Equal weights, as you asked." : "No weights given: they follow each stock's rule score.");
-  assumptions.push(`Risk profile: ${riskProfile.toLowerCase()}${riskProfile === params.riskProfile ? " (the selected setting)" : " (from your words)"}. Beta values are fixed estimates, not live.`);
+  const liveRisk = selected.filter(({ stock: s }) => risk[s.symbol]).length;
+  assumptions.push(
+    `Risk profile: ${riskProfile.toLowerCase()}${riskProfile === params.riskProfile ? " (the selected setting)" : " (from your words)"}. ` +
+      (liveRisk === selected.length
+        ? "Risk is measured from each stock's last ~2 months of Chainlink NAV. Past volatility doesn't predict the future."
+        : liveRisk > 0
+        ? `Risk is measured from Chainlink NAV history for ${liveRisk} of ${selected.length} picks; the rest use a fixed beta estimate while history loads.`
+        : "Live risk history is still loading, so fixed beta estimates were used this time.")
+  );
   if (usMarketStatus().state !== "open") assumptions.push("The US market is closed: NAV is the last close, and DEX prices can drift from it until the next open.");
   assumptions.push("Prices are from now. The exact amount is quoted again in the review, before you sign.");
 

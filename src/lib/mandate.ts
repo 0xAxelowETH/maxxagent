@@ -29,6 +29,8 @@ export interface ParsedMandate {
   maxWeightPct?: number;
   /** share of the money to keep in USDC, in percent ("keep 20% in cash") */
   cashPct?: number;
+  /** weights the user set for named stocks, in percent ("60% Apple 40% Microsoft") */
+  weightsPct: Record<string, number>;
   /**
    * companies, funds or sectors asked for that are not among the 10 stocks MAXXAGENT supports.
    * `token`: the Coinbase tokenized stock that exists on Base for it (supported or not).
@@ -56,15 +58,22 @@ export const THEMES: { id: string; label: string; words: string[]; symbols: stri
   { id: "ai", label: "AI", words: ["ai", "a.i.", "artificial intelligence", "gpu", "gpus", "compute", "data center", "datacenter", "llm", "machine learning"], symbols: ["NVDAc", "MSFTc", "GOOGLc", "METAc", "SNDKc"] },
   { id: "chips", label: "chips", words: ["chip", "chips", "semiconductor", "semiconductors", "semis", "semi"], symbols: ["NVDAc", "SNDKc"] },
   { id: "cloud", label: "cloud & software", words: ["cloud", "software", "saas", "enterprise"], symbols: ["MSFTc", "GOOGLc", "AMZNc"] },
-  { id: "bigtech", label: "big tech", words: ["big tech", "bigtech", "mega cap", "megacap", "mega-cap", "faang", "mag7", "mag 7", "magnificent", "blue chip", "bluechip", "blue-chip"], symbols: ["AAPLc", "MSFTc", "METAc", "GOOGLc", "AMZNc", "NVDAc"] },
+  { id: "bigtech", label: "big tech", words: ["big tech", "bigtech", "mega cap", "megacap", "mega-cap", "faang", "mag7", "mag 7", "magnificent", "blue chip", "bluechip", "blue-chip", "tech giant", "tech giants", "big technology", "teknologi besar", "raksasa teknologi"], symbols: ["AAPLc", "MSFTc", "METAc", "GOOGLc", "AMZNc", "NVDAc"] },
   { id: "consumer", label: "consumer", words: ["consumer", "retail", "ecommerce", "e-commerce", "shopping"], symbols: ["AAPLc", "AMZNc", "TSLAc"] },
   { id: "social", label: "social & ads", words: ["social", "social media", "ads", "advertising"], symbols: ["METAc", "GOOGLc"] },
   { id: "ev", label: "EVs & robotics", words: ["ev", "evs", "electric car", "electric cars", "electric vehicle", "electric vehicles", "robotaxi", "robotics", "robots", "mobil listrik"], symbols: ["TSLAc"] },
   { id: "space", label: "space", words: ["space", "rocket", "rockets", "satellite", "satellites", "starlink", "aerospace", "orbital", "luar angkasa"], symbols: ["SPCXc"] },
   { id: "crypto", label: "crypto", words: ["crypto", "bitcoin", "btc", "kripto"], symbols: ["MSTRc"] },
-  { id: "storage", label: "storage & memory", words: ["storage", "memory", "flash", "nand"], symbols: ["SNDKc"] },
+  { id: "storage", label: "storage & memory", words: ["storage", "memory", "flash", "nand", "memori", "penyimpanan"], symbols: ["SNDKc"] },
   { id: "frontier", label: "frontier tech", words: ["frontier", "moonshot", "moonshots", "disruptive", "futuristic"], symbols: ["TSLAc", "SPCXc", "MSTRc"] },
+  { id: "musk", label: "Elon Musk companies", words: ["elon", "musk", "elon musk"], symbols: ["TSLAc", "SPCXc"] },
 ];
+
+/**
+ * "Strategy" is also an ordinary word ("a growth strategy"), so it means Strategy Inc (MSTRc) only in a list
+ * of companies ("Tesla, Amazon and Strategy") or next to stock words ("Strategy shares")
+ */
+const STRATEGY_RE = /(?:,|\band|\bdan|&|\bplus|\bor|\batau)\s+strategy\b(?!\s+(?:for|to|that|is|of|untuk|yang))|\bstrategy\s+(?:stock|stocks|shares|saham|token)\b/;
 
 /**
  * Things people ask for that are not among the 10 stocks MAXXAGENT supports. `token` is the Coinbase
@@ -121,8 +130,42 @@ const has = (text: string, words: string[]) => words.some((w) => wordRe(w).test(
 /** Symbols and themes mentioned in a piece of text */
 function mentions(text: string) {
   const symbols = Object.entries(STOCK_ALIASES).filter(([, a]) => has(text, a)).map(([s]) => s);
+  if (!symbols.includes("MSTRc") && STRATEGY_RE.test(text)) symbols.push("MSTRc");
   const themes = THEMES.filter((t) => has(text, t.words)).map((t) => t.id);
   return { symbols, themes };
+}
+
+/**
+ * Weights the user set for named stocks: "60% Apple 40% Microsoft", "half in Nvidia", "30% di Tesla",
+ * "Nvidia at 40%". A percent written before a name belongs to that name; one written after a name is
+ * used only when it isn't already taken.
+ */
+function explicitWeights(text: string): Record<string, number> {
+  const t = text.replace(/\b(?:half|separuh|setengah)\b/g, "50%");
+  const pct = "(\\d{1,3}(?:\\.\\d+)?)\\s*(?:%|percent|persen)";
+  const out: Record<string, number> = {};
+  const used = new Set<number>();
+  for (const [sym, aliases] of Object.entries(STOCK_ALIASES)) {
+    const names = aliases.map(esc).join("|");
+    const before = new RegExp(`${pct}\\s*(?:(?:in|of|on|into|to|for|di|ke|untuk)\\s+)?(?:the\\s+)?(?:${names})(?![a-z0-9])`, "g");
+    for (const m of t.matchAll(before)) {
+      out[sym] = Number(m[1]);
+      used.add(m.index! + m[0].indexOf(m[1]));
+    }
+  }
+  for (const [sym, aliases] of Object.entries(STOCK_ALIASES)) {
+    if (out[sym] !== undefined) continue;
+    const names = aliases.map(esc).join("|");
+    const after = new RegExp(`(?:^|[^a-z0-9])(?:${names})\\s*(?:at|:|=|-|sebesar)?\\s*${pct}`, "g");
+    for (const m of t.matchAll(after)) {
+      const at = m.index! + m[0].lastIndexOf(m[1]);
+      if (used.has(at)) continue;
+      out[sym] = Number(m[1]);
+      used.add(at);
+    }
+  }
+  for (const s of Object.keys(out)) if (!(out[s] > 0 && out[s] <= 100)) delete out[s];
+  return out;
 }
 
 export function parseMandate(input: string): ParsedMandate {
@@ -175,6 +218,12 @@ export function parseMandate(input: string): ParsedMandate {
   const found = mentions(positive);
   const include = found.symbols.filter((s) => !exclude.has(s));
   const themes = found.themes.filter((t) => !excludedThemes.has(t));
+  // Weights set for named stocks (never for excluded ones); a stock with a weight is always included
+  const weightsPct = explicitWeights(positive);
+  for (const s of Object.keys(weightsPct)) {
+    if (exclude.has(s)) delete weightsPct[s];
+    else if (!include.includes(s)) include.push(s);
+  }
 
   // 2b) Asked for, but not among the 10 supported stocks. "no netflix" is not a request: every negated
   // phrase (up to the next comma) is dropped first, including ones the exclusion pass above skipped
@@ -219,11 +268,11 @@ export function parseMandate(input: string): ParsedMandate {
   let count: number | undefined;
   const countMatch = positive.match(/(?:^|[^a-z0-9])(?:top\s+)?(\d{1,2})\s*(?:stocks?|names?|picks?|tickers?|companies|saham)(?:$|[^a-z0-9])/) || positive.match(/(?:^|[^a-z0-9])top\s+(\d{1,2})(?:$|[^a-z0-9])/);
   if (countMatch) count = Math.min(10, Math.max(1, Number(countMatch[1])));
-  const equalWeight = has(positive, ["equal weight", "equal-weight", "equal weighted", "equal-weighted", "equally", "evenly", "same weight", "equal split", "sama rata", "rata rata"]);
+  const equalWeight = has(positive, ["equal weight", "equal-weight", "equal weighted", "equal-weighted", "equally", "evenly", "same weight", "equal split", "sama rata", "rata rata", "bobot sama", "bobot rata", "sama besar"]);
 
   // 4) Preferences
   let riskHint: ParsedMandate["riskHint"];
-  if (has(positive, ["safe", "safer", "low risk", "low-risk", "conservative", "defensive", "stable", "aman", "risiko rendah"])) riskHint = "Conservative";
+  if (has(positive, ["safe", "safer", "low risk", "low-risk", "conservative", "defensive", "stable", "aman", "risiko rendah", "low volatility", "low-volatility", "less volatile", "volatilitas rendah", "recession-proof", "recession proof", "recession resistant", "downturn", "tahan resesi", "defensif"])) riskHint = "Conservative";
   else if (has(positive, ["aggressive", "high risk", "high-risk", "yolo", "max growth", "risiko tinggi", "agresif"])) riskHint = "Aggressive";
   const prefersDiscount = has(positive, ["cheap", "cheaper", "discount", "discounted", "below nav", "under nav", "undervalued", "bargain", "weekend", "gap", "murah", "diskon"]);
   const prefersDividends = has(positive, ["dividend", "dividends", "income", "yield", "dividen"]);
@@ -251,6 +300,8 @@ export function parseMandate(input: string): ParsedMandate {
   if (prefersGrowth) notes.push("Prefers fast revenue growth (SEC 10-K, last fiscal year).");
   if (maxWeightPct) notes.push(`At most ${maxWeightPct}% of your money in any one stock.`);
   if (cashPct) notes.push(`Keep ${cashPct}% in USDC.`);
+  if (Object.keys(weightsPct).length)
+    notes.push(`Weights you set: ${Object.entries(weightsPct).map(([s, w]) => `${s} ${w}%`).join(", ")}.`);
 
   return {
     themes,
@@ -267,6 +318,7 @@ export function parseMandate(input: string): ParsedMandate {
     prefersGrowth,
     maxWeightPct,
     cashPct,
+    weightsPct,
     unavailable,
     notes,
   };

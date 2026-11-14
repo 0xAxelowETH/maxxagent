@@ -1,8 +1,9 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse, after } from "next/server";
 import { runAutonomousStockAgent } from "@/lib/agentEngine";
 import { BASE_TOKENIZED_STOCKS, LiveTokenizedStock } from "@/lib/tokenizedStocks";
 import { GET as getStocks } from "../stocks/route";
-import { getSecFundamentals } from "@/lib/secFundamentals";
+import { getSecFundamentals, secFundamentalsPending } from "@/lib/secFundamentals";
+import { getRiskStats, riskStatsPending } from "@/lib/riskStats";
 import { getUnsupportedLive } from "@/lib/unsupportedStocks";
 import { parseMandate } from "@/lib/mandate";
 
@@ -98,16 +99,20 @@ export async function POST(request: NextRequest) {
     const currentWeights =
       body.currentWeights && typeof body.currentWeights === "object" ? (body.currentWeights as Record<string, number>) : {};
 
-    // Company figures from SEC filings, used as sourced facts; left out if SEC is slow
-    // Live Base liquidity of any unsupported Coinbase stock the request named (explains why it's left out)
+    // Company figures from SEC filings and live risk from each Chainlink feed (both cached, left out if slow);
+    // live Base liquidity of any unsupported Coinbase stock the request named (explains why it's left out)
     const asked = parseMandate(userPrompt).unavailable.flatMap((u) => (u.token ? [u.token] : []));
-    const [fundamentals, unsupportedLive] = await Promise.all([
+    const [fundamentals, risk, unsupportedLive] = await Promise.all([
       getSecFundamentals(stocksToAnalyze.map((s) => s.symbol)),
+      getRiskStats(stocksToAnalyze.map((s) => ({ symbol: s.symbol, chainlinkFeed: s.chainlinkFeed }))),
       asked.length ? getUnsupportedLive(asked) : Promise.resolve({}),
     ]);
+    // Let a cache refresh that is still running finish after the response (serverless would freeze it)
+    after(() => Promise.all([secFundamentalsPending(), riskStatsPending()]).then(() => undefined));
 
     const report = runAutonomousStockAgent({
       fundamentals,
+      risk,
       unsupportedLive,
       stocks: stocksToAnalyze,
       userPrompt,
