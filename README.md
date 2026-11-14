@@ -20,16 +20,20 @@ Built for the **Base Builder Quest: Stocks Maxxing Season** (Nov 5 – Dec 5, 20
 
 | Feature | Details |
 | --- | --- |
-| **Build an index** | Pick up to 10 of the 10 Coinbase B20 stocks (NVDAc, AAPLc, TSLAc, MSFTc, METAc, GOOGLc, AMZNc, MSTRc, SNDKc, SPCXc), set weights with sliders, buy the whole basket at once, or share it as a link (`/?basket=NVDAc-40,MSFTc-30&amount=50`) |
-| **Basket agent** | A transparent, rule-based agent reads a plain-language request — themes (AI, cloud, big tech, space, crypto…), named stocks, exclusions ("no Tesla", "except NVDA and META"), "only …", number of stocks, equal weights, risk, discount / dividend / liquidity preferences, some Indonesian — then scores every stock on live data (DEX vs Chainlink NAV gap, liquidity, dividend multiplier, beta vs risk). It shows *how it read the request* and *why* each stock was picked. It never trades on its own |
+| **Build an index** | Pick from the 10 Coinbase B20 stocks MAXXAGENT supports (NVDAc, AAPLc, TSLAc, MSFTc, METAc, GOOGLc, AMZNc, MSTRc, SNDKc, SPCXc: deep Base liquidity and a Chainlink price), set weights with sliders, buy the whole basket at once (at least $0.50 per stock), or share it as a link (`/?basket=NVDAc-40,MSFTc-30&amount=50`) |
+| **Basket agent** | A transparent, rule-based agent (no LLM) reads a plain-language request in English or Indonesian: themes (AI, cloud, big tech, space, crypto, Elon Musk companies…), named stocks, exclusions ("no Tesla"), "only …", number of stocks, equal weights, **your own weights** ("60% Apple 40% Microsoft", "half in Nvidia"), risk, and discount / dividend / liquidity / **profitable** / **growth** preferences. It scores every stock on live data: DEX vs Chainlink NAV gap, liquidity, dividend multiplier, and **volatility and largest fall from the last ~2 months of Chainlink NAV** |
+| **Agent limits** | Limits are never broken: "max 30% per stock" keeps the cap and leaves the rest in USDC when the stocks can't hold it; "keep 20% in cash"; a conservative basket leaves out stocks above 60% a year volatility. Each limit is shown as *kept*, *adjusted* or *not supported*, with the reason |
+| **Facts, assumptions, opinions** | Facts are separated from assumptions and from the rule-based opinions, and each fact links to its source: the Chainlink feed, the DEX pool, the token, and the company's own **SEC 10-K** (revenue, growth, net income). A stock Coinbase issues but MAXXAGENT doesn't support (e.g. Netflix → NFLXc) is named with why: its live Base pool size and no Chainlink price. Orders large for a stock's pool get a "check before buying" note. It never trades on its own |
+| **Saved target** | Save a basket as your target; each visit checks the wallet against it, flags drift or a broken weight limit, and opens a rebalance plan you sign step by step |
 | **One-click buy & sell** | Pay with **USDC or ETH**. Routed through the KyberSwap aggregator; one EIP-5792 batch (sequential fallback), exact-amount approvals only. Routes costing over 1.5% or priced more than 5% worse than the Chainlink NAV are refused |
 | **Review before signing** | Estimate, guaranteed minimum, cost vs NAV, max slippage 0.3 / 0.5 / 1%, quote countdown. The wallet opens only after *Confirm* |
 | **Portfolio** | Holdings at NAV, **P/L since purchase** (average cost from the wallet's onchain history, including ETH buys), **onchain trade history** with BaseScan links, one-click sell |
 | **Rebalance** | Moves current holdings toward an agent basket: sell overweight, then buy underweight with the proceeds; guards against tiny portfolios |
 | **Stock pages** | `/stock/[symbol]`: live NAV, DEX price and gap, liquidity, volume, market cap, multiplier, 7-day NAV vs DEX chart, US market status |
 | **Live stats** | `/stats` counts every trade MAXXAGENT routed, read from onchain router events (team test wallet excluded) |
+| **Share cards** | A shared basket link or index page previews as a card of the basket (name, weight bar, stocks) on X, Farcaster and chat apps (`/api/og`, 1200×630 and 3:2) |
 | **Mini app** | Opens inside Farcaster clients with the host wallet connected automatically; shared links render as a launch card; casts shared to MAXXAGENT open the stocks they mention |
-| **Index registry** | [`StockMaxxIndexRegistry`](https://basescan.org/address/0xdd059D85d1327a5A4b9cA14cF0A6DF82C7b86909) on Base (source verified on [BaseScan](https://basescan.org/address/0xdd059D85d1327a5A4b9cA14cF0A6DF82C7b86909#code) and [Sourcify](https://repo.sourcify.dev/8453/0xdd059D85d1327a5A4b9cA14cF0A6DF82C7b86909)) publishes index names and weights onchain so anyone can buy the same basket. No deposits, no payable functions, no token transfers, no fees; only an index's creator can change its weights. First index: #1 `MAXX-AIC3` (GOOGLc / MSFTc / NVDAc) |
+| **Index registry** | [`StockMaxxIndexRegistry`](https://basescan.org/address/0xdd059D85d1327a5A4b9cA14cF0A6DF82C7b86909) on Base (source verified on [BaseScan](https://basescan.org/address/0xdd059D85d1327a5A4b9cA14cF0A6DF82C7b86909#code) and [Sourcify](https://repo.sourcify.dev/8453/0xdd059D85d1327a5A4b9cA14cF0A6DF82C7b86909)) publishes index names and weights onchain so anyone can buy the same basket. No deposits, no payable functions, no token transfers, no fees; only an index's creator can change its weights. First index: #1 `MAXX-AIC3` (GOOGLc / MSFTc / NVDAc). Buys of each index are counted from onchain swaps |
 | **Attribution** | Every transaction carries the ERC-8021 Builder Code (`ox/erc8021`), 32-byte aligned so it survives smart-wallet batching, plus the `dataSuffix` capability |
 
 ## For judges: verify it yourself
@@ -55,17 +59,23 @@ Full walk-through: **[maxxagent.xyz/verify](https://maxxagent.xyz/verify)**.
 
 | Path | Purpose |
 | --- | --- |
-| `src/app/page.tsx` | App UI: Market, Agent, Indexes, Portfolio (+ team Studio at `/?studio`) |
+| `src/app/HomeClient.tsx` | App UI: Market, Agent, Indexes, Portfolio (+ team Studio at `/?studio`) |
+| `src/app/page.tsx` | Server wrapper: a shared basket link gets its own preview card |
 | `src/app/stock/[symbol]`, `stats`, `verify`, `faq`, `terms`, `share` | Stock pages, live stats, verification guide, FAQ, terms, cast-share handler |
 | `src/app/.well-known/farcaster.json` | Mini app manifest |
 | `src/app/api/stocks` | Live B20 + Chainlink + DEX data, wallet balances (stocks, USDC, ETH) |
 | `src/app/api/swap` | Builds swap calldata (USDC or ETH in; whitelist, NAV guard, cost cap, Builder Code) |
-| `src/app/api/agent` | Rule-based basket proposal |
+| `src/app/api/agent` | Rule-based basket proposal (adds SEC figures, live risk and unsupported-stock liquidity) |
+| `src/app/api/og` | Share card image for a basket or index |
 | `src/app/api/pnl` | P/L and trade history from the wallet's onchain transfers |
 | `src/app/api/stats` | Onchain usage stats from router events |
 | `src/app/api/history`, `indexes`, `health` | Price history, registry reads, health check |
 | `src/lib/mandate.ts` | Plain-language request reader (themes, names, exclusions, count, weights) |
-| `src/lib/agentEngine.ts` | Scoring, selection, weights, explanations |
+| `src/lib/agentEngine.ts` | Scoring, selection, weights, limits, facts and explanations |
+| `src/lib/secFundamentals.ts` | Revenue, growth and net income from each company's SEC 10-K (EDGAR, cached a day) |
+| `src/lib/riskStats.ts` | Volatility and largest fall from each Chainlink NAV feed (cached 12 h) |
+| `src/lib/unsupportedStocks.ts` | Coinbase stocks MAXXAGENT doesn't support, with live Base liquidity |
+| `src/lib/shareBasket.ts` | Share-link parsing and share-card paths |
 | `src/lib/basketExecutor.ts` | Review, batching, fallbacks, double-send guards, receipt tracking |
 | `src/lib/rebalance.ts` | Rebalance planner |
 | `src/middleware.ts` | Geo-block, rate limits, canonical-domain redirect |
@@ -82,8 +92,8 @@ npm run dev                    # http://localhost:3000
 Checks (no funds needed):
 
 ```bash
-npm run test:e2e               # 23 user journeys in a browser with a read-only mock wallet
-npm run test:agent             # request-reader unit checks
+npm run test:e2e               # 25 user journeys in a browser with a read-only mock wallet (-- --url=https://maxxagent.xyz for production)
+npm run test:agent             # 47 request-reader checks (weights, limits, vocabulary, unsupported stocks)
 npm run test:rebalance         # rebalance planner unit checks
 npm run test:attribution       # Builder Code survives EOA, EIP-7702 and ERC-4337 batching
 npm run test:contracts         # 19 registry checks via a single eth_call
@@ -108,6 +118,7 @@ Brand and mini app assets: `npm run brand`, `node scripts/generate-miniapp-asset
 | `FARCASTER_ACCOUNT_HEADER` / `_PAYLOAD` / `_SIGNATURE` | optional | Override the manifest's account association |
 | `STATS_EXCLUDE` | optional | Extra wallets excluded from `/stats` |
 | `INDEX_HIDE` | optional | Registry index ids hidden from the site |
+| `SEC_USER_AGENT` | recommended | Contact string SEC EDGAR asks automated clients to send (e.g. `MAXXAGENT admin@yourdomain`) |
 | `DEPLOYER_PRIVATE_KEY` | deploy only | Registry deployment (never commit) |
 | `NEXT_PUBLIC_INDEX_REGISTRY_ADDRESS` | auto | Written by `deploy:mainnet` |
 
@@ -116,4 +127,6 @@ Brand and mini app assets: `npm run brand`, `node scripts/generate-miniapp-asset
 - The Chainlink NAV updates 24/5 and is frozen outside market hours; DEX prices trade 24/7 and can drift.
 - DEX liquidity data can miss pools; GeckoTerminal's public API is rate-limited (charts fall back to Chainlink only).
 - The aggregator may throttle bursts; the swap API retries and re-routes.
+- Right after a deploy the agent's SEC figures and live risk take about a minute to load; until then it says so and uses fixed beta estimates. P/L and stats answer "loading" instead of timing out, and the pages retry.
+- Coinbase lists 358 tokenized stocks; MAXXAGENT supports the 10 with deep Base liquidity and a Chainlink price, and names the others as not supported.
 - The registry's owner can only add or remove tokens from its allowlist; it cannot touch indexes or funds.

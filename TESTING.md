@@ -11,10 +11,12 @@ Start the app first: `npm run dev`.
 | --- | --- |
 | `npx tsc --noEmit` and `npm run lint` | No type errors, no lint errors |
 | `npm run test:contracts` | Index registry contract rules (19 checks) |
-| `npm run test:e2e` | 23 user journeys (add `-- --width=1440` for desktop) in a real browser with a read-only mock wallet: terms gate, connect, reconnect after refresh, Swap panel, review before signing, rejection not retried, fallback for wallets without batching (and odd batch errors, with the no-double-send check), wrong network, Agent basket, Portfolio P/L and Sell at phone width, no horizontal scroll, disconnect, pages, console and 5xx errors. ~2 min. |
+| `npm run test:e2e` | 25 user journeys (add `-- --width=1440` for desktop, `-- --url=https://maxxagent.xyz` for production) in a real browser with a read-only mock wallet: terms gate, connect, reconnect after refresh, Swap panel, review before signing, rejection not retried, fallback for wallets without batching (and odd batch errors, with the no-double-send check), wrong network, Agent basket, a basket with one reverted swap, a late batch never resent, Portfolio P/L and Sell at phone width, agent limits / facts / unsupported stock, saved target and drift after a reload, shared basket links, stats, no horizontal scroll, disconnect, pages, console and 5xx errors. ~3 min. A local `next dev` can be slow enough to time out on Portfolio; production is the reference run. |
+| `npm run test:agent` | 47 request-reader checks: themes, names, exclusions, counts, equal weights, user-set weights ("60% Apple 40% Microsoft", "Apple 60% …", "half in Nvidia", "30% di Tesla"), caps and cash never read as weights, Strategy Inc only in a list of companies, Indonesian words, unsupported Coinbase stocks (Netflix → NFLXc) vs ones Coinbase doesn't issue, profitable / growth. Plus weight capping and rounding |
 | `npm run test:rebalance` | Rebalance planner rules: sells before buys, proceeds reinvested, tolerance band, $1 minimum, no dust |
+| `npm run test:drift` / `npm run test:indexmatch` | Saved-target drift and limit checks; recognising buys of a published index from onchain swaps |
 | `npm run test:attribution` | Every swap from `/api/swap` ends with the Builder Code for EOAs, EIP-7702 batches (MetaMask), ERC-7579 and ERC-4337 smart wallets (Coinbase Smart Wallet). It also checks the router accepts the calldata (`eth_call`). |
-| `npm run test:swap` | Quotes for all 10 stocks (routes, cost, Builder Code) |
+| `npm run test:swap` | Quotes for all 10 stocks (routes, cost, Builder Code), spaced out because KyberSwap answers "Forbidden" to bursts |
 | `npm run test:buy` / `npm run test:sell` | Dry run of a buy / sell from the test wallet (no `--execute` = nothing is sent) |
 | `NEXT_DIST_DIR=.next-audit npx next build` | Production build, without touching a running `next dev` |
 
