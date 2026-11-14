@@ -391,7 +391,7 @@ export async function GET(request: NextRequest) {
       const done = await Promise.race([scan, new Promise<null>((r) => setTimeout(() => r(null), RESPONSE_BUDGET_MS))]);
       if (!done) {
         after(() => scan.then(() => undefined, () => undefined));
-        return NextResponse.json({ ok: false, error: "P/L is still loading for this wallet. Please refresh in a few seconds." }, { status: 503 });
+        return NextResponse.json({ ok: false, loading: true, error: "P/L is still loading for this wallet." }, { status: 202 });
       }
       history = done;
     }

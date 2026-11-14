@@ -802,8 +802,10 @@ export default function StockMaxxingDashboard() {
         .then(async (r) => {
           const d = await r.json();
           if (cancelled) return;
-          // 503 = server busy with other first-time scans: retry once instead of showing an error
+          // 503 = server busy with other first-time scans: retry once instead of showing an error.
+          // loading = a long first scan is still running server-side: check back a few times.
           if (r.status === 503 && attempt === 0) retry = setTimeout(() => load(1), 5000);
+          else if (d?.loading && attempt < 4) retry = setTimeout(() => load(attempt + 1), 8000);
           else setPnl({ for: w, data: d?.ok ? d : null, error: d?.ok ? "" : d?.error || "P/L unavailable" });
         })
         .catch(() => {

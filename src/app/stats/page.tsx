@@ -26,16 +26,27 @@ export default function StatsPage() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
 
-  const load = () => {
+  // The first scan after a deploy can take a minute: the API then answers "loading" and this retries
+  const load = (attempt = 0) => {
     setLoading(true);
     setError("");
+    let retrying = false;
+    const retry = (ms: number) => {
+      retrying = true;
+      setTimeout(() => load(attempt + 1), ms);
+    };
     fetch("/api/stats")
       .then((r) => r.json())
-      .then((d: Stats) => (d?.ok ? setData(d) : setError(d?.error || "Stats are unavailable right now.")))
-      .catch(() => setError("Stats are unavailable right now."))
-      .finally(() => setLoading(false));
+      .then((d: Stats & { loading?: boolean }) => {
+        if (d?.ok) setData(d);
+        else if (d?.loading && attempt < 6) retry(10_000);
+        else setError(d?.error || "Stats are unavailable right now.");
+      })
+      .catch(() => (attempt < 2 ? retry(5_000) : setError("Stats are unavailable right now.")))
+      .finally(() => !retrying && setLoading(false));
   };
-  useEffect(load, []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => load(), []);
 
   const t = data?.totals;
   return (
@@ -48,7 +59,7 @@ export default function StatsPage() {
             <p className="text-sm text-slate-400">Every trade made through MAXXAGENT on Base, read directly from the chain.</p>
           </div>
           <button
-            onClick={load}
+            onClick={() => load()}
             disabled={loading}
             className="inline-flex items-center gap-2 rounded-xl border border-slate-700 px-3 py-2 text-xs font-semibold text-slate-200 hover:bg-slate-800 cursor-pointer disabled:opacity-50"
           >

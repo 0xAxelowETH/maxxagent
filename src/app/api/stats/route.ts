@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse, after } from "next/server";
 import { createPublicClient, decodeAbiParameters, decodeFunctionData, toHex } from "viem";
 import { base } from "viem/chains";
 import { entryPoint06Abi, entryPoint07Abi, entryPoint06Address, entryPoint07Address, entryPoint08Address } from "viem/account-abstraction";
@@ -57,6 +57,7 @@ interface StatsState {
   since: number;
 }
 let state: StatsState | null = null;
+const RESPONSE_BUDGET_MS = 45_000;
 let inflight: Promise<StatsState> | null = null;
 
 async function withRetry<T>(fn: () => Promise<T>, tries = 3): Promise<T> {
@@ -180,9 +181,23 @@ export async function GET(request: NextRequest) {
   try {
     if (!state || Date.now() - state.at > 60_000) {
       if (!inflight) inflight = refresh().finally(() => (inflight = null));
-      state = await inflight;
+      const job = inflight;
+      // Keep the refresh alive after the response (serverless would freeze it) and store its result
+      const keep = () => after(() => job.then((s) => void (state = s), () => undefined));
+      if (state) {
+        // Serve the previous numbers now; the refresh lands for the next visitor
+        keep();
+      } else {
+        // First scan after a deploy can be long: answer before the 60s function limit instead of a 504
+        const done = await Promise.race([job, new Promise<null>((r) => setTimeout(() => r(null), RESPONSE_BUDGET_MS))]);
+        if (!done) {
+          keep();
+          return NextResponse.json({ ok: false, loading: true, error: "Stats are loading. This page retries by itself." }, { status: 202 });
+        }
+        state = done;
+      }
     }
-    const current = state;
+    const current = state!;
 
     const all = [...current.trades.values()].filter((t) => includeTeam || !EXCLUDED.has(t.wallet)).sort((a, b) => Number(b.block - a.block));
     const perStock = new Map<string, { symbol: string; trades: number; volumeUsd: number }>();
