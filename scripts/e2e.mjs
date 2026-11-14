@@ -549,7 +549,12 @@ await step("Shared basket link opens the index builder with validated, normalize
 });
 
 await step("Stats page loads with live onchain totals", async () => {
-  const r = await fetch(URL_BASE + "/api/stats").then((x) => x.json());
+  // Right after a deploy the first scan answers {loading}: wait for it like the page does
+  let r = await fetch(URL_BASE + "/api/stats").then((x) => x.json());
+  for (let i = 0; i < 6 && r.loading; i++) {
+    await sleep(10000);
+    r = await fetch(URL_BASE + "/api/stats").then((x) => x.json());
+  }
   assert(r.ok && r.totals && typeof r.totals.trades === "number", `stats API: ${r.error || "bad shape"}`);
   await page.goto(URL_BASE + "/stats", { waitUntil: "load", timeout: 120000 });
   await waitText(/Builder Code attributed/, 60000);
