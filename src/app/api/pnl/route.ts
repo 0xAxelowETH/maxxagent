@@ -32,7 +32,10 @@ const CHUNK = process.env.BASE_RPC_URL ? 100_000n : 45_000n;
 // ~3 days at Base's 0.2s block time (it was 2s until late Oct 2026, so older ranges cover more time)
 const FIRST_WINDOW = 1_300_000n;
 const CONCURRENCY = 4; // more triggers the RPC's rate limit
-const TIME_BUDGET_MS = 25_000;
+// The log scan is bound by the RPC's rate limit (more parallel workers made it slower, not faster). 15s keeps a
+// first scan well inside the response budget: older lots are then valued at NAV ("estimated") and later
+// requests continue the scan until the cost basis is exact.
+const TIME_BUDGET_MS = 15_000;
 // Respond by then whatever happens (Vercel stops the function at 60s and the user would get a 504)
 const RESPONSE_BUDGET_MS = 45_000;
 const MAX_TXS = 400;
