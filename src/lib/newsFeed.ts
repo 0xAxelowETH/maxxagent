@@ -8,6 +8,7 @@ import { GET as getHistory } from "@/app/api/history/route";
 /**
  * News & filings for the 10 supported stocks, with the price change since each item was published.
  *  - Official filings: each company's own SEC filings (8-K, 10-Q, 10-K…) from EDGAR, last 30 days.
+ *  - Company newsrooms: the official RSS/Atom feeds of NVIDIA, Apple, Microsoft, Meta and Google, last 30 days.
  *  - Headlines: Finnhub company news, last 3 days, only when FINNHUB_API_KEY is set.
  * Shown: the headline or filing title, a short summary (the news provider's own teaser, or the opening
  * sentence of an 8-K), the outlet, time and a link to the original. Never the article text, images or
@@ -15,7 +16,7 @@ import { GET as getHistory } from "@/app/api/history/route";
  */
 export interface NewsItem {
   symbol: string;
-  kind: "news" | "filing";
+  kind: "news" | "filing" | "newsroom";
   title: string;
   /** 1–2 sentences: the provider's teaser for news, the opening of an 8-K for filings (may be empty) */
   summary?: string;
@@ -343,6 +344,114 @@ async function headlines(): Promise<Omit<NewsItem, "priceThen" | "priceNow" | "c
 }
 
 /**
+ * Official company newsrooms (free public RSS/Atom, no key). Only the headline, a one-sentence teaser, the date
+ * and a link to the company's own page are shown. Companies without a working feed (Amazon, Tesla, Strategy,
+ * Sandisk, SpaceX) are covered by their SEC press releases instead.
+ */
+const NEWSROOMS: { symbol: string; source: string; url: string; keep?: (it: { link: string; title: string; categories: string[] }) => boolean }[] = [
+  // The feed mixes blog posts with press releases: keep the releases
+  { symbol: "NVDAc", source: "NVIDIA Newsroom", url: "https://nvidianews.nvidia.com/rss.xml", keep: (it) => it.link.includes("nvidianews.nvidia.com/news/") },
+  { symbol: "AAPLc", source: "Apple Newsroom", url: "https://www.apple.com/newsroom/rss-feed.rss" },
+  { symbol: "MSFTc", source: "Microsoft Source", url: "https://news.microsoft.com/source/feed/" },
+  { symbol: "METAc", source: "Meta Newsroom", url: "https://about.fb.com/news/feed/" },
+  // Google's blog is mostly product tips: keep company, AI-model and cloud news
+  {
+    symbol: "GOOGLc",
+    source: "Google Blog",
+    url: "https://blog.google/rss/",
+    keep: (it) =>
+      it.categories.some((c) => /company announcements|gemini models|google cloud|google deepmind|infrastructure|^ai$/i.test(c)) &&
+      // how-tos and invitations ("Get certified…", "Try…") aren't company news
+      !/^(get|try|learn|how|here's|here are|\d+ (ways|tips))\b/i.test(it.title),
+  },
+];
+
+const decode = (s: string) =>
+  s
+    .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, "$1")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)))
+    .replace(/&#x([0-9a-f]+);/gi, (_, n) => String.fromCharCode(parseInt(n, 16)))
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;|&#039;|&rsquo;|&lsquo;/g, "'")
+    .replace(/&ldquo;|&rdquo;/g, '"')
+    .replace(/&nbsp;/g, " ")
+    .replace(/&mdash;/g, "—")
+    .replace(/&ndash;/g, "–")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&amp;/g, "&")
+    // escaped HTML in descriptions (&lt;p&gt;…) becomes tags only after decoding
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+const tag = (block: string, name: string) => block.match(new RegExp(`<${name}(?:\\s[^>]*)?>([\\s\\S]*?)</${name}>`, "i"))?.[1] ?? "";
+const teaserOf = (s: string) => {
+  const m = s.match(/^(.{40,220}?[.!?])(\s|$)/);
+  const out = m ? m[1] : s;
+  return out.length > 220 ? `${out.slice(0, 217).replace(/\s+\S*$/, "")}…` : out;
+};
+
+async function newsrooms(): Promise<Omit<NewsItem, "priceThen" | "priceNow" | "changePct" | "priceSource">[]> {
+  const since = Date.now() - 30 * 86_400_000;
+  const lists = await Promise.all(
+    NEWSROOMS.map(async (n) => {
+      try {
+        const res = await fetch(n.url, {
+          headers: { "User-Agent": "Mozilla/5.0 (compatible; MAXXAGENT/1.0; +https://maxxagent.xyz)", Accept: "application/rss+xml, application/atom+xml, application/xml" },
+          next: { revalidate: 900 },
+          signal: AbortSignal.timeout(6000),
+        });
+        if (!res.ok) return [];
+        const xml = (await res.text()).slice(0, 1_000_000);
+        const blocks = xml.match(/<(item|entry)[\s>][\s\S]*?<\/(item|entry)>/gi) ?? [];
+        const out: Omit<NewsItem, "priceThen" | "priceNow" | "changePct" | "priceSource">[] = [];
+        for (const b of blocks) {
+          const title = decode(tag(b, "title"));
+          // RSS <link>url</link>, or Atom <link rel="alternate" href="url"/>
+          const link = decode(tag(b, "link")) || b.match(/<link[^>]*rel="alternate"[^>]*href="([^"]+)"/i)?.[1] || b.match(/<link[^>]*href="([^"]+)"/i)?.[1] || "";
+          const date = Date.parse(decode(tag(b, "pubDate") || tag(b, "published") || tag(b, "updated") || tag(b, "dc:date")));
+          const categories = [...b.matchAll(/<category(?:\s[^>]*)?>([\s\S]*?)<\/category>|<category[^>]*term="([^"]+)"/gi)].map((m) => decode(m[1] || m[2] || ""));
+          if (!title || !/^https:\/\//.test(link) || !(date > since) || date > Date.now() + 86_400_000) continue;
+          if (n.keep && !n.keep({ link, title, categories })) continue;
+          // WordPress feeds add "The post X appeared first on Y." — not a teaser
+          const teaser = decode(tag(b, "description") || tag(b, "summary"))
+            .replace(/The post .*? appeared first on .*?\.?$/i, "")
+            .trim();
+          out.push({
+            symbol: n.symbol,
+            kind: "newsroom",
+            title: title.length > 200 ? `${title.slice(0, 197).replace(/\s+\S*$/, "")}…` : title,
+            summary: teaser && teaser.toLowerCase() !== title.toLowerCase() ? teaserOf(teaser) : undefined,
+            source: n.source,
+            url: link,
+            publishedAt: new Date(date).toISOString(),
+          });
+          if (out.length >= 8) break;
+        }
+        return out;
+      } catch {
+        return []; // one newsroom failing leaves the others
+      }
+    })
+  );
+  return lists.flat();
+}
+
+/** Same announcement as a press release already in the list (same stock, similar title, within 3 days) */
+const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9 ]+/g, " ").replace(/\s+/g, " ").trim();
+function isDuplicate(x: { symbol: string; title: string; publishedAt: string }, others: { symbol: string; title: string; publishedAt: string; pressRelease?: boolean }[]) {
+  const t = norm(x.title);
+  return others.some(
+    (o) =>
+      o.pressRelease &&
+      o.symbol === x.symbol &&
+      Math.abs(Date.parse(o.publishedAt) - Date.parse(x.publishedAt)) < 3 * 86_400_000 &&
+      (norm(o.title) === t || norm(o.title).includes(t) || t.includes(norm(o.title)))
+  );
+}
+
+/**
  * The 24/7 DEX price for a symbol: hourly candles over 7 days, or 4-hour candles over 30 days. DEX only: the
  * feed never reads Chainlink rounds, which take hundreds of RPC calls and slowed P/L down for everyone.
  */
@@ -374,8 +483,8 @@ const priceAt = (pts: [number, number][], t: number) => {
 };
 
 async function build(): Promise<NewsItem[]> {
-  const [filings, news] = await Promise.all([secFilings(), headlines().catch(() => [])]);
-  const raw = [...news, ...filings];
+  const [filings, news, rooms] = await Promise.all([secFilings(), headlines().catch(() => []), newsrooms().catch(() => [])]);
+  const raw = [...news, ...rooms.filter((r) => !isDuplicate(r, filings)), ...filings];
   const symbols = [...new Set(raw.map((x) => x.symbol))].filter((s) => BASE_TOKENIZED_STOCKS.some((b) => b.symbol === s));
   const weekAgo = Date.now() / 1000 - 7 * 86_400;
   const priced: NewsItem[] = [];
@@ -412,7 +521,7 @@ async function build(): Promise<NewsItem[]> {
  * The built feed is kept in Vercel's shared Data Cache, so one successful build serves every server instance
  * for 15 minutes (a per-instance memory cache alone meant cold instances kept rebuilding from scratch).
  */
-const sharedBuild = unstable_cache(build, ["news-feed-v4"], { revalidate: CACHE_MS / 1000 });
+const sharedBuild = unstable_cache(build, ["news-feed-v6"], { revalidate: CACHE_MS / 1000 });
 
 let cache: { at: number; items: NewsItem[] } | null = null;
 let inflight: Promise<NewsItem[]> | null = null;

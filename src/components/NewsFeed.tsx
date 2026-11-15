@@ -2,14 +2,14 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { FileText, Megaphone, Newspaper } from "lucide-react";
+import { Building2, FileText, Megaphone, Newspaper } from "lucide-react";
 import { BASE_TOKENIZED_STOCKS } from "@/lib/tokenizedStocks";
 
 const LOGO: Record<string, string> = Object.fromEntries(BASE_TOKENIZED_STOCKS.map((s) => [s.symbol, s.logoUrl]));
 
 interface NewsItem {
   symbol: string;
-  kind: "news" | "filing";
+  kind: "news" | "filing" | "newsroom";
   title: string;
   summary?: string;
   form?: string;
@@ -23,8 +23,9 @@ interface NewsItem {
   changePct: number | null;
   priceSource: "DEX" | "NAV" | null;
 }
-type Kind = "all" | "press" | "filing" | "news";
-const kindOf = (x: NewsItem): Exclude<Kind, "all"> => (x.kind === "news" ? "news" : x.pressRelease ? "press" : "filing");
+type Kind = "all" | "press" | "newsroom" | "filing" | "news";
+const kindOf = (x: NewsItem): Exclude<Kind, "all"> =>
+  x.kind === "news" ? "news" : x.kind === "newsroom" ? "newsroom" : x.pressRelease ? "press" : "filing";
 
 const ago = (iso: string) => {
   const m = (Date.now() - Date.parse(iso)) / 60_000;
@@ -45,6 +46,7 @@ const usd = (n: number) => `$${n.toLocaleString("en-US", { minimumFractionDigits
 
 const BADGE: Record<Exclude<Kind, "all">, { label: string; cls: string; Icon: typeof FileText }> = {
   press: { label: "Press release", cls: "border-emerald-500/40 bg-emerald-500/10 text-emerald-300", Icon: Megaphone },
+  newsroom: { label: "Company news", cls: "border-indigo-400/40 bg-indigo-500/10 text-indigo-200", Icon: Building2 },
   filing: { label: "SEC filing", cls: "border-slate-600 bg-slate-800/60 text-slate-300", Icon: FileText },
   news: { label: "Headline", cls: "border-sky-500/40 bg-sky-500/10 text-sky-300", Icon: Newspaper },
 };
@@ -82,7 +84,7 @@ export function NewsFeed({ symbol, limit = 12, title = "News & filings" }: { sym
   }, [symbol]);
 
   const all = useMemo(() => items ?? [], [items]);
-  const kinds = useMemo(() => (["press", "filing", "news"] as const).filter((k) => all.some((x) => kindOf(x) === k)), [all]);
+  const kinds = useMemo(() => (["press", "newsroom", "filing", "news"] as const).filter((k) => all.some((x) => kindOf(x) === k)), [all]);
   const stocks = useMemo(() => [...new Set(all.map((x) => x.symbol))], [all]);
   const filtered = all.filter((x) => (kind === "all" || kindOf(x) === kind) && (stock === "all" || x.symbol === stock));
   const visible = filtered.slice(0, shown);
@@ -90,7 +92,7 @@ export function NewsFeed({ symbol, limit = 12, title = "News & filings" }: { sym
   // Headline numbers for the selection
   const priced = filtered.filter((x) => x.changePct !== null);
   const biggest = priced.reduce<NewsItem | null>((b, x) => (!b || Math.abs(x.changePct!) > Math.abs(b.changePct!) ? x : b), null);
-  const press = filtered.filter((x) => kindOf(x) === "press").length;
+  const press = filtered.filter((x) => kindOf(x) === "press" || kindOf(x) === "newsroom").length;
 
   // Group the visible items by day
   const groups: { day: string; list: NewsItem[] }[] = [];
@@ -111,7 +113,7 @@ export function NewsFeed({ symbol, limit = 12, title = "News & filings" }: { sym
       <div className="flex flex-wrap items-end justify-between gap-2">
         <div>
           <h2 className="text-base font-extrabold text-white">{title}</h2>
-          <p className="text-[11px] text-slate-500">Official filings and press releases from SEC EDGAR, with the price change since each was published.</p>
+          <p className="text-[11px] text-slate-500">Official SEC filings, press releases and company newsrooms, with the price change since each was published.</p>
         </div>
         {kinds.length > 1 && (
           <div className="inline-flex rounded-lg border border-slate-700 bg-[#040814] p-0.5 text-[11px]" role="group" aria-label="Type">
@@ -124,7 +126,7 @@ export function NewsFeed({ symbol, limit = 12, title = "News & filings" }: { sym
                 }}
                 className={`rounded-md px-2.5 py-1 font-bold cursor-pointer ${kind === k ? "bg-slate-700 text-white" : "text-slate-400 hover:text-slate-200"}`}
               >
-                {k === "all" ? "All" : k === "press" ? "Press releases" : k === "filing" ? "SEC filings" : "Headlines"}
+                {k === "all" ? "All" : k === "press" ? "Press releases" : k === "newsroom" ? "Company news" : k === "filing" ? "SEC filings" : "Headlines"}
               </button>
             ))}
           </div>
@@ -138,7 +140,7 @@ export function NewsFeed({ symbol, limit = 12, title = "News & filings" }: { sym
             <div className="font-mono text-lg font-bold text-white">{filtered.length}</div>
           </div>
           <div className="rounded-xl border border-slate-800 bg-[#070b14] px-3 py-2">
-            <div className="text-[10px] uppercase tracking-wider text-slate-500">Press releases</div>
+            <div className="text-[10px] uppercase tracking-wider text-slate-500">Official announcements</div>
             <div className="font-mono text-lg font-bold text-emerald-300">{press}</div>
           </div>
           <div className="rounded-xl border border-slate-800 bg-[#070b14] px-3 py-2">
@@ -209,7 +211,7 @@ export function NewsFeed({ symbol, limit = 12, title = "News & filings" }: { sym
                             </span>
                           ))}
                           <span title={new Date(x.publishedAt).toUTCString()}>· {ago(x.publishedAt)}</span>
-                          {x.kind === "news" && <span>· {x.source}</span>}
+                          {x.kind !== "filing" && <span>· {x.source}</span>}
                         </div>
                         <a href={x.url} target="_blank" rel="noopener noreferrer" className="mt-1 block text-[13px] font-bold leading-snug text-slate-100 hover:text-white hover:underline">
                           {x.title}
@@ -217,7 +219,7 @@ export function NewsFeed({ symbol, limit = 12, title = "News & filings" }: { sym
                         {x.summary && <p className="mt-1 line-clamp-2 text-[11px] leading-snug text-slate-400">{x.summary}</p>}
                         <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
                           <a href={x.url} target="_blank" rel="noopener noreferrer" className="text-[10px] font-bold text-cyan-300 hover:text-white hover:underline">
-                            {x.kind === "news" ? `Read on ${x.source} →` : x.pressRelease ? "Read the press release on sec.gov →" : "Read the filing on sec.gov →"}
+                            {x.kind !== "filing" ? `Read on ${x.source} →` : x.pressRelease ? "Read the press release on sec.gov →" : "Read the filing on sec.gov →"}
                           </a>
                           {x.changePct !== null ? (
                             <span className="inline-flex items-center gap-2 text-[10px] text-slate-500" title={`Price source: ${x.priceSource === "DEX" ? "24/7 DEX price" : "Chainlink NAV"}`}>
@@ -261,6 +263,7 @@ export function NewsFeed({ symbol, limit = 12, title = "News & filings" }: { sym
 
       <p className="mt-3 text-[10px] leading-relaxed text-slate-500">
         Source: SEC EDGAR (public filings; press releases are the exhibits companies attach to them)
+        {all.some((x) => x.kind === "newsroom") ? "; company news from each company's official newsroom feed" : ""}
         {all.some((x) => x.kind === "news") ? "; headlines from a licensed news provider" : ""}. Titles and openings link to
         the originals. The change is the token&apos;s price now vs when the item was published (24/7 DEX price, or the
         Chainlink NAV for older items); it doesn&apos;t mean the item caused the move. For reference only, not financial advice.

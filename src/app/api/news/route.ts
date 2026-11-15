@@ -16,11 +16,12 @@ export async function GET(request: NextRequest) {
   after(() => newsPending().then(() => undefined, () => undefined));
   if (!items) return NextResponse.json({ ok: false, loading: true, error: "News is loading." }, { status: 202 });
   // Headlines and filings both make the list (headlines are far more frequent and would push filings out)
-  const pick = (xs: typeof items, news: number, filings: number) => [
+  const pick = (xs: typeof items, news: number, rooms: number, filings: number) => [
     ...xs.filter((x) => x.kind === "news").slice(0, news),
+    ...xs.filter((x) => x.kind === "newsroom").slice(0, rooms),
     ...xs.filter((x) => x.kind === "filing").slice(0, filings),
   ].sort((a, b) => (a.publishedAt < b.publishedAt ? 1 : -1));
-  const list = symbol ? pick(items.filter((x) => x.symbol === symbol), 15, 10) : pick(items, 50, 30);
+  const list = symbol ? pick(items.filter((x) => x.symbol === symbol), 15, 8, 10) : pick(items, 50, 30, 30);
   return NextResponse.json(
     { ok: true, items: list, updatedAt: new Date().toISOString() },
     // Served from Vercel's CDN for 10 minutes (then refreshed in the background for up to an hour), so most
