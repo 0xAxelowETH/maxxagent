@@ -46,6 +46,8 @@ export function GET() {
       buttonTitle: "Build a stock index",
       // "Share to MAXXAGENT": the stocks a cast mentions open as a stock page or a basket
       castShareUrl: `${SITE}/share`,
+      // Add / remove and notification on / off events (drift alerts)
+      webhookUrl: `${SITE}/api/miniapp/webhook`,
       requiredChains: ["eip155:8453"],
       requiredCapabilities: ["wallet.getEthereumProvider"],
     },

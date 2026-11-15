@@ -66,7 +66,7 @@ import { MarketStatus } from "@/components/MarketStatus";
 import { usMarketStatus } from "@/lib/marketHours";
 import { detectMiniApp } from "@/lib/miniApp";
 import { RebalancePanel } from "@/components/RebalancePanel";
-import { TargetWatch, DRIFT_ALERT_PCT, driftSummary } from "@/components/TargetWatch";
+import { TargetWatch, alertPctOf, driftSummary, type RebalanceLogEntry } from "@/components/TargetWatch";
 import { computeDrift, parseSavedTarget, type SavedTarget } from "@/lib/drift";
 import { TermsGate, TERMS_STORAGE_KEY } from "@/components/TermsGate";
 import { UsdAmountInput } from "@/components/UsdAmountInput";
@@ -522,9 +522,35 @@ export default function StockMaxxingDashboard() {
   } | null>(null);
   const [reviewBusy, setReviewBusy] = useState<boolean>(false);
 
+  // Finished rebalance steps of the connected wallet (this browser only), shown under its saved target
+  const rebalanceKey = walletAddress ? `maxxagent_rebalances_${walletAddress.toLowerCase()}` : "";
+  const [rebalanceLog, setRebalanceLog] = useState<RebalanceLogEntry[]>([]);
+  useEffect(() => {
+    try {
+      const raw = rebalanceKey ? JSON.parse(localStorage.getItem(rebalanceKey) || "[]") : [];
+      setRebalanceLog(Array.isArray(raw) ? raw.filter((e) => e && typeof e.at === "string" && Array.isArray(e.txHashes)).slice(0, 20) : []);
+    } catch {
+      setRebalanceLog([]);
+    }
+  }, [rebalanceKey]);
+
   const recordResult = useCallback(
     (result: BasketResult, label: string) => {
       setBasketResult(result);
+      if (label === "rebalance" && rebalanceKey && result.txHashes.length) {
+        const summary =
+          result.side === "sell"
+            ? result.bought.map((b) => `${(b.amountInTokens ?? 0).toFixed(4)} ${b.symbol}`).join(", ")
+            : (result.received.length ? result.received.map((r) => `${r.tokens.toFixed(4)} ${r.symbol}`) : result.bought.map((b) => b.symbol)).join(", ");
+        const entry: RebalanceLogEntry = { at: new Date().toISOString(), side: result.side === "sell" ? "sell" : "buy", summary, txHashes: result.txHashes };
+        setRebalanceLog((prev) => {
+          const next = [entry, ...prev].slice(0, 20);
+          try {
+            localStorage.setItem(rebalanceKey, JSON.stringify(next));
+          } catch {}
+          return next;
+        });
+      }
       setTimeout(() => setBalanceRefreshNonce((n) => n + 1), 6000);
       let text: string;
       if (result.side === "buy") {
@@ -541,7 +567,7 @@ export default function StockMaxxingDashboard() {
       }
       result.txHashes.forEach((h) => recordOnchainActivity(text, h, "Base Mainnet (8453)"));
     },
-    [recordOnchainActivity]
+    [recordOnchainActivity, rebalanceKey]
   );
 
   const targetKey = walletAddress ? `maxxagent_target_${walletAddress.toLowerCase()}` : "";
@@ -571,7 +597,7 @@ export default function StockMaxxingDashboard() {
         )
       : null;
   const targetReady = Boolean(savedTarget && walletAddress && balancesFor === walletAddress.toLowerCase());
-  const targetOff = targetDrift !== null && (targetDrift.driftPct >= DRIFT_ALERT_PCT || targetDrift.breaches.length > 0);
+  const targetOff = targetDrift !== null && (targetDrift.driftPct >= alertPctOf(savedTarget) || targetDrift.breaches.length > 0);
 
   // Step 1 (buy): quote one or more B20 stocks and open the review. Nothing is sent yet.
   const buyStocks = useCallback(
@@ -1206,6 +1232,8 @@ export default function StockMaxxingDashboard() {
   const [sharedBasketLoaded, setSharedBasketLoaded] = useState<boolean>(false);
   useEffect(() => {
     // /?stock=NVDAc (from a stock detail page): select it and jump to the Swap panel
+    // /?tab=portfolio (drift alert notifications): open the portfolio, where the saved target and its plan are
+    if (new URLSearchParams(window.location.search).get("tab") === "portfolio") setActiveTab("traction");
     const wanted = new URLSearchParams(window.location.search).get("stock");
     const match = BASE_TOKENIZED_STOCKS.find((s) => s.symbol.toLowerCase() === (wanted || "").toLowerCase());
     if (match) {
@@ -3630,6 +3658,9 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                   onSell={(legs, label) => sellStocks(legs, label)}
                   onBuy={(legs, label) => buyStocks(legs, label)}
                   onRemove={() => saveTarget(null)}
+                  onChangeAlert={(p) => saveTarget({ ...savedTarget, alertPct: p })}
+                  walletAddress={walletAddress}
+                  history={rebalanceLog}
                 />
               )}
 

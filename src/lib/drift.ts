@@ -62,6 +62,8 @@ export interface SavedTarget {
   weights: { symbol: string; weightBps: number }[];
   /** most any one stock may be, as a share of the stocks (from "max 30% per stock") */
   maxWeightPct?: number;
+  /** drift (share of the stocks that would have to move) from which the agent warns; default 5 */
+  alertPct?: number;
   /** ISO date */
   savedAt: string;
 }
@@ -91,6 +93,10 @@ export function parseSavedTarget(raw: unknown, knownSymbols: string[]): SavedTar
     mandate: typeof r.mandate === "string" ? r.mandate.replace(/[\u0000-\u001f\u007f-\u009f]/g, " ").slice(0, 300) : undefined,
     weights,
     maxWeightPct,
+    alertPct: ALERT_PCT_CHOICES.includes(Number(r.alertPct)) ? Number(r.alertPct) : undefined,
     savedAt,
   };
 }
+
+/** Drift thresholds the user can pick for "warn me when my basket is this far off" */
+export const ALERT_PCT_CHOICES = [2, 5, 10];

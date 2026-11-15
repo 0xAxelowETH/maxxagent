@@ -10,7 +10,8 @@ import { miniappEmbedTags } from "@/lib/miniappEmbed";
 const BLOCKED_COUNTRIES = new Set(["US", "PR", "GU", "VI", "AS", "MP", "UM"]);
 
 const STOCK_SYMBOLS = ["NVDAc", "AAPLc", "TSLAc", "MSFTc", "METAc", "GOOGLc", "AMZNc", "MSTRc", "SNDKc", "SPCXc"];
-const PUBLIC_EVERYWHERE = ["/.well-known/", "/brand/", "/robots.txt", "/sitemap.xml", "/icon.svg", "/apple-icon.png", "/favicon.ico"];
+// Server-to-server endpoints (Vercel Cron and Farcaster's webhook run in the US) also stay reachable: no trading there
+const PUBLIC_EVERYWHERE = ["/.well-known/", "/api/cron/", "/api/miniapp/webhook","/brand/", "/robots.txt", "/sitemap.xml", "/icon.svg", "/apple-icon.png", "/favicon.ico"];
 const SITE = (process.env.NEXT_PUBLIC_SITE_URL || "https://maxxagent.xyz").replace(/\/$/, "");
 const esc = (v: string) => v.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
 const PREVIEW_DESC = "Build your own index of Coinbase tokenized stocks on Base, or let an agent propose one, and buy it in one click from your own wallet. Not financial advice.";
@@ -62,6 +63,8 @@ const LIMITS: Record<string, number> = {
   "/api/stats": 30,
   "/api/news": 60,
   "/api/health": 30,
+  "/api/watch": 20,
+  "/api/miniapp/webhook": 30,
 };
 const WINDOW_MS = 60_000;
 const hits = new Map<string, { start: number; count: number }>();

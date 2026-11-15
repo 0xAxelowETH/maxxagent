@@ -1,12 +1,22 @@
 "use client";
 
 import { useState } from "react";
-import { Target as TargetIcon, Trash2 } from "lucide-react";
+import { ExternalLink, Target as TargetIcon, Trash2 } from "lucide-react";
 import { RebalancePanel } from "@/components/RebalancePanel";
-import type { Drift, SavedTarget } from "@/lib/drift";
+import { DriftAlerts } from "@/components/DriftAlerts";
+import { ALERT_PCT_CHOICES, type Drift, type SavedTarget } from "@/lib/drift";
 
-/** Drift (share of the stock portfolio that would have to move) from which a rebalance is suggested */
+/** Default drift (share of the stock portfolio that would have to move) from which a rebalance is suggested */
 export const DRIFT_ALERT_PCT = 5;
+export const alertPctOf = (t: SavedTarget | null) => t?.alertPct ?? DRIFT_ALERT_PCT;
+
+/** One finished rebalance step, kept in this browser per wallet */
+export interface RebalanceLogEntry {
+  at: string;
+  side: "sell" | "buy";
+  summary: string;
+  txHashes: string[];
+}
 
 interface StockPrice {
   symbol: string;
@@ -48,8 +58,14 @@ export function TargetWatch({
   onSell,
   onBuy,
   onRemove,
+  onChangeAlert,
+  walletAddress,
+  history = [],
 }: {
   target: SavedTarget;
+  onChangeAlert: (pct: number) => void;
+  walletAddress: string;
+  history?: RebalanceLogEntry[];
   /** null when the wallet holds no stocks yet */
   drift: Drift | null;
   stocks: StockPrice[];
@@ -61,7 +77,8 @@ export function TargetWatch({
   onRemove: () => void;
 }) {
   const breached = (drift?.breaches.length ?? 0) > 0;
-  const off = drift !== null && (drift.driftPct >= DRIFT_ALERT_PCT || breached);
+  const alertPct = alertPctOf(target);
+  const off = drift !== null && (drift.driftPct >= alertPct || breached);
   const [open, setOpen] = useState(false);
   const saved = new Date(target.savedAt);
   const targets = target.weights.flatMap((w) => {
@@ -108,7 +125,7 @@ export function TargetWatch({
             </p>
           ) : (
             <p className="text-xs text-amber-100">
-              <strong className="font-mono text-sm">{pct(drift.driftPct)}</strong> of your stocks are out of line with this target.{" "}
+              <strong className="font-mono text-sm">{pct(drift.driftPct)}</strong> of your stocks are out of line with this target (your alert is {alertPct}%).{" "}
               <span className="text-amber-200/80">{driftSummary(drift)}</span>
             </p>
           )}
@@ -139,8 +156,54 @@ export function TargetWatch({
           maxWeightPct={target.maxWeightPct}
         />
       )}
+      <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-400" data-testid="alert-threshold">
+        <span>Warn me when it is</span>
+        {ALERT_PCT_CHOICES.map((p) => (
+          <button
+            key={p}
+            onClick={() => onChangeAlert(p)}
+            aria-pressed={alertPct === p}
+            className={`rounded-md border px-2 py-0.5 font-mono font-semibold cursor-pointer ${
+              alertPct === p ? "border-cyan-400 bg-cyan-500/15 text-cyan-100" : "border-slate-700 text-slate-300 hover:border-slate-500"
+            }`}
+          >
+            {p}%
+          </button>
+        ))}
+        <span>off target{target.maxWeightPct ? `, or any stock is above ${target.maxWeightPct}%` : ""}.</span>
+      </div>
+
+      <DriftAlerts address={walletAddress} target={target} alertPct={alertPct} />
+
+      {history.length > 0 && (
+        <div className="space-y-1" data-testid="rebalance-history">
+          <p className="text-[11px] font-semibold text-slate-300">Rebalance history</p>
+          <ul className="space-y-1">
+            {history.slice(0, 5).map((h) => (
+              <li key={h.at + h.side} className="flex flex-wrap items-center gap-x-2 text-[11px] text-slate-400">
+                <span className="font-mono text-slate-500">{new Date(h.at).toLocaleDateString("en-US", { month: "short", day: "numeric" })}</span>
+                <span className={h.side === "sell" ? "text-rose-300" : "text-emerald-300"}>{h.side === "sell" ? "Sold" : "Bought"}</span>
+                <span className="text-slate-300">{h.summary}</span>
+                {h.txHashes.slice(0, 3).map((tx, i) => (
+                  <a
+                    key={tx}
+                    href={`https://basescan.org/tx/${tx}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-0.5 text-cyan-300 hover:text-cyan-200"
+                  >
+                    tx{h.txHashes.length > 1 ? ` ${i + 1}` : ""}
+                    <ExternalLink className="h-2.5 w-2.5" />
+                  </a>
+                ))}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       <p className="text-[10px] text-slate-500">
-        Checked each time you open MAXXAGENT with this wallet. Stored in this browser only. Nothing is traded without your signature.
+        Checked each time you open MAXXAGENT with this wallet. Target and history are stored in this browser. Nothing is traded without your signature.
       </p>
     </section>
   );

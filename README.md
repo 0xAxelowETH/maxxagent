@@ -28,6 +28,7 @@ Built for the **Base Builder Quest: Stocks Maxxing Season** (Nov 5 – Dec 5, 20
 | **One-click buy & sell** | Pay with **USDC or ETH**. Routed through the KyberSwap aggregator; one EIP-5792 batch (sequential fallback), exact-amount approvals only. Routes costing over 1.5% or priced more than 5% worse than the Chainlink NAV are refused |
 | **Review before signing** | Estimate, guaranteed minimum, cost vs NAV, max slippage 0.3 / 0.5 / 1%, quote countdown. The wallet opens only after *Confirm* |
 | **Portfolio** | Holdings at NAV, **P/L since purchase** (average cost from the wallet's onchain history, including ETH buys), **onchain trade history** with BaseScan links, one-click sell |
+| **Drift alerts** | Pick when to be warned (2 / 5 / 10% off target, or any stock above its limit). In the Farcaster mini app, "Alert me" lets the agent check the wallet after each US trading day (Vercel Cron, Chainlink NAV on Base) and send a notification that opens the rebalance plan. Read-only: it never trades. A rebalance history with BaseScan links is kept per wallet |
 | **Rebalance** | Moves current holdings toward an agent basket: sell overweight, then buy underweight with the proceeds; guards against tiny portfolios |
 | **Stock pages** | `/stock/[symbol]`: live NAV, DEX price and gap, liquidity, volume, market cap, multiplier, 7-day NAV vs DEX chart, US market status |
 | **Live stats** | `/stats` counts every trade MAXXAGENT routed, read from onchain router events (team test wallet excluded) |
@@ -121,6 +122,8 @@ Brand and mini app assets: `npm run brand`, `node scripts/generate-miniapp-asset
 | `STATS_EXCLUDE` | optional | Extra wallets excluded from `/stats` |
 | `INDEX_HIDE` | optional | Registry index ids hidden from the site |
 | `SEC_USER_AGENT` | recommended | Contact string SEC EDGAR asks automated clients to send (e.g. `MAXXAGENT admin@yourdomain`) |
+| `KV_REST_API_URL`, `KV_REST_API_TOKEN` | for drift alerts | Upstash Redis (Vercel Storage → Upstash, free plan). Stores each alert's FID, wallet, target and notification token. Without it alerts are off and everything else works |
+| `CRON_SECRET` | optional | When set, Vercel Cron must send it; other callers of `/api/cron/drift` get 401 |
 | `FINNHUB_API_KEY` | optional, local only | Adds company headlines to the news feed. Finnhub's free plan is for personal use and its terms forbid sharing the data without written approval, so leave it unset on public deployments unless Finnhub has approved that use |
 | `DEPLOYER_PRIVATE_KEY` | deploy only | Registry deployment (never commit) |
 | `NEXT_PUBLIC_INDEX_REGISTRY_ADDRESS` | auto | Written by `deploy:mainnet` |
