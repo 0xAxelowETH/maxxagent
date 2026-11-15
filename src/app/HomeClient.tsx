@@ -66,6 +66,7 @@ import { MarketStatus } from "@/components/MarketStatus";
 import { usMarketStatus } from "@/lib/marketHours";
 import { detectMiniApp } from "@/lib/miniApp";
 import { RebalancePanel } from "@/components/RebalancePanel";
+import { MarketHeatmap } from "@/components/MarketHeatmap";
 import { TargetWatch, alertPctOf, driftSummary, type RebalanceLogEntry } from "@/components/TargetWatch";
 import { computeDrift, parseSavedTarget, type SavedTarget } from "@/lib/drift";
 import { TermsGate, TERMS_STORAGE_KEY } from "@/components/TermsGate";
@@ -754,8 +755,8 @@ export default function StockMaxxingDashboard() {
   }, []);
 
   // Fetch live B20 Tokenized Stocks + Chainlink Oracles + Live Aerodrome DEX Pools on Base Mainnet
-  const fetchLiveStocks = useCallback(async (walletToQuery?: string) => {
-    setLoadingStocks(true);
+  const fetchLiveStocks = useCallback(async (walletToQuery?: string, silent = false) => {
+    if (!silent) setLoadingStocks(true);
     try {
       const q = walletToQuery ? `?wallet=${encodeURIComponent(walletToQuery)}` : "";
       const res = await fetch(`/api/stocks${q}`);
@@ -779,7 +780,7 @@ export default function StockMaxxingDashboard() {
       if (walletToQuery) setBalancesError("Could not reach the server. Check your connection.");
       console.error("Failed to fetch live tokenized stocks:", err);
     } finally {
-      setLoadingStocks(false);
+      if (!silent) setLoadingStocks(false);
     }
   }, []);
 
@@ -815,6 +816,16 @@ export default function StockMaxxingDashboard() {
   useEffect(() => {
     fetchLiveStocks().then(() => {});
   }, [fetchLiveStocks]);
+
+  // Market tab open and visible: refresh prices quietly every 60 s (market data only, no wallet reads).
+  // The server keeps the market for 15 s, so this adds almost no RPC load however many people watch.
+  useEffect(() => {
+    if (activeTab !== "terminal") return;
+    const id = setInterval(() => {
+      if (document.visibilityState === "visible") fetchLiveStocks(undefined, true);
+    }, 60_000);
+    return () => clearInterval(id);
+  }, [activeTab, fetchLiveStocks]);
 
   useEffect(() => {
     if (balanceRefreshNonce > 0 && walletAddress) fetchLiveStocks(walletAddress);
@@ -1934,6 +1945,8 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                 </div>
               </div>
             </div>
+
+            {stocks.length > 0 && <MarketHeatmap stocks={stocks} updatedAt={fetchedAt} />}
 
             {/* Stocks whose DEX price is under the Chainlink NAV right now (only with a live DEX quote; never synthesized) */}
             {(() => {
