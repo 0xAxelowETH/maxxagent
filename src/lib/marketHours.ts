@@ -65,3 +65,23 @@ export function nyCloseUnix(date: string): number {
   }
   return Date.parse(`${date}T21:00:00Z`) / 1000;
 }
+
+/** Unix seconds of the 9:30 New York open on a New York date (13:30 or 14:30 UTC, following daylight saving) */
+export function nyOpenUnix(date: string): number {
+  for (const h of [13, 14]) {
+    const t = Date.parse(`${date}T${h}:30:00Z`);
+    if (nyParts(new Date(t)).minutes === 9 * 60 + 30) return t / 1000;
+  }
+  return Date.parse(`${date}T14:30:00Z`) / 1000;
+}
+
+/** The next regular-session open after `now` (skips weekends and exchange holidays), as unix seconds */
+export function nextOpenUnix(now = new Date()): number | null {
+  for (let d = 0; d <= 10; d++) {
+    const { date, weekday } = nyParts(new Date(now.getTime() + d * 86_400_000));
+    if (weekday === "Sat" || weekday === "Sun" || HOLIDAYS.has(date)) continue;
+    const t = nyOpenUnix(date);
+    if (t * 1000 > now.getTime()) return t;
+  }
+  return null;
+}
