@@ -1,20 +1,23 @@
 import type { Metadata } from "next";
-import { Plus_Jakarta_Sans, JetBrains_Mono } from "next/font/google";
+import localFont from "next/font/local";
 import { Analytics } from "@vercel/analytics/next";
 import { MiniAppReady } from "@/components/MiniAppReady";
 import { miniappEmbedTags } from "@/lib/miniappEmbed";
 import "./globals.css";
 
-const jakarta = Plus_Jakarta_Sans({
-  subsets: ["latin"],
+// Self-hosted (SIL Open Font License, see src/app/fonts/OFL-*.txt). The build no longer downloads them from
+// Google Fonts, whose responses next/font failed to parse (builds broke with "reading '1'").
+// Latin subset, one variable file per family covering all the weights used.
+const jakarta = localFont({
+  src: [{ path: "./fonts/PlusJakartaSans-latin.woff2", weight: "400 800", style: "normal" }],
   variable: "--font-sans",
-  weight: ["400", "500", "600", "700", "800"],
+  display: "swap",
 });
 
-const jetbrainsMono = JetBrains_Mono({
-  subsets: ["latin"],
+const jetbrainsMono = localFont({
+  src: [{ path: "./fonts/JetBrainsMono-latin.woff2", weight: "400 700", style: "normal" }],
   variable: "--font-mono",
-  weight: ["400", "500", "600", "700"],
+  display: "swap",
 });
 
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000";
