@@ -2,6 +2,7 @@ import { createPublicClient, parseAbi } from "viem";
 import { base } from "viem/chains";
 import { unstable_cache } from "next/cache";
 import { baseTransport } from "./rpc";
+import { nyCloseUnix, nyDay } from "./marketHours";
 
 /**
  * Live risk for each supported stock from its own Chainlink NAV feed on Base: annualised volatility of
@@ -30,7 +31,7 @@ const FEED_ABI = parseAbi([
 ]);
 const client = createPublicClient({ chain: base, transport: baseTransport({ timeout: 15000 }), batch: { multicall: true } });
 
-/** Daily closes (last round of each UTC day) since `sinceSec`, oldest first */
+/** Daily closes (last round of each New York trading day) since `sinceSec`, oldest first */
 async function dailyCloses(feed: `0x${string}`, sinceSec: number): Promise<[string, number][]> {
   const [latestId] = await client.readContract({ address: feed, abi: FEED_ABI, functionName: "latestRoundData" });
   const phaseBase = (latestId >> 64n) << 64n; // rounds before the current phase live in an older aggregator
@@ -52,10 +53,10 @@ async function dailyCloses(feed: `0x${string}`, sinceSec: number): Promise<[stri
       if (!t || answer <= 0n) continue;
       oldest = Math.min(oldest, t);
       if (t < sinceSec) continue;
-      // Weekday closes only: weekend heartbeat rounds repeat Friday's price and would understate volatility
-      const dow = new Date(t * 1000).getUTCDay();
-      if (dow === 0 || dow === 6) continue;
-      const day = new Date(t * 1000).toISOString().slice(0, 10);
+      // Trading days only, in New York time (a Friday close posted after midnight UTC still belongs to Friday):
+      // weekend heartbeat rounds repeat Friday's price and would understate volatility
+      const { date: day, weekday } = nyDay(new Date(t * 1000));
+      if (weekday === "Sat" || weekday === "Sun") continue;
       const prev = byDay.get(day);
       if (!prev || t > prev.t) byDay.set(day, { t, v: Number(answer) });
     }
@@ -72,10 +73,10 @@ async function dailyCloses(feed: `0x${string}`, sinceSec: number): Promise<[stri
 export const navDailyCloses = unstable_cache(
   async (feed: `0x${string}`): Promise<[number, number][]> => {
     const closes = await dailyCloses(feed, Math.floor(Date.now() / 1000) - 35 * 86_400);
-    // Stamp each close at the US market close (21:00 UTC) of its day; Chainlink stock feeds use 8 decimals
-    return closes.map(([day, v]) => [Date.parse(`${day}T21:00:00Z`) / 1000, v / 1e8]);
+    // Stamp each close at the 16:00 New York close of its day (20:00 or 21:00 UTC); Chainlink stock feeds use 8 decimals
+    return closes.map(([day, v]) => [nyCloseUnix(day), v / 1e8]);
   },
-  ["nav-daily-closes-v1"],
+  ["nav-daily-closes-v2"],
   { revalidate: 6 * 3600 }
 );
 

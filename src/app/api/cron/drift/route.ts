@@ -8,7 +8,8 @@ import { computeDrift } from "@/lib/drift";
 import { deleteNotify, getNotify, getWatch, listWatchFids, putWatch, type DriftWatch } from "@/lib/driftWatch";
 
 /**
- * Daily drift check (Vercel Cron, see vercel.json). For each watched wallet: read its stock balances and the
+ * Daily drift check (Vercel Cron, see vercel.json: 23:00 UTC Mon–Fri = 18:00/19:00 New York, after the close
+ * and the NAV update, in winter and summer time). For each watched wallet: read its stock balances and the
  * Chainlink NAV on Base, compare with the saved target, and send one mini app notification when the basket
  * goes off target (again at most every REMIND_DAYS while it stays off). Never trades.
  * The response holds counts only, no wallets.

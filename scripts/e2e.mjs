@@ -493,7 +493,7 @@ await step("Saved target: set from the Agent tab, drift reported after a reload,
   await waitText(/Saved as target/, 10000);
   const stored = await page.evaluate((k) => JSON.parse(localStorage.getItem(k) || "null"), key);
   assert(stored && stored.weights.reduce((a, w) => a + w.weightBps, 0) === 10000, "target not stored with weights summing to 100%");
-  // 2) A known target the simulated wallet (NVDAc, MSFTc, GOOGLc) is far from; it must survive a reload
+  // 2) A known target the test wallet (holds no TSLAc) is far from; it must survive a reload
   await page.evaluate((k) => localStorage.setItem(k, JSON.stringify({ label: "TEST-5050", weights: [{ symbol: "NVDAc", weightBps: 5000 }, { symbol: "TSLAc", weightBps: 5000 }], savedAt: new Date().toISOString() })), key);
   await page.reload({ waitUntil: "load" });
   await page.waitForSelector('[data-testid="target-notice"]', { timeout: 60000 });
@@ -507,12 +507,16 @@ await step("Saved target: set from the Agent tab, drift reported after a reload,
   assert(!(await calls()).some((m) => ["wallet_sendCalls", "eth_sendTransaction"].includes(m)), "something was sent");
   const over = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
   assert(over <= 0, `horizontal overflow of ${over}px with the plan open`);
+  // 3a) The user picks the drift threshold; it is kept with the target
+  await click('[data-testid="alert-threshold"] button', /^10%$/);
+  await page.waitForFunction((k) => JSON.parse(localStorage.getItem(k) || "{}").alertPct === 10, { timeout: 10000 }, key);
   // 3b) A saved per-stock limit that the wallet breaks is reported as such
-  await page.evaluate((k) => localStorage.setItem(k, JSON.stringify({ label: "TEST-CAP", maxWeightPct: 35, weights: [{ symbol: "NVDAc", weightBps: 3400 }, { symbol: "MSFTc", weightBps: 3300 }, { symbol: "GOOGLc", weightBps: 3300 }], savedAt: new Date().toISOString() })), key);
+  // Every stock the test wallet may hold (about a third each) sits above a 30% limit, whatever its current mix
+  await page.evaluate((k) => localStorage.setItem(k, JSON.stringify({ label: "TEST-CAP", maxWeightPct: 30, weights: [{ symbol: "NVDAc", weightBps: 2500 }, { symbol: "METAc", weightBps: 2500 }, { symbol: "GOOGLc", weightBps: 2500 }, { symbol: "MSFTc", weightBps: 2500 }], savedAt: new Date().toISOString() })), key);
   await page.reload({ waitUntil: "load" });
   await page.waitForSelector('[data-testid="target-notice"]', { timeout: 60000 });
   const capNotice = await page.$eval('[data-testid="target-notice"]', (e) => e.innerText);
-  assert(/limit is broken/.test(capNotice) && /NVDAc/.test(capNotice), `breach not reported: ${capNotice}`);
+  assert(/limit is broken/.test(capNotice) && /(NVDAc|METAc|GOOGLc|MSFTc)/.test(capNotice), `breach not reported: ${capNotice}`);
   await click('[data-testid="target-notice"] button', /^Review$/);
   await page.waitForSelector('[data-testid="limit-breach"]', { timeout: 20000 });
   // 4) A corrupted entry is ignored; Remove forgets the target
@@ -538,12 +542,22 @@ await step(`No horizontal scrolling on any tab at ${WIDTH}px`, async () => {
   assert(bad.length === 0, bad.join(" "));
 });
 
-await step("News tab lists SEC filings and press releases with the price change since each", async () => {
+await step("Market heatmap: one tile per stock, each opening its stock page", async () => {
+  await tab("Market");
+  await page.waitForSelector('[data-testid="market-heatmap"] a', { timeout: 60000 });
+  const hrefs = await page.$$eval('[data-testid="market-heatmap"] a', (as) => as.map((a) => a.getAttribute("href")));
+  assert(hrefs.length >= 8 && hrefs.every((h) => /^\/stock\/[A-Z]+c$/.test(h)), `unexpected tiles: ${hrefs.join(",")}`);
+  const t = await page.$eval('[data-testid="market-heatmap"]', (e) => e.innerText);
+  assert(/[+-]\d+\.\d{2}%/.test(t), "no 24h change shown");
+  return `${hrefs.length} tiles`;
+});
+
+await step("News tab lists SEC filings, press releases and company news with the price change since each", async () => {
   await tab("News");
   // Right after a deploy the feed answers "loading" and the tab retries by itself
   await page.waitForSelector('[data-testid="news-tab"] li', { timeout: 120000 });
   const t = await page.$eval('[data-testid="news-tab"]', (e) => e.innerText);
-  assert(/SEC filing|Press release/.test(t), "no SEC filing or press release shown");
+  assert(/SEC filing|Press release|Company news/.test(t), "no SEC filing, press release or company news shown");
   assert(/since published/.test(t), "no price change since publication");
   assert(/not financial advice/i.test(t), "disclaimer missing");
   const links = await page.$$eval('[data-testid="news-tab"] li a[target="_blank"]', (as) => as.map((a) => a.href));

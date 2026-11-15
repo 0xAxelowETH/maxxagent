@@ -117,7 +117,7 @@ export function MarketHeatmap({ stocks, updatedAt }: { stocks: HeatStock[]; upda
             24h change of the DEX price · <span className="text-emerald-300">{up} up</span> ·{" "}
             <span className="text-rose-300">{down} down</span> · tile size ={" "}
             {sizeBy === "value" ? "value of the tokens on Base (supply × NAV)" : "24h DEX volume"}
-            {updatedAt ? ` · updated ${new Date(updatedAt).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" })}, refreshes every minute` : ""}
+            {updatedAt ? ` · updated ${new Date(updatedAt).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", timeZoneName: "short" })}, refreshes every minute` : ""}
           </p>
         </div>
         <div className="flex rounded-lg border border-slate-800 bg-[#050811] p-0.5 text-[11px]">

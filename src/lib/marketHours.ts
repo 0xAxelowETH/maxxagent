@@ -50,3 +50,18 @@ export function usMarketStatus(now = new Date()): { state: MarketState; label: s
   if (minutes >= close && minutes < 20 * 60) return { state: "after", label: "US after-hours", detail: drift };
   return { state: "closed", label: "US market closed", detail: drift };
 }
+
+/** New York calendar date (YYYY-MM-DD) and weekday of a moment: the trading day it belongs to */
+export function nyDay(d: Date): { date: string; weekday: string } {
+  const { date, weekday } = nyParts(d);
+  return { date, weekday };
+}
+
+/** Unix seconds of the 16:00 New York close on a New York date (20:00 or 21:00 UTC, following daylight saving) */
+export function nyCloseUnix(date: string): number {
+  for (const h of [20, 21]) {
+    const t = Date.parse(`${date}T${h}:00:00Z`);
+    if (nyParts(new Date(t)).minutes === 16 * 60) return t / 1000;
+  }
+  return Date.parse(`${date}T21:00:00Z`) / 1000;
+}

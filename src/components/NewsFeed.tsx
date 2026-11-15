@@ -33,14 +33,14 @@ const ago = (iso: string) => {
   if (m < 48 * 60) return `${Math.round(m / 60)} h ago`;
   return `${Math.round(m / 1440)} days ago`;
 };
+// Items are grouped by New York date: the trading day the news belongs to, the same for every visitor
+const NY = "America/New_York";
+const nyKey = (x: Date) => x.toLocaleDateString("en-CA", { timeZone: NY });
 const dayLabel = (iso: string) => {
   const d = new Date(iso);
-  const today = new Date();
-  const key = (x: Date) => x.toISOString().slice(0, 10);
-  const yesterday = new Date(Date.now() - 86_400_000);
-  if (key(d) === key(today)) return "Today";
-  if (key(d) === key(yesterday)) return "Yesterday";
-  return d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" });
+  if (nyKey(d) === nyKey(new Date())) return "Today (New York)";
+  if (nyKey(d) === nyKey(new Date(Date.now() - 86_400_000))) return "Yesterday (New York)";
+  return d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: NY });
 };
 const usd = (n: number) => `$${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
