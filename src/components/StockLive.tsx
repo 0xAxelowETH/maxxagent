@@ -17,6 +17,15 @@ interface Live {
   isOracleStale: boolean;
 }
 type Point = [number, number];
+interface NewsMark {
+  kind: string;
+  title: string;
+  url: string;
+  source: string;
+  publishedAt: string;
+  pressRelease?: boolean;
+  changePct: number | null;
+}
 
 const usd = (n: number, d = 2) => `$${n.toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d })}`;
 const compact = (n: number) => `$${Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 2 }).format(n)}`;
@@ -28,6 +37,7 @@ export function StockLive({ symbol, color }: { symbol: string; color: string }) 
   const [live, setLive] = useState<Live | null>(null);
   const [failed, setFailed] = useState(false);
   const [hist, setHist] = useState<{ nav: Point[]; dex: Point[] } | null>(null);
+  const [news, setNews] = useState<NewsMark[]>([]);
 
   useEffect(() => {
     let off = false;
@@ -43,6 +53,11 @@ export function StockLive({ symbol, color }: { symbol: string; color: string }) 
     fetch(`/api/history?symbol=${encodeURIComponent(symbol)}&tf=7D`)
       .then((r) => r.json())
       .then((d) => !off && d?.ok && setHist({ nav: d.nav || [], dex: d.dex || [] }))
+      .catch(() => {});
+    // News and filings to pin on the chart (the feed is cached; "loading" right after a deploy just means no dots yet)
+    fetch(`/api/news?symbol=${encodeURIComponent(symbol)}`)
+      .then((r) => r.json())
+      .then((d) => !off && d?.ok && Array.isArray(d.items) && setNews(d.items))
       .catch(() => {});
     return () => {
       off = true;
@@ -83,12 +98,16 @@ export function StockLive({ symbol, color }: { symbol: string; color: string }) 
           ))}
         </div>
       )}
-      <Chart hist={hist} color={color} />
+      <Chart hist={hist} color={color} news={news} />
     </div>
   );
 }
 
-function Chart({ hist, color }: { hist: { nav: Point[]; dex: Point[] } | null; color: string }) {
+const KIND_DOT: Record<string, string> = { press: "#34d399", newsroom: "#a5b4fc", filing: "#94a3b8", news: "#38bdf8" };
+const kindOf = (n: NewsMark) => (n.kind === "filing" ? (n.pressRelease ? "press" : "filing") : n.kind);
+const KIND_LABEL: Record<string, string> = { press: "Press release", newsroom: "Company news", filing: "SEC filing", news: "Headline" };
+
+function Chart({ hist, color, news }: { hist: { nav: Point[]; dex: Point[] } | null; color: string; news: NewsMark[] }) {
   const W = 600;
   const H = 180;
   if (!hist) return <div className="h-[180px] animate-pulse rounded-2xl bg-slate-800/40" />;
@@ -102,6 +121,22 @@ function Chart({ hist, color }: { hist: { nav: Point[]; dex: Point[] } | null; c
   const y = (v: number) => H - 8 - ((v - lo) / (hi - lo || 1)) * (H - 16);
   const path = (pts: Point[]) =>
     [...pts].sort((a, b) => a[0] - b[0]).map((p, i) => `${i ? "L" : "M"}${x(p[0]).toFixed(1)},${y(p[1]).toFixed(1)}`).join("");
+  // Price line to pin a dot on: the DEX line (24/7) when there is one, else the NAV
+  const line = [...(hist.dex.length > 1 ? hist.dex : hist.nav)].sort((a, b) => a[0] - b[0]);
+  const priceAt = (t: number) => {
+    let v = line[0][1];
+    for (const [ts, p] of line) {
+      if (ts > t) break;
+      v = p;
+    }
+    return v;
+  };
+  const marks = news
+    .map((n) => ({ n, t: Date.parse(n.publishedAt) / 1000 }))
+    .filter(({ t }) => t >= t0 && t <= t1)
+    // Official items first (press releases, company newsrooms, filings), then any headlines, at most 12 dots
+    .sort((a, b) => Number(a.n.kind === "news") - Number(b.n.kind === "news"))
+    .slice(0, 12);
   return (
     <div className="rounded-2xl border border-slate-800 bg-[#0b1120] p-3">
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2 text-[10px] text-slate-400">
@@ -115,14 +150,53 @@ function Chart({ hist, color }: { hist: { nav: Point[]; dex: Point[] } | null; c
           </span>
         </span>
       </div>
-      <svg viewBox={`0 0 ${W} ${H}`} className="h-[180px] w-full" preserveAspectRatio="none" role="img" aria-label="7-day price chart">
-        {hist.nav.length > 1 && <path d={path(hist.nav)} fill="none" stroke={color} strokeWidth="2" vectorEffect="non-scaling-stroke" />}
-        {hist.dex.length > 1 && <path d={path(hist.dex)} fill="none" stroke="#22d3ee" strokeWidth="1.5" strokeDasharray="4 3" vectorEffect="non-scaling-stroke" />}
-      </svg>
+      <div className="relative">
+        <svg viewBox={`0 0 ${W} ${H}`} className="h-[180px] w-full" preserveAspectRatio="none" role="img" aria-label="7-day price chart">
+          {hist.nav.length > 1 && <path d={path(hist.nav)} fill="none" stroke={color} strokeWidth="2" vectorEffect="non-scaling-stroke" />}
+          {hist.dex.length > 1 && <path d={path(hist.dex)} fill="none" stroke="#22d3ee" strokeWidth="1.5" strokeDasharray="4 3" vectorEffect="non-scaling-stroke" />}
+          {marks.map(({ n, t }) => (
+            <line key={`l${n.url}`} x1={x(t)} x2={x(t)} y1={0} y2={H} stroke={KIND_DOT[kindOf(n)] ?? "#94a3b8"} strokeOpacity="0.25" strokeDasharray="2 3" vectorEffect="non-scaling-stroke" />
+          ))}
+        </svg>
+        {/* News dots: HTML on top of the SVG so they stay round; hover for the title, click for the original */}
+        {marks.map(({ n, t }) => {
+          const left = (x(t) / W) * 100;
+          const k = kindOf(n);
+          return (
+            <a
+              key={n.url}
+              href={n.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="group absolute -translate-x-1/2 -translate-y-1/2"
+              style={{ left: `${left}%`, top: `${(y(priceAt(t)) / H) * 100}%` }}
+              aria-label={`${KIND_LABEL[k] ?? "News"}: ${n.title}`}
+            >
+              <span className="block h-3 w-3 rounded-full border-2 border-[#0b1120] shadow" style={{ background: KIND_DOT[k] ?? "#94a3b8" }} />
+              <span
+                className={`pointer-events-none absolute bottom-4 z-10 hidden w-56 rounded-lg border border-slate-700 bg-[#050811] p-2 text-[10px] leading-snug text-slate-300 shadow-xl group-hover:block group-focus:block ${
+                  left > 60 ? "right-0" : "left-0"
+                }`}
+              >
+                <span className="block font-bold text-white">{n.title}</span>
+                <span className="mt-0.5 block text-slate-500">
+                  {KIND_LABEL[k] ?? "News"} · {new Date(n.publishedAt).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "America/New_York" })}
+                  {n.changePct !== null ? ` · ${n.changePct >= 0 ? "+" : ""}${n.changePct.toFixed(2)}% since` : ""}
+                </span>
+              </span>
+            </a>
+          );
+        })}
+      </div>
       <div className="mt-1 flex justify-between font-mono text-[10px] text-slate-500">
         <span>{usd(lo)}</span>
         <span>{usd(hi)}</span>
       </div>
+      {marks.length > 0 && (
+        <p className="mt-1 text-[10px] text-slate-500" data-testid="chart-news">
+          {marks.length} news item{marks.length > 1 ? "s" : ""} and filing{marks.length > 1 ? "s" : ""} on the chart: hover a dot for the title, click to open the original. A dot marks timing only, not a cause.
+        </p>
+      )}
     </div>
   );
 }
