@@ -5,6 +5,7 @@ import { ExternalLink } from "lucide-react";
 import { SiteNav } from "@/components/SiteNav";
 import { IndexBuyBox } from "@/components/IndexBuyBox";
 import { IndexBuys } from "@/components/IndexBuys";
+import { IndexFactsheet } from "@/components/IndexFactsheet";
 import { REGISTRY, readIndex } from "@/lib/indexRegistry";
 import { BASE_TOKENIZED_STOCKS } from "@/lib/tokenizedStocks";
 import { miniappEmbedTags } from "@/lib/miniappEmbed";
@@ -61,7 +62,7 @@ export default async function IndexPage({ params }: { params: Promise<{ id: stri
 
         <div className="space-y-1">
           <div className="font-mono text-xs text-cyan-300">
-            Onchain index #{ix.id} · v{ix.version}
+            Onchain index #{ix.id} · v{ix.version} · factsheet
           </div>
           <h1 className="text-2xl font-extrabold text-white">
             {ix.name} <span className="font-mono text-base text-blue-300">{ix.ticker}</span>
@@ -97,6 +98,8 @@ export default async function IndexPage({ params }: { params: Promise<{ id: stri
             })}
           </div>
         </div>
+
+        <IndexFactsheet ix={ix} />
 
         <IndexBuyBox id={ix.id} name={ix.name} ticker={ix.ticker} basket={basket} />
 
