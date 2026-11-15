@@ -68,6 +68,7 @@ import { detectMiniApp } from "@/lib/miniApp";
 import { RebalancePanel } from "@/components/RebalancePanel";
 import { MarketHeatmap } from "@/components/MarketHeatmap";
 import { stopDriftAlerts } from "@/components/DriftAlerts";
+import { AgentTrace } from "@/components/AgentTrace";
 import { TargetWatch, alertPctOf, driftSummary, type RebalanceLogEntry } from "@/components/TargetWatch";
 import { computeDrift, parseSavedTarget, type SavedTarget } from "@/lib/drift";
 import { TermsGate, TERMS_STORAGE_KEY } from "@/components/TermsGate";
@@ -419,6 +420,10 @@ export default function StockMaxxingDashboard() {
   // Single-stock trade amount (Swap panel), separate from the basket capital in the Agent tab
   const [tradeUsd, setTradeUsd] = useState<number>(10);
   const [agentReport, setAgentReport] = useState<AgentAnalysisReport | null>(null);
+  const [heroPrompt, setHeroPrompt] = useState<string>("");
+  // The hero's Ask button waits for hydration: a submit before it would reload the page instead of asking
+  const [hydrated, setHydrated] = useState(false);
+  useEffect(() => setHydrated(true), []);
   // The basket this wallet wants to hold (saved in this browser, per wallet). The agent checks the wallet against it on every visit.
   const [savedTarget, setSavedTarget] = useState<SavedTarget | null>(null);
   const [runningAgent, setRunningAgent] = useState<boolean>(false);
@@ -786,8 +791,11 @@ export default function StockMaxxingDashboard() {
   }, []);
 
   // Run AI Stock Agent (analysis only; execution always happens from the user's own wallet)
+  // Only the newest run may set the report: an older one finishing later (e.g. the first-visit proposal) is ignored
+  const agentRunId = useRef(0);
   const triggerStockAgent = useCallback(
     async (stocksData?: LiveTokenizedStock[], promptOverride?: string) => {
+      const runId = ++agentRunId.current;
       setRunningAgent(true);
       try {
         const res = await fetch("/api/agent", {
@@ -802,13 +810,14 @@ export default function StockMaxxingDashboard() {
           }),
         });
         const data = await res.json();
+        if (runId !== agentRunId.current) return;
         if (data?.ok && data.report) {
           setAgentReport(data.report);
         }
       } catch (err) {
         console.error("Agent error:", err);
       } finally {
-        setRunningAgent(false);
+        if (runId === agentRunId.current) setRunningAgent(false);
       }
     },
     [stocks, userPrompt, riskProfile, capitalUsd, builderCode]
@@ -862,11 +871,13 @@ export default function StockMaxxingDashboard() {
     };
   }, [walletAddress, balancesFor, walletBalances]);
 
+  // First visit: one proposal from the default request. Never while a run is in progress (asking from the hero
+  // changes the request, which used to start a second, duplicate run)
   useEffect(() => {
-    if (stocks.length > 0 && !agentReport) {
+    if (stocks.length > 0 && !agentReport && !runningAgent) {
       triggerStockAgent(stocks);
     }
-  }, [stocks, agentReport, triggerStockAgent]);
+  }, [stocks, agentReport, runningAgent, triggerStockAgent]);
 
   const copyToClipboard = (text: string, key: string) => {
     navigator.clipboard.writeText(text);
@@ -1823,10 +1834,58 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                   </h2>
 
                   <p className="text-xs sm:text-sm text-slate-300 leading-relaxed max-w-2xl">
-                    Mix NVIDIA, Apple, Tesla and 7 more Coinbase tokenized stocks into a custom index, or let the
-                    agent propose one from live NAV, DEX prices and liquidity. Buy the whole basket with USDC or ETH
-                    in one confirmation, share it as a link, and rebalance it later. Stocks go straight to your wallet.
+                    Tell the agent what you want. It researches 10 Coinbase tokenized stocks from Chainlink, SEC filings and
+                    DEX pools, shows every step with its source, and says what it won&apos;t do. No wallet needed to try.
                   </p>
+
+                  {/* Try the agent right here: no wallet, the result opens on the Agent tab */}
+                  <form
+                    data-testid="hero-ask"
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      const text = heroPrompt.trim();
+                      if (!text) return;
+                      setUserPrompt(text);
+                      setActiveTab("agent");
+                      triggerStockAgent(stocks, text);
+                      window.scrollTo({ top: 0, behavior: "smooth" });
+                    }}
+                    className="space-y-2"
+                  >
+                    <div className="flex gap-2">
+                      <input
+                        value={heroPrompt}
+                        onChange={(e) => setHeroPrompt(e.target.value.slice(0, 300))}
+                        placeholder='e.g. "Chips and cloud, nothing above 25%, keep 15% in cash"'
+                        aria-label="What do you want the agent to build?"
+                        className="min-w-0 flex-1 rounded-xl border border-slate-700 bg-[#050811] px-3 py-2.5 text-xs sm:text-sm text-white placeholder-slate-500 focus:border-[#4C6FFF] focus:outline-none"
+                      />
+                      <button
+                        type="submit"
+                        disabled={!hydrated}
+                        className="inline-flex shrink-0 items-center gap-1.5 rounded-xl bg-gradient-to-r from-[#4C6FFF] to-cyan-600 px-3.5 py-2.5 text-xs font-bold text-white hover:opacity-95 cursor-pointer disabled:opacity-50"
+                      >
+                        <Sparkles className="h-4 w-4" />
+                        Ask
+                      </button>
+                    </div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {[
+                        "Chips and cloud plus Palantir, nothing above 25%, keep 15% in cash",
+                        "Big tech, no crypto, equal weight",
+                        "60% Nvidia, max 25% per stock",
+                      ].map((ex) => (
+                        <button
+                          key={ex}
+                          type="button"
+                          onClick={() => setHeroPrompt(ex)}
+                          className="rounded-lg border border-slate-700 bg-slate-800/60 px-2 py-1 text-[10px] text-slate-300 hover:border-[#4C6FFF] hover:text-white cursor-pointer"
+                        >
+                          {ex}
+                        </button>
+                      ))}
+                    </div>
+                  </form>
                 </div>
 
                 <div className="mt-6 pt-5 border-t border-slate-800/80 flex flex-wrap items-center justify-between gap-4 relative z-10">
@@ -2620,11 +2679,12 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
 
             {/* Right column: the agent's proposed basket */}
             <div className="lg:col-span-7 space-y-5">
-              {!agentReport && (
+              {!agentReport && !runningAgent && (
                 <div className="rounded-2xl border border-dashed border-slate-700 bg-[#0b1120] p-8 text-center text-sm text-slate-400">
-                  {runningAgent ? "Analysing live onchain data…" : "Run the agent to get a proposed basket from live NAV, DEX prices and liquidity."}
+                  Run the agent to get a proposed basket from live NAV, DEX prices and liquidity.
                 </div>
               )}
+              {(agentReport || runningAgent) && <AgentTrace report={runningAgent ? null : agentReport} running={runningAgent} />}
               {agentReport && (
                 <div className="rounded-2xl border border-slate-800 bg-[#0b1120] p-4 sm:p-6 space-y-6">
                   <div className="flex flex-wrap items-start justify-between gap-4 border-b border-slate-800 pb-4">
