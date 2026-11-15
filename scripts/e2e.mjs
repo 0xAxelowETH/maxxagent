@@ -31,7 +31,10 @@ if (!BROWSER) {
 
 let failures = 0;
 const results = [];
+// --only=<regex>: run just the matching steps (plus the setup ones they depend on), e.g. --only="Saved target"
+const ONLY = arg("only", "") ? new RegExp(arg("only", ""), "i") : null;
 const step = async (name, fn) => {
+  if (ONLY && !ONLY.test(name) && !/^(Home loads|Connect wallet)/.test(name)) return;
   const t = Date.now();
   try {
     const note = await fn();
@@ -482,6 +485,20 @@ await step("Agent limits: an unavailable stock is named, a weight limit is kept 
   return "limits, facts and assumptions shown";
 });
 
+
+// Waits for the target notice; on failure says which stage and what the page showed instead
+const waitNotice = async (stage) => {
+  try {
+    await page.waitForSelector('[data-testid="target-notice"]', { timeout: 60000 });
+  } catch {
+    const info = await page.evaluate(() => ({
+      tab: document.querySelector("nav button[aria-current='page'], nav button[data-active='true']")?.textContent?.trim(),
+      watch: !!document.querySelector('[data-testid="target-watch"]'),
+      text: document.body.innerText.slice(0, 300).replace(/\s+/g, " "),
+    }));
+    throw new Error(`no target notice at ${stage}: ${JSON.stringify(info).slice(0, 400)}`);
+  }
+};
 await step("Saved target: set from the Agent tab, drift reported after a reload, plan opens, remove forgets it", async () => {
   const key = "maxxagent_target_" + WALLET.toLowerCase();
   await page.evaluate((k) => localStorage.removeItem(k), key);
@@ -496,7 +513,7 @@ await step("Saved target: set from the Agent tab, drift reported after a reload,
   // 2) A known target the test wallet (holds no TSLAc) is far from; it must survive a reload
   await page.evaluate((k) => localStorage.setItem(k, JSON.stringify({ label: "TEST-5050", weights: [{ symbol: "NVDAc", weightBps: 5000 }, { symbol: "TSLAc", weightBps: 5000 }], savedAt: new Date().toISOString() })), key);
   await page.reload({ waitUntil: "load" });
-  await page.waitForSelector('[data-testid="target-notice"]', { timeout: 60000 });
+  await waitNotice("TEST-5050 after reload");
   const notice = await page.$eval('[data-testid="target-notice"]', (e) => e.innerText);
   assert(/off your TEST-5050 target/.test(notice) && /TSLAc/.test(notice), `unexpected notice: ${notice}`);
   // 3) Review -> Portfolio card -> rebalance plan (nothing is sent)
@@ -514,7 +531,7 @@ await step("Saved target: set from the Agent tab, drift reported after a reload,
   // Every stock the test wallet may hold (about a third each) sits above a 30% limit, whatever its current mix
   await page.evaluate((k) => localStorage.setItem(k, JSON.stringify({ label: "TEST-CAP", maxWeightPct: 30, weights: [{ symbol: "NVDAc", weightBps: 2500 }, { symbol: "METAc", weightBps: 2500 }, { symbol: "GOOGLc", weightBps: 2500 }, { symbol: "MSFTc", weightBps: 2500 }], savedAt: new Date().toISOString() })), key);
   await page.reload({ waitUntil: "load" });
-  await page.waitForSelector('[data-testid="target-notice"]', { timeout: 60000 });
+  await waitNotice("TEST-CAP after reload");
   const capNotice = await page.$eval('[data-testid="target-notice"]', (e) => e.innerText);
   assert(/limit is broken/.test(capNotice) && /(NVDAc|METAc|GOOGLc|MSFTc)/.test(capNotice), `breach not reported: ${capNotice}`);
   await click('[data-testid="target-notice"] button', /^Review$/);
