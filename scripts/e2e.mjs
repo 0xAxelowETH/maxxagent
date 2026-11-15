@@ -538,6 +538,20 @@ await step(`No horizontal scrolling on any tab at ${WIDTH}px`, async () => {
   assert(bad.length === 0, bad.join(" "));
 });
 
+await step("News tab lists SEC filings and press releases with the price change since each", async () => {
+  await tab("News");
+  // Right after a deploy the feed answers "loading" and the tab retries by itself
+  await page.waitForSelector('[data-testid="news-tab"] li', { timeout: 120000 });
+  const t = await page.$eval('[data-testid="news-tab"]', (e) => e.innerText);
+  assert(/SEC filing|Press release/.test(t), "no SEC filing or press release shown");
+  assert(/since published/.test(t), "no price change since publication");
+  assert(/not financial advice/i.test(t), "disclaimer missing");
+  const links = await page.$$eval('[data-testid="news-tab"] li a[target="_blank"]', (as) => as.map((a) => a.href));
+  assert(links.length > 0 && links.every((h) => /^https:\/\//.test(h)), "items must link to their original source");
+  await tab("Market");
+  return `${links.length} links, all to original sources`;
+});
+
 await step("Shared basket link opens the index builder with validated, normalized weights", async () => {
   await page.goto(URL_BASE + "/?basket=NVDAc-50,MSFTc-30,XXX-20&amount=7", { waitUntil: "load", timeout: 120000 });
   await waitText(/Shared basket loaded/, 30000);

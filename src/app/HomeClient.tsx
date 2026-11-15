@@ -11,6 +11,7 @@ import {
   FileText,
   Flame,
   Layers,
+  Newspaper,
   RefreshCw,
   Search,
   ShieldCheck,
@@ -79,7 +80,7 @@ import {
   ExternalWalletKind,
 } from "@/lib/walletConnectors";
 
-type ActiveTab = "terminal" | "agent" | "indexes" | "traction" | "public";
+type ActiveTab = "terminal" | "agent" | "indexes" | "news" | "traction" | "public";
 
 interface EthereumProvider {
   request: (args: { method: string; params?: unknown[] }) => Promise<unknown>;
@@ -1570,6 +1571,12 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                 badge: "Onchain",
               },
               {
+                id: "news",
+                label: "News",
+                icon: Newspaper,
+                badge: "Live",
+              },
+              {
                 id: "traction",
                 label: "Portfolio",
                 icon: Zap,
@@ -2079,9 +2086,6 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
               pending={basketPending}
               pendingLabel={basketStatus || "Working…"}
             />
-
-            {/* Latest headlines and SEC filings across the supported stocks, with the price change since each */}
-            <NewsFeed limit={6} title="Latest news & filings" />
 
             {/* Live Tokenized Stocks Table with Official Stock Logos */}
             <div className="glass-panel rounded-3xl overflow-hidden">
@@ -3076,6 +3080,13 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
         {/* =====================================================================
             TAB 3: NON-CUSTODIAL INDEX REGISTRY
            ===================================================================== */}
+        {/* News & filings for the supported stocks, with the price change since each item was published */}
+        {activeTab === "news" && (
+          <div className="space-y-4" data-testid="news-tab">
+            <NewsFeed limit={15} title="News & filings" />
+          </div>
+        )}
+
         {activeTab === "indexes" && (
           <div className="space-y-6">
             {/* Preset Index Cards with Official Stock & Partner Logos */}
@@ -4456,12 +4467,13 @@ const walletClient = createWalletClient({
         className="md:hidden fixed bottom-0 inset-x-0 z-40 border-t border-slate-800 bg-[#050a18]/95 backdrop-blur-xl pb-[env(safe-area-inset-bottom)]"
         aria-label="Sections"
       >
-        <div className="grid grid-cols-4">
+        <div className="grid grid-cols-5">
           {(
             [
               { id: "terminal", label: "Market", icon: TrendingUp },
               { id: "agent", label: "Agent", icon: Bot },
               { id: "indexes", label: "Indexes", icon: Layers },
+              { id: "news", label: "News", icon: Newspaper },
               { id: "traction", label: "Portfolio", icon: Wallet },
             ] as const
           ).map((t) => {

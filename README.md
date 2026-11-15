@@ -31,6 +31,7 @@ Built for the **Base Builder Quest: Stocks Maxxing Season** (Nov 5 – Dec 5, 20
 | **Rebalance** | Moves current holdings toward an agent basket: sell overweight, then buy underweight with the proceeds; guards against tiny portfolios |
 | **Stock pages** | `/stock/[symbol]`: live NAV, DEX price and gap, liquidity, volume, market cap, multiplier, 7-day NAV vs DEX chart, US market status |
 | **Live stats** | `/stats` counts every trade MAXXAGENT routed, read from onchain router events (team test wallet excluded) |
+| **News & filings** | A News tab (and a section on each stock page) lists the companies' own SEC filings and the press releases they attach to them (earnings, leadership changes, deals), each with topic tags, a short opening line, a link to the original on sec.gov and the token's price change since it was published (24/7 DEX price, or the Chainlink NAV for older items). Public documents only; no article text, images or outlet logos. Labelled "not financial advice" |
 | **Share cards** | A shared basket link or index page previews as a card of the basket (name, weight bar, stocks) on X, Farcaster and chat apps (`/api/og`, 1200×630 and 3:2) |
 | **Mini app** | Opens inside Farcaster clients with the host wallet connected automatically; shared links render as a launch card; casts shared to MAXXAGENT open the stocks they mention |
 | **Index registry** | [`StockMaxxIndexRegistry`](https://basescan.org/address/0xdd059D85d1327a5A4b9cA14cF0A6DF82C7b86909) on Base (source verified on [BaseScan](https://basescan.org/address/0xdd059D85d1327a5A4b9cA14cF0A6DF82C7b86909#code) and [Sourcify](https://repo.sourcify.dev/8453/0xdd059D85d1327a5A4b9cA14cF0A6DF82C7b86909)) publishes index names and weights onchain so anyone can buy the same basket. No deposits, no payable functions, no token transfers, no fees; only an index's creator can change its weights. First index: #1 `MAXX-AIC3` (GOOGLc / MSFTc / NVDAc). Buys of each index are counted from onchain swaps |
@@ -67,6 +68,7 @@ Full walk-through: **[maxxagent.xyz/verify](https://maxxagent.xyz/verify)**.
 | `src/app/api/swap` | Builds swap calldata (USDC or ETH in; whitelist, NAV guard, cost cap, Builder Code) |
 | `src/app/api/agent` | Rule-based basket proposal (adds SEC figures, live risk and unsupported-stock liquidity) |
 | `src/app/api/og` | Share card image for a basket or index |
+| `src/app/api/news`, `src/lib/newsFeed.ts`, `src/components/NewsFeed.tsx` | News & filings feed (SEC EDGAR filings and press releases, price change since publication; cached 15 min and on the CDN) |
 | `src/app/api/pnl` | P/L and trade history from the wallet's onchain transfers |
 | `src/app/api/stats` | Onchain usage stats from router events |
 | `src/app/api/history`, `indexes`, `health` | Price history, registry reads, health check |
@@ -92,7 +94,7 @@ npm run dev                    # http://localhost:3000
 Checks (no funds needed):
 
 ```bash
-npm run test:e2e               # 25 user journeys in a browser with a read-only mock wallet (-- --url=https://maxxagent.xyz for production)
+npm run test:e2e               # 26 user journeys in a browser with a read-only mock wallet (-- --url=https://maxxagent.xyz for production)
 npm run test:agent             # 47 request-reader checks (weights, limits, vocabulary, unsupported stocks)
 npm run test:rebalance         # rebalance planner unit checks
 npm run test:attribution       # Builder Code survives EOA, EIP-7702 and ERC-4337 batching
@@ -119,6 +121,7 @@ Brand and mini app assets: `npm run brand`, `node scripts/generate-miniapp-asset
 | `STATS_EXCLUDE` | optional | Extra wallets excluded from `/stats` |
 | `INDEX_HIDE` | optional | Registry index ids hidden from the site |
 | `SEC_USER_AGENT` | recommended | Contact string SEC EDGAR asks automated clients to send (e.g. `MAXXAGENT admin@yourdomain`) |
+| `FINNHUB_API_KEY` | optional, local only | Adds company headlines to the news feed. Finnhub's free plan is for personal use and its terms forbid sharing the data without written approval, so leave it unset on public deployments unless Finnhub has approved that use |
 | `DEPLOYER_PRIVATE_KEY` | deploy only | Registry deployment (never commit) |
 | `NEXT_PUBLIC_INDEX_REGISTRY_ADDRESS` | auto | Written by `deploy:mainnet` |
 
@@ -128,5 +131,7 @@ Brand and mini app assets: `npm run brand`, `node scripts/generate-miniapp-asset
 - DEX liquidity data can miss pools; GeckoTerminal's public API is rate-limited (charts fall back to Chainlink only).
 - The aggregator may throttle bursts; the swap API retries and re-routes.
 - Right after a deploy the agent's SEC figures and live risk take about a minute to load; until then it says so and uses fixed beta estimates. P/L and stats answer "loading" instead of timing out, and the pages retry.
+- The news feed covers official SEC filings and press releases, not media coverage; the first load after a deploy takes about a minute (the tab retries by itself).
+- Fonts are self-hosted (`src/app/fonts`, SIL Open Font License): `next/font/google` broke builds when Google Fonts changed its responses.
 - Coinbase lists 358 tokenized stocks; MAXXAGENT supports the 10 with deep Base liquidity and a Chainlink price, and names the others as not supported.
 - The registry's owner can only add or remove tokens from its allowlist; it cannot touch indexes or funds.

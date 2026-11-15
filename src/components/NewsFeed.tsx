@@ -1,19 +1,30 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { FileText, Newspaper } from "lucide-react";
+import { FileText, Megaphone, Newspaper } from "lucide-react";
+import { BASE_TOKENIZED_STOCKS } from "@/lib/tokenizedStocks";
+
+const LOGO: Record<string, string> = Object.fromEntries(BASE_TOKENIZED_STOCKS.map((s) => [s.symbol, s.logoUrl]));
 
 interface NewsItem {
   symbol: string;
   kind: "news" | "filing";
   title: string;
+  summary?: string;
+  form?: string;
+  pressRelease?: boolean;
+  tags?: string[];
   source: string;
   url: string;
   publishedAt: string;
+  priceThen: number | null;
+  priceNow: number | null;
   changePct: number | null;
   priceSource: "DEX" | "NAV" | null;
 }
+type Kind = "all" | "press" | "filing" | "news";
+const kindOf = (x: NewsItem): Exclude<Kind, "all"> => (x.kind === "news" ? "news" : x.pressRelease ? "press" : "filing");
 
 const ago = (iso: string) => {
   const m = (Date.now() - Date.parse(iso)) / 60_000;
@@ -21,15 +32,34 @@ const ago = (iso: string) => {
   if (m < 48 * 60) return `${Math.round(m / 60)} h ago`;
   return `${Math.round(m / 1440)} days ago`;
 };
+const dayLabel = (iso: string) => {
+  const d = new Date(iso);
+  const today = new Date();
+  const key = (x: Date) => x.toISOString().slice(0, 10);
+  const yesterday = new Date(Date.now() - 86_400_000);
+  if (key(d) === key(today)) return "Today";
+  if (key(d) === key(yesterday)) return "Yesterday";
+  return d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" });
+};
+const usd = (n: number) => `$${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+const BADGE: Record<Exclude<Kind, "all">, { label: string; cls: string; Icon: typeof FileText }> = {
+  press: { label: "Press release", cls: "border-emerald-500/40 bg-emerald-500/10 text-emerald-300", Icon: Megaphone },
+  filing: { label: "SEC filing", cls: "border-slate-600 bg-slate-800/60 text-slate-300", Icon: FileText },
+  news: { label: "Headline", cls: "border-sky-500/40 bg-sky-500/10 text-sky-300", Icon: Newspaper },
+};
 
 /**
- * Headlines and SEC filings for one stock (symbol) or all supported stocks, each with the price change since it
- * was published. Only the headline, outlet, time and a link to the original are shown.
+ * Official filings and press releases (and headlines where a licensed source is configured) for one stock or
+ * all supported stocks, each with the token's price change since it was published. Only titles, short
+ * openings and links to the originals are shown.
  */
-export function NewsFeed({ symbol, limit = 8, title = "News & filings" }: { symbol?: string; limit?: number; title?: string }) {
+export function NewsFeed({ symbol, limit = 12, title = "News & filings" }: { symbol?: string; limit?: number; title?: string }) {
   const [items, setItems] = useState<NewsItem[] | null>(null);
   const [error, setError] = useState("");
-  const [filter, setFilter] = useState<"all" | "news" | "filing">("all");
+  const [kind, setKind] = useState<Kind>("all");
+  const [stock, setStock] = useState<string>(symbol ?? "all");
+  const [shown, setShown] = useState(limit);
 
   useEffect(() => {
     let cancelled = false;
@@ -40,7 +70,7 @@ export function NewsFeed({ symbol, limit = 8, title = "News & filings" }: { symb
         .then((d) => {
           if (cancelled) return;
           if (d?.ok) setItems(d.items);
-          else if (d?.loading && attempt < 5) timer = setTimeout(() => load(attempt + 1), 8000);
+          else if (d?.loading && attempt < 6) timer = setTimeout(() => load(attempt + 1), 8000);
           else setError(d?.error || "News is unavailable right now.");
         })
         .catch(() => !cancelled && setError("News is unavailable right now."));
@@ -51,74 +81,189 @@ export function NewsFeed({ symbol, limit = 8, title = "News & filings" }: { symb
     };
   }, [symbol]);
 
-  const shown = (items ?? []).filter((x) => filter === "all" || x.kind === filter).slice(0, limit);
-  // The filter only makes sense when both headlines and filings are there
-  const mixed = Boolean(items?.some((x) => x.kind === "news") && items?.some((x) => x.kind === "filing"));
+  const all = useMemo(() => items ?? [], [items]);
+  const kinds = useMemo(() => (["press", "filing", "news"] as const).filter((k) => all.some((x) => kindOf(x) === k)), [all]);
+  const stocks = useMemo(() => [...new Set(all.map((x) => x.symbol))], [all]);
+  const filtered = all.filter((x) => (kind === "all" || kindOf(x) === kind) && (stock === "all" || x.symbol === stock));
+  const visible = filtered.slice(0, shown);
+
+  // Headline numbers for the selection
+  const priced = filtered.filter((x) => x.changePct !== null);
+  const biggest = priced.reduce<NewsItem | null>((b, x) => (!b || Math.abs(x.changePct!) > Math.abs(b.changePct!) ? x : b), null);
+  const press = filtered.filter((x) => kindOf(x) === "press").length;
+
+  // Group the visible items by day
+  const groups: { day: string; list: NewsItem[] }[] = [];
+  for (const x of visible) {
+    const day = dayLabel(x.publishedAt);
+    const g = groups[groups.length - 1];
+    if (g && g.day === day) g.list.push(x);
+    else groups.push({ day, list: [x] });
+  }
+
+  const chip = (active: boolean) =>
+    `inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-bold cursor-pointer transition ${
+      active ? "border-cyan-400 bg-cyan-500/15 text-cyan-200" : "border-slate-700 text-slate-400 hover:border-slate-500 hover:text-slate-200"
+    }`;
 
   return (
-    <div className="rounded-2xl border border-slate-800 bg-[#0b1120] p-4" data-testid="news-feed">
-      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-        <h2 className="text-sm font-bold text-white">{title}</h2>
-        {mixed && (
-        <div className="inline-flex rounded-lg border border-slate-700 bg-[#040814] p-0.5 text-[11px]" role="group" aria-label="Show">
-          {(["all", "news", "filing"] as const).map((f) => (
-            <button
-              key={f}
-              onClick={() => setFilter(f)}
-              className={`rounded-md px-2.5 py-1 font-bold cursor-pointer ${filter === f ? "bg-slate-700 text-white" : "text-slate-400 hover:text-slate-200"}`}
-            >
-              {f === "all" ? "All" : f === "news" ? "Headlines" : "SEC filings"}
-            </button>
-          ))}
+    <div className="rounded-2xl border border-slate-800 bg-[#0b1120] p-4 sm:p-5" data-testid="news-feed">
+      <div className="flex flex-wrap items-end justify-between gap-2">
+        <div>
+          <h2 className="text-base font-extrabold text-white">{title}</h2>
+          <p className="text-[11px] text-slate-500">Official filings and press releases from SEC EDGAR, with the price change since each was published.</p>
         </div>
+        {kinds.length > 1 && (
+          <div className="inline-flex rounded-lg border border-slate-700 bg-[#040814] p-0.5 text-[11px]" role="group" aria-label="Type">
+            {(["all", ...kinds] as Kind[]).map((k) => (
+              <button
+                key={k}
+                onClick={() => {
+                  setKind(k);
+                  setShown(limit);
+                }}
+                className={`rounded-md px-2.5 py-1 font-bold cursor-pointer ${kind === k ? "bg-slate-700 text-white" : "text-slate-400 hover:text-slate-200"}`}
+              >
+                {k === "all" ? "All" : k === "press" ? "Press releases" : k === "filing" ? "SEC filings" : "Headlines"}
+              </button>
+            ))}
+          </div>
         )}
       </div>
 
-      {!items && !error && <p className="text-xs text-slate-500">Loading the latest headlines and filings…</p>}
-      {error && <p className="text-xs text-slate-500">{error}</p>}
-      {items && shown.length === 0 && <p className="text-xs text-slate-500">Nothing in the last few days.</p>}
-
-      <ul className="divide-y divide-slate-800/80">
-        {shown.map((x) => (
-          <li key={`${x.kind}:${x.url}:${x.symbol}`} className="flex items-start gap-3 py-2.5">
-            <span className="mt-0.5 shrink-0 text-slate-500" aria-hidden>
-              {x.kind === "filing" ? <FileText className="h-4 w-4" /> : <Newspaper className="h-4 w-4" />}
-            </span>
-            <div className="min-w-0 flex-1">
-              <div className="flex flex-wrap items-center gap-x-2 text-[10px] text-slate-500">
-                {!symbol && (
-                  <Link href={`/stock/${x.symbol}`} className="font-mono font-bold text-cyan-300 hover:underline">
-                    {x.symbol}
-                  </Link>
-                )}
-                <span>{x.kind === "filing" ? "Official SEC filing" : `Reported by ${x.source}`}</span>
-                <span>· {ago(x.publishedAt)}</span>
+      {items && filtered.length > 0 && (
+        <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-3" data-testid="news-summary">
+          <div className="rounded-xl border border-slate-800 bg-[#070b14] px-3 py-2">
+            <div className="text-[10px] uppercase tracking-wider text-slate-500">Items, last 30 days</div>
+            <div className="font-mono text-lg font-bold text-white">{filtered.length}</div>
+          </div>
+          <div className="rounded-xl border border-slate-800 bg-[#070b14] px-3 py-2">
+            <div className="text-[10px] uppercase tracking-wider text-slate-500">Press releases</div>
+            <div className="font-mono text-lg font-bold text-emerald-300">{press}</div>
+          </div>
+          <div className="rounded-xl border border-slate-800 bg-[#070b14] px-3 py-2">
+            <div className="text-[10px] uppercase tracking-wider text-slate-500">Biggest move since published</div>
+            {biggest ? (
+              <div className="flex items-center gap-2">
+                <span className="font-mono text-sm font-bold text-slate-200">{biggest.symbol}</span>
+                <span className={`font-mono text-lg font-bold ${biggest.changePct! >= 0 ? "text-emerald-300" : "text-rose-300"}`}>
+                  {biggest.changePct! >= 0 ? "+" : ""}
+                  {biggest.changePct!.toFixed(2)}%
+                </span>
               </div>
-              <a href={x.url} target="_blank" rel="noopener noreferrer" className="mt-0.5 block text-xs font-semibold leading-snug text-slate-100 hover:text-white hover:underline">
-                {x.title}
-              </a>
-            </div>
-            <div className="shrink-0 text-right">
-              {x.changePct !== null ? (
-                <>
-                  <div className={`font-mono text-xs font-bold ${x.changePct >= 0 ? "text-emerald-300" : "text-rose-300"}`}>
-                    {x.changePct >= 0 ? "+" : ""}
-                    {x.changePct.toFixed(2)}%
-                  </div>
-                  <div className="text-[9px] text-slate-500">since published ({x.priceSource})</div>
-                </>
-              ) : (
-                <div className="text-[10px] text-slate-600">no price yet</div>
-              )}
-            </div>
-          </li>
-        ))}
-      </ul>
+            ) : (
+              <div className="text-sm text-slate-500">–</div>
+            )}
+          </div>
+        </div>
+      )}
 
-      <p className="mt-2 text-[10px] leading-relaxed text-slate-500">
-        Headlines link to the original publisher; filings to sec.gov. The change is the token&apos;s price now vs when the item
-        was published (24/7 DEX price, or the Chainlink NAV for older items). It doesn&apos;t mean the item caused the move. For
-        reference only, not financial advice.
+      {!symbol && stocks.length > 1 && (
+        <div className="mt-3 flex flex-wrap gap-1.5" role="group" aria-label="Stock">
+          <button onClick={() => { setStock("all"); setShown(limit); }} className={chip(stock === "all")}>
+            All stocks
+          </button>
+          {stocks.map((s) => (
+            <button key={s} onClick={() => { setStock(s); setShown(limit); }} className={chip(stock === s)}>
+              {LOGO[s] && <img src={LOGO[s]} alt="" className="h-4 w-4 rounded-full object-cover" />}
+              {s}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {!items && !error && <p className="mt-4 text-xs text-slate-500">Loading the latest filings and press releases…</p>}
+      {error && <p className="mt-4 text-xs text-slate-500">{error}</p>}
+      {items && filtered.length === 0 && <p className="mt-4 text-xs text-slate-500">Nothing in the last 30 days.</p>}
+
+      <div className="mt-3 space-y-4">
+        {groups.map((g) => (
+          <section key={g.day}>
+            <h3 className="mb-1 text-[10px] font-bold uppercase tracking-wider text-slate-500">{g.day}</h3>
+            <ul className="space-y-2">
+              {g.list.map((x) => {
+                const b = BADGE[kindOf(x)];
+                return (
+                  <li key={`${x.kind}:${x.url}:${x.symbol}`} className="rounded-xl border border-slate-800 bg-[#070b14] p-3 transition hover:border-slate-600">
+                    <div className="flex items-start gap-3">
+                      <Link href={`/stock/${x.symbol}`} className="shrink-0" title={`${x.symbol} stock page`}>
+                        {LOGO[x.symbol] ? (
+                          <img src={LOGO[x.symbol]} alt={x.symbol} className="h-9 w-9 rounded-full border border-slate-700 bg-slate-900 object-cover" />
+                        ) : (
+                          <span className="grid h-9 w-9 place-items-center rounded-full bg-slate-800 font-mono text-[9px] text-slate-300">{x.symbol}</span>
+                        )}
+                      </Link>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-1.5 text-[10px] text-slate-500">
+                          <Link href={`/stock/${x.symbol}`} className="font-mono font-bold text-cyan-300 hover:underline">
+                            {x.symbol}
+                          </Link>
+                          <span className={`inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 font-bold ${b.cls}`}>
+                            <b.Icon className="h-3 w-3" aria-hidden />
+                            {b.label}
+                            {x.form ? ` · ${x.form}` : ""}
+                          </span>
+                          {(x.tags ?? []).map((t) => (
+                            <span key={t} className="rounded-full bg-slate-800 px-1.5 py-0.5 text-slate-300">
+                              {t}
+                            </span>
+                          ))}
+                          <span title={new Date(x.publishedAt).toUTCString()}>· {ago(x.publishedAt)}</span>
+                          {x.kind === "news" && <span>· {x.source}</span>}
+                        </div>
+                        <a href={x.url} target="_blank" rel="noopener noreferrer" className="mt-1 block text-[13px] font-bold leading-snug text-slate-100 hover:text-white hover:underline">
+                          {x.title}
+                        </a>
+                        {x.summary && <p className="mt-1 line-clamp-2 text-[11px] leading-snug text-slate-400">{x.summary}</p>}
+                        <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+                          <a href={x.url} target="_blank" rel="noopener noreferrer" className="text-[10px] font-bold text-cyan-300 hover:text-white hover:underline">
+                            {x.kind === "news" ? `Read on ${x.source} →` : x.pressRelease ? "Read the press release on sec.gov →" : "Read the filing on sec.gov →"}
+                          </a>
+                          {x.changePct !== null ? (
+                            <span className="inline-flex items-center gap-2 text-[10px] text-slate-500" title={`Price source: ${x.priceSource === "DEX" ? "24/7 DEX price" : "Chainlink NAV"}`}>
+                              {x.priceThen !== null && x.priceNow !== null && (
+                                <span className="font-mono">
+                                  {usd(x.priceThen)} → {usd(x.priceNow)}
+                                </span>
+                              )}
+                              <span
+                                className={`rounded-md px-1.5 py-0.5 font-mono text-[11px] font-bold ${
+                                  x.changePct >= 0 ? "bg-emerald-500/15 text-emerald-300" : "bg-rose-500/15 text-rose-300"
+                                }`}
+                              >
+                                {x.changePct >= 0 ? "+" : ""}
+                                {x.changePct.toFixed(2)}%
+                              </span>
+                              <span>since published ({x.priceSource})</span>
+                            </span>
+                          ) : (
+                            <span className="text-[10px] text-slate-600">no price yet</span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          </section>
+        ))}
+      </div>
+
+      {filtered.length > shown && (
+        <button
+          onClick={() => setShown((n) => n + limit)}
+          className="mt-3 w-full rounded-xl border border-slate-700 py-2 text-xs font-bold text-slate-300 hover:border-slate-500 hover:text-white cursor-pointer"
+        >
+          Show more ({filtered.length - shown} more)
+        </button>
+      )}
+
+      <p className="mt-3 text-[10px] leading-relaxed text-slate-500">
+        Source: SEC EDGAR (public filings; press releases are the exhibits companies attach to them)
+        {all.some((x) => x.kind === "news") ? "; headlines from a licensed news provider" : ""}. Titles and openings link to
+        the originals. The change is the token&apos;s price now vs when the item was published (24/7 DEX price, or the
+        Chainlink NAV for older items); it doesn&apos;t mean the item caused the move. For reference only, not financial advice.
       </p>
     </div>
   );

@@ -15,9 +15,16 @@ export async function GET(request: NextRequest) {
   // Keep a rebuild that is still running alive after the response
   after(() => newsPending().then(() => undefined, () => undefined));
   if (!items) return NextResponse.json({ ok: false, loading: true, error: "News is loading." }, { status: 202 });
-  const list = (symbol ? items.filter((x) => x.symbol === symbol) : items).slice(0, symbol ? 20 : 30);
+  // Headlines and filings both make the list (headlines are far more frequent and would push filings out)
+  const pick = (xs: typeof items, news: number, filings: number) => [
+    ...xs.filter((x) => x.kind === "news").slice(0, news),
+    ...xs.filter((x) => x.kind === "filing").slice(0, filings),
+  ].sort((a, b) => (a.publishedAt < b.publishedAt ? 1 : -1));
+  const list = symbol ? pick(items.filter((x) => x.symbol === symbol), 15, 10) : pick(items, 50, 30);
   return NextResponse.json(
     { ok: true, items: list, updatedAt: new Date().toISOString() },
-    { headers: { "Cache-Control": "public, s-maxage=300, stale-while-revalidate=600" } }
+    // Served from Vercel's CDN for 10 minutes (then refreshed in the background for up to an hour), so most
+    // visitors never run the function
+    { headers: { "Cache-Control": "public, s-maxage=600, stale-while-revalidate=3600" } }
   );
 }
