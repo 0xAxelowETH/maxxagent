@@ -69,6 +69,7 @@ import { RebalancePanel } from "@/components/RebalancePanel";
 import { MarketHeatmap } from "@/components/MarketHeatmap";
 import { stopDriftAlerts } from "@/components/DriftAlerts";
 import { AgentTrace } from "@/components/AgentTrace";
+import { BasketReplay } from "@/components/BasketReplay";
 import { TargetWatch, alertPctOf, driftSummary, type RebalanceLogEntry } from "@/components/TargetWatch";
 import { computeDrift, parseSavedTarget, type SavedTarget } from "@/lib/drift";
 import { TermsGate, TERMS_STORAGE_KEY } from "@/components/TermsGate";
@@ -2685,6 +2686,9 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                 </div>
               )}
               {(agentReport || runningAgent) && <AgentTrace report={runningAgent ? null : agentReport} running={runningAgent} />}
+              {agentReport && !runningAgent && agentReport.allocations.length > 0 && (
+                <BasketReplay legs={agentReport.allocations.map((a) => ({ symbol: a.symbol, pct: a.capitalSharePct }))} />
+              )}
               {agentReport && (
                 <div className="rounded-2xl border border-slate-800 bg-[#0b1120] p-4 sm:p-6 space-y-6">
                   <div className="flex flex-wrap items-start justify-between gap-4 border-b border-slate-800 pb-4">

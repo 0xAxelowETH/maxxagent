@@ -220,7 +220,8 @@ async function enrich8K(cik: number, accession: string, url: string, company: st
 async function secFilings(): Promise<Omit<NewsItem, "priceThen" | "priceNow" | "changePct" | "priceSource">[]> {
   const since = Date.now() - 30 * 86_400_000;
   const out: (Omit<NewsItem, "priceThen" | "priceNow" | "changePct" | "priceSource"> & { cik: number; accession: string })[] = [];
-  for (const [symbol, cik] of Object.entries(SEC_CIK)) {
+  // Five companies at a time (SEC allows 10 requests a second): was one after another, up to 8 s each
+  await inBatches(Object.entries(SEC_CIK), 5, async ([symbol, cik]) => {
     try {
       const res = await fetch(`https://data.sec.gov/submissions/CIK${String(cik).padStart(10, "0")}.json`, {
         headers: { "User-Agent": USER_AGENT, Accept: "application/json" },
@@ -228,9 +229,9 @@ async function secFilings(): Promise<Omit<NewsItem, "priceThen" | "priceNow" | "
         next: { revalidate: 1800 },
         signal: AbortSignal.timeout(8000),
       });
-      if (!res.ok) continue;
+      if (!res.ok) return;
       const r = (await res.json())?.filings?.recent;
-      if (!r?.form) continue;
+      if (!r?.form) return;
       for (let i = 0; i < r.form.length && i < 60; i++) {
         const form: string = r.form[i];
         if (!FORMS[form]) continue;
@@ -261,13 +262,13 @@ async function secFilings(): Promise<Omit<NewsItem, "priceThen" | "priceNow" | "
     } catch {
       // one company failing leaves the others
     }
-  }
+  });
   // Current reports are short and say what happened: use the attached press release, else the opening sentence.
-  // Three at a time keeps well under SEC's 10 requests per second.
+  // Five at a time stays under SEC's 10 requests per second.
   const reports = out.filter((x) => x.form?.startsWith("8-K") || x.form === "6-K");
-  for (let i = 0; i < reports.length; i += 3) {
+  for (let i = 0; i < reports.length; i += 5) {
     await Promise.all(
-      reports.slice(i, i + 3).map(async (x) => {
+      reports.slice(i, i + 5).map(async (x) => {
         const e = await enrich8K(x.cik, x.accession, x.url, companyOf(x.symbol));
         if (e.title) x.title = `${companyOf(x.symbol)}: ${e.title}`;
         // A dateline cut can leave "Today announced …": put the company back in front
@@ -489,16 +490,20 @@ async function build(): Promise<NewsItem[]> {
   const weekAgo = Date.now() / 1000 - 7 * 86_400;
   const priced: NewsItem[] = [];
   // Prices: the hourly 24/7 DEX price for the last week when GeckoTerminal answers, else the Chainlink NAV daily
-  // close (shared cache, RPC once per 6 h). One symbol at a time, and never past a time budget: an item
+  // close (shared cache, RPC once per 6 h). Three symbols at a time, each read capped at 8 s, and never past a 15 s budget: an item
   // without a price is better than a feed that never finishes.
-  const deadline = Date.now() + 30_000;
+  const deadline = Date.now() + 15_000;
   const feedOf = (s: string) => BASE_TOKENIZED_STOCKS.find((b) => b.symbol === s)?.chainlinkFeed;
-  await inBatches(symbols, 1, async (symbol) => {
+  // Three stocks at a time (all ten at once overloaded GeckoTerminal and the RPC: 80 s instead of 15)
+  await inBatches(symbols, 3, async (symbol) => {
     const mine = raw.filter((r) => r.symbol === symbol);
     const inBudget = Date.now() < deadline;
     const dex = inBudget && mine.some((x) => Date.parse(x.publishedAt) / 1000 >= weekAgo) ? await dexSeries(symbol, "7D") : [];
     const feed = feedOf(symbol);
-    const nav = inBudget && feed ? await navDailyCloses(feed).catch(() => [] as [number, number][]) : [];
+    const nav =
+      inBudget && feed
+        ? await Promise.race([navDailyCloses(feed).catch(() => [] as [number, number][]), new Promise<[number, number][]>((r) => setTimeout(() => r([]), 8000))])
+        : [];
     for (const x of mine) {
       const t = Date.parse(x.publishedAt) / 1000;
       const useDex = t >= weekAgo && dex.length > 1 && dex[0][0] <= t;
@@ -521,7 +526,7 @@ async function build(): Promise<NewsItem[]> {
  * The built feed is kept in Vercel's shared Data Cache, so one successful build serves every server instance
  * for 15 minutes (a per-instance memory cache alone meant cold instances kept rebuilding from scratch).
  */
-const sharedBuild = unstable_cache(build, ["news-feed-v6"], { revalidate: CACHE_MS / 1000 });
+const sharedBuild = unstable_cache(build, ["news-feed-v10"], { revalidate: CACHE_MS / 1000 });
 
 let cache: { at: number; items: NewsItem[] } | null = null;
 let inflight: Promise<NewsItem[]> | null = null;

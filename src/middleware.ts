@@ -66,6 +66,7 @@ const LIMITS: Record<string, number> = {
   "/api/health": 30,
   "/api/watch": 20,
   "/api/cron": 5,
+  "/api/replay": 30,
   "/api/miniapp/webhook": 30,
 };
 const WINDOW_MS = 60_000;

@@ -24,8 +24,8 @@ export async function GET(request: NextRequest) {
   const list = symbol ? pick(items.filter((x) => x.symbol === symbol), 15, 8, 10) : pick(items, 50, 30, 30);
   return NextResponse.json(
     { ok: true, items: list, updatedAt: new Date().toISOString() },
-    // Served from Vercel's CDN for 10 minutes (then refreshed in the background for up to an hour), so most
-    // visitors never run the function
-    { headers: { "Cache-Control": "public, s-maxage=600, stale-while-revalidate=3600" } }
+    // Served from Vercel's CDN: fresh for 10 minutes, then the previous answer keeps being served instantly (up to a
+    // day) while it refreshes in the background, so visitors almost never wait for a rebuild
+    { headers: { "Cache-Control": "public, s-maxage=600, stale-while-revalidate=86400" } }
   );
 }
