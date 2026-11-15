@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { MaxxLoader } from "@/components/MaxxLoader";
 import { Ban, CheckCircle2, Hand, Loader2, Receipt } from "lucide-react";
 import type { AgentAnalysisReport } from "@/lib/agentEngine";
 
@@ -97,7 +98,10 @@ export function AgentTrace({ report, running }: { report: AgentAnalysisReport | 
   return (
     <div className="space-y-4">
       <section className="rounded-2xl border border-cyan-500/25 bg-[#0b1120] p-4 sm:p-5" data-testid="agent-trace" aria-label="How the agent worked">
-        <h3 className="text-sm font-bold text-white">Watch it think</h3>
+        <div className="flex items-center justify-between gap-3">
+          <h3 className="text-sm font-bold text-white">Watch it think</h3>
+          {running && <MaxxLoader size={22} label="Researching…" />}
+        </div>
         <p className="text-[11px] text-slate-400">Every step it took for your request, with receipts: open them to check the source yourself.</p>
         <ol className="mt-3 space-y-2.5">
           {names.map((name, i) => {

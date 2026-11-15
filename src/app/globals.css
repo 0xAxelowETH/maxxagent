@@ -174,3 +174,28 @@ img.logo-wordmark {
   max-width: none;
   object-fit: contain;
 }
+
+/* Brand loader (MaxxLoader): the M draws itself, the agent node pulses */
+.maxx-draw {
+  stroke-dasharray: 100;
+  stroke-dashoffset: 100;
+  animation: maxx-draw 1.6s ease-in-out infinite;
+}
+.maxx-node {
+  transform-origin: 49px 17px;
+  animation: maxx-node 1.6s ease-in-out infinite;
+}
+@keyframes maxx-draw {
+  0% { stroke-dashoffset: 100; }
+  55%, 80% { stroke-dashoffset: 0; }
+  100% { stroke-dashoffset: -100; }
+}
+@keyframes maxx-node {
+  0%, 45% { transform: scale(0.4); opacity: 0.4; }
+  60% { transform: scale(1.25); opacity: 1; }
+  100% { transform: scale(0.9); opacity: 0.7; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .maxx-draw { animation: none; stroke-dashoffset: 0; }
+  .maxx-node { animation: none; }
+}

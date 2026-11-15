@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { MaxxLoader } from "@/components/MaxxLoader";
 import Link from "next/link";
 import { Moon } from "lucide-react";
 import { nextOpenUnix, usMarketStatus } from "@/lib/marketHours";
@@ -247,7 +248,11 @@ export function MarketHeatmap({ stocks, updatedAt, links = true }: { stocks: Hea
             </Tile>
           );
         })}
-        {!tiles.length && <div className="absolute inset-0 grid place-items-center text-xs text-slate-500">Loading the market…</div>}
+        {!tiles.length && (
+          <div className="absolute inset-0 grid place-items-center">
+            <MaxxLoader label="Loading the market…" />
+          </div>
+        )}
       </div>
       <p className="text-[10px] text-slate-500">
         {colorBy === "gap"

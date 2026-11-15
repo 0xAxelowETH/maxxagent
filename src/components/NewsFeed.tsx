@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { MaxxLoader } from "@/components/MaxxLoader";
 import Link from "next/link";
 import { Building2, FileText, Megaphone, Newspaper } from "lucide-react";
 import { BASE_TOKENIZED_STOCKS } from "@/lib/tokenizedStocks";
@@ -200,7 +201,7 @@ export function NewsFeed({
         </div>
       )}
 
-      {!items && !error && <p className="mt-4 text-xs text-slate-500">Loading the latest filings and press releases…</p>}
+      {!items && !error && <MaxxLoader className="mt-4" label="Loading the latest filings and press releases…" />}
       {error && <p className="mt-4 text-xs text-slate-500">{error}</p>}
       {items && filtered.length === 0 && <p className="mt-4 text-xs text-slate-500">Nothing in the last 30 days.</p>}
 
