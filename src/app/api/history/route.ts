@@ -111,7 +111,10 @@ export async function GET(request: NextRequest) {
   const dexOnly = only === "dex";
   const key = `${symbol}:${tf}:${navOnly ? "nav" : dexOnly ? "dex" : "all"}`;
   const hit = cache.get(key);
-  if (hit && Date.now() - hit.at < TTL_MS) return NextResponse.json(hit.body);
+  // Charts change slowly: the CDN answers the same URL for 2 minutes and keeps it up to 15 while refreshing,
+  // so switching stocks or many viewers of one chart don't each run the function (Chainlink rounds are costly)
+  const CDN = { "Cache-Control": "public, s-maxage=120, stale-while-revalidate=900" };
+  if (hit && Date.now() - hit.at < TTL_MS) return NextResponse.json(hit.body, { headers: CDN });
 
   const since = Math.floor(Date.now() / 1000) - TF[tf].seconds;
   const [navRes, dexRes] = await Promise.allSettled([
@@ -132,6 +135,8 @@ export async function GET(request: NextRequest) {
     },
     fetchedAt: new Date().toISOString(),
   };
-  if (body.nav.length > 0 || body.dex.length > 0) cache.set(key, { at: Date.now(), body });
-  return NextResponse.json(body);
+  const filled = body.nav.length > 0 || body.dex.length > 0;
+  if (filled) cache.set(key, { at: Date.now(), body });
+  // An empty answer (a source failed) is not kept by the CDN, so the next request tries again
+  return NextResponse.json(body, { headers: filled ? CDN : { "Cache-Control": "no-store" } });
 }

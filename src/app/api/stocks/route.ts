@@ -461,5 +461,11 @@ export async function GET(request: NextRequest) {
     walletEth,
     ethUsd,
     walletError,
+  }, {
+    // Market only (no wallet): the CDN answers for 15 s and keeps the last answer up to a minute while refreshing,
+    // so the Market tab's one-minute refresh costs almost no function runs. Anything with a wallet is never cached.
+    headers: walletParam
+      ? { "Cache-Control": "private, no-store" }
+      : { "Cache-Control": "public, s-maxage=15, stale-while-revalidate=60" },
   });
 }
