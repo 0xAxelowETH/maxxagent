@@ -69,6 +69,18 @@ ok(m.cashPct === 15 && m.maxWeightPct === 25, `"up to 15% in cash" is a reserve,
 m = parseMandate("saham AI, maksimal 30% per saham, sisakan 20% di usdc");
 ok(m.maxWeightPct === 30 && m.cashPct === 20, `Indonesian limits -> ${JSON.stringify({ cap: m.maxWeightPct, cash: m.cashPct })}`);
 
+for (const [text, cap, cash] of [
+  ["Chips and cloud plus Palantir, nothing above 25%, keep 15% in cash", 25, 15],
+  ["tech-heavy, nothing above 40%", 40, undefined],
+  ["AI stocks, none of them over 30%", 30, undefined],
+  ["big tech, each at most 20%", 20, undefined],
+  ["cloud names, under 25% each", 25, undefined],
+  ["saham AI, tidak ada yang lebih dari 30%", 30, undefined],
+]) {
+  m = parseMandate(text);
+  ok(m.maxWeightPct === cap && m.cashPct === cash, `cap phrasing "${text}" -> ${JSON.stringify({ cap: m.maxWeightPct, cash: m.cashPct })}`);
+}
+
 m = parseMandate("AMD and Intel only");
 ok(m.only && m.themes.includes("chips") && m.unavailable.every((u) => u.closest === "chips"), `AMD/Intel -> closest available chips -> ${JSON.stringify({ t: m.themes, u: m.unavailable })}`);
 
