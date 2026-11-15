@@ -11,7 +11,8 @@ const BLOCKED_COUNTRIES = new Set(["US", "PR", "GU", "VI", "AS", "MP", "UM"]);
 
 const STOCK_SYMBOLS = ["NVDAc", "AAPLc", "TSLAc", "MSFTc", "METAc", "GOOGLc", "AMZNc", "MSTRc", "SNDKc", "SPCXc"];
 // Server-to-server endpoints (Vercel Cron and Farcaster's webhook run in the US) also stay reachable: no trading there
-const PUBLIC_EVERYWHERE = ["/.well-known/", "/api/cron/", "/api/miniapp/webhook","/brand/", "/robots.txt", "/sitemap.xml", "/icon.svg", "/apple-icon.png", "/favicon.ico"];
+// "/preview" is the read-only, no-trading page for reviewers anywhere (informational only, rendered on the server)
+const PUBLIC_EVERYWHERE = ["/preview", "/.well-known/", "/api/cron/", "/api/miniapp/webhook", "/brand/", "/robots.txt", "/sitemap.xml", "/icon.svg", "/apple-icon.png", "/favicon.ico"];
 const SITE = (process.env.NEXT_PUBLIC_SITE_URL || "https://maxxagent.xyz").replace(/\/$/, "");
 const esc = (v: string) => v.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
 const PREVIEW_DESC = "Build your own index of Coinbase tokenized stocks on Base, or let an agent propose one, and buy it in one click from your own wallet. Not financial advice.";
@@ -146,7 +147,8 @@ export function middleware(request: NextRequest) {
       previewTags(path) +
       "</head><body style='font-family:system-ui;background:#050811;color:#e2e8f0;display:grid;place-items:center;min-height:100vh;margin:0;padding:16px'>" +
       "<div style='max-width:480px'><h1 style='font-size:20px'>Not available in your jurisdiction</h1>" +
-      "<p style='color:#94a3b8;font-size:14px;line-height:1.6'>Coinbase tokenized stocks on Base are only available to persons in eligible jurisdictions outside of the United States.</p></div></body></html>",
+      "<p style='color:#94a3b8;font-size:14px;line-height:1.6'>Coinbase tokenized stocks on Base are only available to persons in eligible jurisdictions outside of the United States.</p>" +
+      "<p style='font-size:13px'><a href='/preview' style='color:#67e8f9'>View a read-only preview (no trading)</a></p></div></body></html>",
     { status: 200, headers: { "content-type": "text/html; charset=utf-8", "x-geo-blocked": "1", "cache-control": "private, no-store" } }
   );
 }

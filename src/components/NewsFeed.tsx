@@ -7,7 +7,7 @@ import { BASE_TOKENIZED_STOCKS } from "@/lib/tokenizedStocks";
 
 const LOGO: Record<string, string> = Object.fromEntries(BASE_TOKENIZED_STOCKS.map((s) => [s.symbol, s.logoUrl]));
 
-interface NewsItem {
+export interface NewsItem {
   symbol: string;
   kind: "news" | "filing" | "newsroom";
   title: string;
@@ -44,6 +44,17 @@ const dayLabel = (iso: string) => {
 };
 const usd = (n: number) => `$${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
+/** A link to the stock page, or plain text where those pages aren't available */
+function MaybeLink({ on, href, className, title, children }: { on: boolean; href: string; className?: string; title?: string; children: React.ReactNode }) {
+  return on ? (
+    <Link href={href} className={className} title={title}>
+      {children}
+    </Link>
+  ) : (
+    <span className={className}>{children}</span>
+  );
+}
+
 const BADGE: Record<Exclude<Kind, "all">, { label: string; cls: string; Icon: typeof FileText }> = {
   press: { label: "Press release", cls: "border-emerald-500/40 bg-emerald-500/10 text-emerald-300", Icon: Megaphone },
   newsroom: { label: "Company news", cls: "border-indigo-400/40 bg-indigo-500/10 text-indigo-200", Icon: Building2 },
@@ -56,14 +67,29 @@ const BADGE: Record<Exclude<Kind, "all">, { label: string; cls: string; Icon: ty
  * all supported stocks, each with the token's price change since it was published. Only titles, short
  * openings and links to the originals are shown.
  */
-export function NewsFeed({ symbol, limit = 12, title = "News & filings" }: { symbol?: string; limit?: number; title?: string }) {
-  const [items, setItems] = useState<NewsItem[] | null>(null);
+export function NewsFeed({
+  symbol,
+  limit = 12,
+  title = "News & filings",
+  initialItems,
+  stockLinks = true,
+}: {
+  symbol?: string;
+  limit?: number;
+  title?: string;
+  /** items rendered by the server (the read-only preview): no request from the browser */
+  initialItems?: NewsItem[];
+  /** link each item's stock to its page (off in the preview, where those pages aren't open) */
+  stockLinks?: boolean;
+}) {
+  const [items, setItems] = useState<NewsItem[] | null>(initialItems ?? null);
   const [error, setError] = useState("");
   const [kind, setKind] = useState<Kind>("all");
   const [stock, setStock] = useState<string>(symbol ?? "all");
   const [shown, setShown] = useState(limit);
 
   useEffect(() => {
+    if (initialItems) return;
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const load = (attempt: number) =>
@@ -81,7 +107,7 @@ export function NewsFeed({ symbol, limit = 12, title = "News & filings" }: { sym
       cancelled = true;
       if (timer) clearTimeout(timer);
     };
-  }, [symbol]);
+  }, [symbol, initialItems]);
 
   const all = useMemo(() => items ?? [], [items]);
   const kinds = useMemo(() => (["press", "newsroom", "filing", "news"] as const).filter((k) => all.some((x) => kindOf(x) === k)), [all]);
@@ -188,18 +214,18 @@ export function NewsFeed({ symbol, limit = 12, title = "News & filings" }: { sym
                 return (
                   <li key={`${x.kind}:${x.url}:${x.symbol}`} className="rounded-xl border border-slate-800 bg-[#070b14] p-3 transition hover:border-slate-600">
                     <div className="flex items-start gap-3">
-                      <Link href={`/stock/${x.symbol}`} className="shrink-0" title={`${x.symbol} stock page`}>
+                      <MaybeLink on={stockLinks} href={`/stock/${x.symbol}`} className="shrink-0" title={`${x.symbol} stock page`}>
                         {LOGO[x.symbol] ? (
                           <img src={LOGO[x.symbol]} alt={x.symbol} className="h-9 w-9 rounded-full border border-slate-700 bg-slate-900 object-cover" />
                         ) : (
                           <span className="grid h-9 w-9 place-items-center rounded-full bg-slate-800 font-mono text-[9px] text-slate-300">{x.symbol}</span>
                         )}
-                      </Link>
+                      </MaybeLink>
                       <div className="min-w-0 flex-1">
                         <div className="flex flex-wrap items-center gap-1.5 text-[10px] text-slate-500">
-                          <Link href={`/stock/${x.symbol}`} className="font-mono font-bold text-cyan-300 hover:underline">
+                          <MaybeLink on={stockLinks} href={`/stock/${x.symbol}`} className="font-mono font-bold text-cyan-300 hover:underline">
                             {x.symbol}
-                          </Link>
+                          </MaybeLink>
                           <span className={`inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 font-bold ${b.cls}`}>
                             <b.Icon className="h-3 w-3" aria-hidden />
                             {b.label}

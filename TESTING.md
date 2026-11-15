@@ -56,6 +56,10 @@ Use small amounts ($1–$2). Do it on a phone **and** on a desktop.
 - [ ] Rejecting in the wallet shows "Order not completed", nothing is sent
 - [ ] Wrong network: the app asks the wallet to switch to Base
 
+**US visitors (read-only preview)**
+- [ ] `curl -H "x-vercel-ip-country: US" <site>/` shows the block page with a "View a read-only preview" link; `/api/stocks` answers 451
+- [ ] `/preview` with the same header: notice, heatmap, agent example and news; no Buy / Sell / Connect wallet, no links to `/stock/…`, no `/api/` request from the browser
+
 **Speed and layout**
 - [ ] Switching stocks on the Market chart shows the new price at once
 - [ ] Portfolio loads in under ~2 seconds, with a loading state (never "No tokenized stocks" while loading)

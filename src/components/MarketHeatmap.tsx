@@ -69,6 +69,17 @@ function squarify(values: number[], box: Rect): Rect[] {
   return out;
 }
 
+/** A tile: a link to the stock page, or a plain box where those pages aren't available */
+function Tile({ href, children, ...rest }: { href?: string; title: string; className: string; style: React.CSSProperties; children: React.ReactNode }) {
+  return href ? (
+    <Link href={href} {...rest}>
+      {children}
+    </Link>
+  ) : (
+    <div {...rest}>{children}</div>
+  );
+}
+
 /** Red for a fall, green for a rise, deeper with the size of the move (full colour at ±3%) */
 function heat(pct: number): string {
   const t = Math.min(Math.abs(pct) / 3, 1);
@@ -84,7 +95,7 @@ const usdShort = (n: number) =>
  * Market heatmap of the supported tokenized stocks: tile size = onchain value (tokens on Base × NAV) or 24h DEX
  * volume, colour = 24h change of the DEX price. Each tile opens the stock page.
  */
-export function MarketHeatmap({ stocks, updatedAt }: { stocks: HeatStock[]; updatedAt?: string }) {
+export function MarketHeatmap({ stocks, updatedAt, links = true }: { stocks: HeatStock[]; updatedAt?: string; links?: boolean }) {
   const [sizeBy, setSizeBy] = useState<SizeBy>("value");
   const ref = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(0);
@@ -117,7 +128,7 @@ export function MarketHeatmap({ stocks, updatedAt }: { stocks: HeatStock[]; upda
             24h change of the DEX price · <span className="text-emerald-300">{up} up</span> ·{" "}
             <span className="text-rose-300">{down} down</span> · tile size ={" "}
             {sizeBy === "value" ? "value of the tokens on Base (supply × NAV)" : "24h DEX volume"}
-            {updatedAt ? ` · updated ${new Date(updatedAt).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", timeZoneName: "short" })}, refreshes every minute` : ""}
+            {updatedAt && links ? ` · updated ${new Date(updatedAt).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", timeZoneName: "short" })}, refreshes every minute` : ""}
           </p>
         </div>
         <div className="flex rounded-lg border border-slate-800 bg-[#050811] p-0.5 text-[11px]">
@@ -142,9 +153,9 @@ export function MarketHeatmap({ stocks, updatedAt }: { stocks: HeatStock[]; upda
           const text = m > 34;
           const pct = `${s.change24hPct >= 0 ? "+" : ""}${s.change24hPct.toFixed(2)}%`;
           return (
-            <Link
+            <Tile
               key={s.symbol}
-              href={`/stock/${s.symbol}`}
+              href={links ? `/stock/${s.symbol}` : undefined}
               title={`${s.companyName} (${s.symbol}) · ${pct} 24h · DEX $${s.dexPrice24_7.toFixed(2)} · NAV $${s.navPrice.toFixed(2)} · ${
                 sizeBy === "value" ? `onchain value ${usdShort(size)}` : `24h volume ${usdShort(size)}`
               }`}
@@ -170,13 +181,13 @@ export function MarketHeatmap({ stocks, updatedAt }: { stocks: HeatStock[]; upda
                   {big && <span className="text-[11px] text-white/70">{usdShort(size)}</span>}
                 </>
               )}
-            </Link>
+            </Tile>
           );
         })}
         {!tiles.length && <div className="absolute inset-0 grid place-items-center text-xs text-slate-500">Loading the market…</div>}
       </div>
       <p className="text-[10px] text-slate-500">
-        24h change from the Base DEX pool of each token (it trades 24/7, also when US markets are closed). Tap a tile for the stock page. Not financial advice.
+        24h change from the Base DEX pool of each token (it trades 24/7, also when US markets are closed).{links ? " Tap a tile for the stock page." : ""} Not financial advice.
       </p>
     </section>
   );
