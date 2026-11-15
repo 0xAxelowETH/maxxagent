@@ -140,3 +140,7 @@ Brand and mini app assets: `npm run brand`, `node scripts/generate-miniapp-asset
 - Fonts are self-hosted (`src/app/fonts`, SIL Open Font License): `next/font/google` broke builds when Google Fonts changed its responses.
 - Coinbase lists 358 tokenized stocks; MAXXAGENT supports the 10 with deep Base liquidity and a Chainlink price, and names the others as not supported.
 - The registry's owner can only add or remove tokens from its allowlist; it cannot touch indexes or funds.
+
+## License and brand
+
+The code is open source under the [MIT License](LICENSE). The MAXXAGENT name, logo and brand assets (`public/brand/`) are **not** covered by the MIT License and may not be used to name or promote another product; see [NOTICE](NOTICE). Building on the code is welcome: please give your project its own name and keep the copyright notice.
