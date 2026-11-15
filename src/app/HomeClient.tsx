@@ -872,12 +872,13 @@ export default function StockMaxxingDashboard() {
     };
   }, [walletAddress, balancesFor, walletBalances]);
 
-  // First visit: one proposal from the default request. Never while a run is in progress (asking from the hero
-  // changes the request, which used to start a second, duplicate run)
+  // First visit: one proposal from the default request, started once. A run that fails (e.g. rate limited) must not
+  // start another by itself, and asking from the hero must not add a duplicate run.
+  const autoRunStarted = useRef(false);
   useEffect(() => {
-    if (stocks.length > 0 && !agentReport && !runningAgent) {
-      triggerStockAgent(stocks);
-    }
+    if (autoRunStarted.current || stocks.length === 0 || agentReport || runningAgent) return;
+    autoRunStarted.current = true;
+    triggerStockAgent(stocks);
   }, [stocks, agentReport, runningAgent, triggerStockAgent]);
 
   const copyToClipboard = (text: string, key: string) => {
