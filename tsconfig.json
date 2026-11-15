@@ -31,10 +31,9 @@
   "include": [
     "**/*.ts",
     "**/*.tsx",
-    ".next-audit/types/**/*.ts",
     ".next/types/**/*.ts",
     "next-env.d.ts",
-    ".next-audit3/types/**/*.ts"
+    ".next-audit/types/**/*.ts"
   ],
   "exclude": [
     "node_modules"
