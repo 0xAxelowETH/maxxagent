@@ -60,6 +60,7 @@ const LIMITS: Record<string, number> = {
   "/api/indexes": 60,
   "/api/pnl": 20,
   "/api/stats": 30,
+  "/api/news": 60,
   "/api/health": 30,
 };
 const WINDOW_MS = 60_000;

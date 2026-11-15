@@ -69,6 +69,7 @@ import { TargetWatch, DRIFT_ALERT_PCT, driftSummary } from "@/components/TargetW
 import { computeDrift, parseSavedTarget, type SavedTarget } from "@/lib/drift";
 import { TermsGate, TERMS_STORAGE_KEY } from "@/components/TermsGate";
 import { UsdAmountInput } from "@/components/UsdAmountInput";
+import { NewsFeed } from "@/components/NewsFeed";
 import { basketToQuery, cleanIndexName, parseSharedBasket } from "@/lib/shareBasket";
 import {
   connectExternalWallet,
@@ -2078,6 +2079,9 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
               pending={basketPending}
               pendingLabel={basketStatus || "Working…"}
             />
+
+            {/* Latest headlines and SEC filings across the supported stocks, with the price change since each */}
+            <NewsFeed limit={6} title="Latest news & filings" />
 
             {/* Live Tokenized Stocks Table with Official Stock Logos */}
             <div className="glass-panel rounded-3xl overflow-hidden">

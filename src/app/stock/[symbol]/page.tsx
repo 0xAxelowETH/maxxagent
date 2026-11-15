@@ -4,6 +4,7 @@ import { notFound } from "next/navigation";
 import { ExternalLink, FileText } from "lucide-react";
 import { SiteNav } from "@/components/SiteNav";
 import { StockLive } from "@/components/StockLive";
+import { NewsFeed } from "@/components/NewsFeed";
 import { BASE_TOKENIZED_STOCKS } from "@/lib/tokenizedStocks";
 import { miniappEmbedTags } from "@/lib/miniappEmbed";
 
@@ -75,6 +76,8 @@ export default async function StockPage({ params }: { params: Promise<{ symbol: 
         <p className="text-sm leading-relaxed text-slate-300">{s.description}</p>
 
         <StockLive symbol={s.symbol} color={s.color} />
+
+        <NewsFeed symbol={s.symbol} limit={10} />
 
         <div className="flex flex-wrap gap-2">
           <Link
