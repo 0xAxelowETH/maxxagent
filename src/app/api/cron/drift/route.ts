@@ -4,15 +4,15 @@ import { base } from "viem/chains";
 import { baseTransport } from "@/lib/rpc";
 import { kvEnabled } from "@/lib/kv";
 import { BASE_TOKENIZED_STOCKS } from "@/lib/tokenizedStocks";
-import { computeDrift } from "@/lib/drift";
-import { deleteNotify, getNotify, getWatch, listWatchFids, putWatch, type DriftWatch } from "@/lib/driftWatch";
+import { alertPctOf, computeDrift } from "@/lib/drift";
+import { deleteNotify, getNotifies, getWatch, listWatchFids, putWatch, type DriftWatch } from "@/lib/driftWatch";
 
 /**
  * Daily drift check (Vercel Cron, see vercel.json: 23:00 UTC Mon–Fri = 18:00/19:00 New York, after the close
  * and the NAV update, in winter and summer time). For each watched wallet: read its stock balances and the
  * Chainlink NAV on Base, compare with the saved target, and send one mini app notification when the basket
  * goes off target (again at most every REMIND_DAYS while it stays off). Never trades.
- * The response holds counts only, no wallets.
+ * Needs CRON_SECRET (Vercel Cron sends it); without it the check doesn't run. The response holds counts only.
  */
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -72,58 +72,72 @@ function message(w: DriftWatch, drift: NonNullable<ReturnType<typeof computeDrif
   };
 }
 
+/** Sends one notification to every client app the user enabled; drops tokens the host reports as invalid */
+async function notify(fid: number, today: string, title: string, body: string): Promise<boolean> {
+  const targets = await getNotifies(fid);
+  let delivered = false;
+  for (const n of targets) {
+    try {
+      const res = await fetch(n.url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ notificationId: `drift-${fid}-${today}`, title: title.slice(0, 32), body: body.slice(0, 128), targetUrl: `${SITE}/?tab=portfolio`, tokens: [n.token] }),
+        signal: AbortSignal.timeout(8000),
+      });
+      const data = (await res.json().catch(() => ({}))) as { result?: { successfulTokens?: string[]; invalidTokens?: string[] } };
+      if (data.result?.invalidTokens?.includes(n.token)) await deleteNotify(fid, n.url);
+      if (res.ok && data.result?.successfulTokens?.includes(n.token)) delivered = true;
+    } catch {
+      // this client failed; the others still get it
+    }
+  }
+  return delivered;
+}
+
 export async function GET(req: NextRequest) {
-  // Vercel Cron sends "Authorization: Bearer $CRON_SECRET" when that variable is set
+  // Vercel Cron sends "Authorization: Bearer $CRON_SECRET"; without a secret nobody may start the check
   const secret = process.env.CRON_SECRET;
-  if (secret && req.headers.get("authorization") !== `Bearer ${secret}`) return NextResponse.json({ ok: false }, { status: 401 });
+  if (!secret) return NextResponse.json({ ok: true, skipped: "CRON_SECRET not set" });
+  if (req.headers.get("authorization") !== `Bearer ${secret}`) return NextResponse.json({ ok: false }, { status: 401 });
   if (!kvEnabled()) return NextResponse.json({ ok: true, skipped: "storage not configured" });
 
   const started = Date.now();
   const counts = { watches: 0, checked: 0, off: 0, alerted: 0, skipped: 0, failed: 0 };
   try {
-    const fids = await listWatchFids();
-    counts.watches = fids.length;
-    if (!fids.length) return NextResponse.json({ ok: true, ...counts });
+    const all = await listWatchFids();
+    counts.watches = all.length;
+    if (!all.length) return NextResponse.json({ ok: true, ...counts });
     const nav = await navPrices();
     const today = new Date().toISOString().slice(0, 10);
+    // Start at a different place each day, so if the time budget runs out it is never the same users who wait
+    const shift = Math.floor(Date.now() / 86_400_000) % all.length;
+    const fids = [...all.slice(shift), ...all.slice(0, shift)];
 
-    for (const fid of fids) {
-      if (Date.now() - started > BUDGET_MS) break;
+    const checkOne = async (fid: number) => {
       try {
-        const [w, notify] = await Promise.all([getWatch(fid), getNotify(fid)]);
-        if (!w) continue;
+        const w = await getWatch(fid);
+        if (!w) return;
         const held = await holdings(w.address, nav);
         if (!held || held.some((h) => h.missingPrice)) {
           counts.skipped++;
-          continue;
+          return;
         }
         counts.checked++;
         const drift = computeDrift(held, w.target.weights, w.target.maxWeightPct);
-        const isOff = drift !== null && (drift.driftPct >= w.alertPct || drift.breaches.length > 0);
-        const next: DriftWatch = { ...w, lastState: isOff ? "off" : "ok", lastCheckAt: new Date().toISOString() };
+        const isOff = drift !== null && (drift.driftPct >= alertPctOf(w.target) || drift.breaches.length > 0);
+        const next: DriftWatch = { ...w, lastCheckAt: new Date().toISOString(), lastState: isOff ? "off" : "ok" };
         if (isOff && drift) {
           counts.off++;
           const since = w.lastAlertAt ? Date.now() - Date.parse(w.lastAlertAt) : Infinity;
           const due = w.lastState !== "off" || since > REMIND_DAYS * 86_400_000;
-          if (due && notify) {
+          if (due) {
             const { title, body } = message(w, drift);
-            const res = await fetch(notify.url, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                notificationId: `drift-${fid}-${today}`,
-                title: title.slice(0, 32),
-                body: body.slice(0, 128),
-                targetUrl: `${SITE}/?tab=portfolio`,
-                tokens: [notify.token],
-              }),
-              signal: AbortSignal.timeout(8000),
-            });
-            const data = (await res.json().catch(() => ({}))) as { result?: { successfulTokens?: string[]; invalidTokens?: string[] } };
-            if (data.result?.invalidTokens?.includes(notify.token)) await deleteNotify(fid);
-            if (res.ok && data.result?.successfulTokens?.includes(notify.token)) {
+            if (await notify(fid, today, title, body)) {
               counts.alerted++;
               next.lastAlertAt = new Date().toISOString();
+            } else {
+              // Not delivered (no token yet, host error): keep the previous state so tomorrow tries again
+              next.lastState = w.lastState;
             }
           }
         }
@@ -131,7 +145,9 @@ export async function GET(req: NextRequest) {
       } catch {
         counts.failed++;
       }
-    }
+    };
+    // Five wallets at a time keeps RPC and storage load modest while finishing well inside the budget
+    for (let i = 0; i < fids.length && Date.now() - started < BUDGET_MS; i += 5) await Promise.all(fids.slice(i, i + 5).map(checkOne));
     return NextResponse.json({ ok: true, ...counts }, { headers: { "Cache-Control": "no-store" } });
   } catch {
     return NextResponse.json({ ok: false, ...counts }, { status: 502 });

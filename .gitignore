@@ -3,7 +3,7 @@ node_modules/
 
 # Next.js build output
 .next/
-.next-audit/
+.next-audit*/
 out/
 tsconfig.tsbuildinfo
 next-env.d.ts

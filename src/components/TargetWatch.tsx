@@ -4,11 +4,9 @@ import { useState } from "react";
 import { ExternalLink, Target as TargetIcon, Trash2 } from "lucide-react";
 import { RebalancePanel } from "@/components/RebalancePanel";
 import { DriftAlerts } from "@/components/DriftAlerts";
-import { ALERT_PCT_CHOICES, type Drift, type SavedTarget } from "@/lib/drift";
+import { ALERT_PCT_CHOICES, alertPctOf, type Drift, type SavedTarget } from "@/lib/drift";
 
-/** Default drift (share of the stock portfolio that would have to move) from which a rebalance is suggested */
-export const DRIFT_ALERT_PCT = 5;
-export const alertPctOf = (t: SavedTarget | null) => t?.alertPct ?? DRIFT_ALERT_PCT;
+export { alertPctOf };
 
 /** One finished rebalance step, kept in this browser per wallet */
 export interface RebalanceLogEntry {

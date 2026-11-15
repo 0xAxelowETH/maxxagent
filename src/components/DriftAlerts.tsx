@@ -8,6 +8,22 @@ type Sdk = (typeof import("@farcaster/miniapp-sdk"))["sdk"];
 type Status = { watching: boolean; notifications: boolean; alertPct?: number; lastCheckAt?: string; address?: string };
 
 /**
+ * Stops the server-side watch when the user removes their target (inside a mini app only; elsewhere there is
+ * none to stop). Best effort: a failure leaves the daily check to find no matching target in the browser.
+ */
+export async function stopDriftAlerts(): Promise<void> {
+  try {
+    const framed = window.self !== window.top || "ReactNativeWebView" in window;
+    if (!framed) return;
+    const { sdk } = await import("@farcaster/miniapp-sdk");
+    if (!(await sdk.isInMiniApp())) return;
+    await sdk.quickAuth.fetch("/api/watch", { method: "DELETE" });
+  } catch {
+    // nothing to do
+  }
+}
+
+/**
  * Daily drift alerts through the Farcaster mini app: the agent checks this wallet against the target after each
  * US trading day and sends a notification when it drifts past the user's threshold. Read-only; nothing trades.
  * Outside a mini app it only explains where to turn alerts on.

@@ -271,9 +271,9 @@ export function parseMandate(input: string): ParsedMandate {
     text.match(new RegExp(`(?:max(?:imum)?|cap(?:ped)?(?:\\s+at)?|at most|no more than|not more than|up to|limit(?:ed)?(?:\\s+to)?|maks(?:imal|imum)?|paling banyak|tidak lebih dari)\\s*(?:of\\s+)?${pct}(?!\\s*(?:in\\s+|as\\s+|di\\s+)?${cashWords})`)) ||
     text.match(new RegExp(`(?:no|not|tidak ada)\\s+(?:single\\s+|one\\s+)?(?:stock|company|name|position|holding|saham)s?\\s+(?:over|above|more than|bigger than|exceeding|di atas|lebih dari)\\s+${pct}`)) ||
     // "nothing above 25%", "none of them over 30%", "tidak ada yang lebih dari 30%"
-    text.match(new RegExp(`(?:nothing|none(?:\\s+of\\s+them)?|no\\s+one|(?:tidak|jangan)\\s+ada\\s+yang)\\s+(?:is\\s+|should\\s+be\\s+|goes\\s+)?(?:over|above|more than|bigger than|larger than|greater than|exceeding|beyond|di atas|lebih dari)\\s+${pct}`)) ||
+    text.match(new RegExp(`(?:nothing|none(?:\\s+of\\s+them)?|no\\s+one|(?:tidak|jangan)\\s+ada\\s+yang)\\s+(?:is\\s+|should\\s+be\\s+|goes\\s+)?(?:over|above|more than|bigger than|larger than|greater than|exceeding|beyond|di atas|lebih dari)\\s+${pct}(?!\\s*(?:in\\s+|as\\s+|di\\s+)?${cashWords})`)) ||
     // "each at most 25%", "every stock under 30%", "any company below 20%"
-    text.match(new RegExp(`(?:each|every|any)\\s+(?:single\\s+)?(?:stock|company|name|position|holding|one)?\\s*(?:at most|no more than|max(?:imum)?|under|below|less than|capped at)\\s+${pct}`)) ||
+    text.match(new RegExp(`(?:each|every|any)\\s+(?:single\\s+)?(?:stock|company|name|position|holding|one)?\\s*(?:at most|no more than|max(?:imum)?|under|below|less than|capped at)\\s+${pct}(?!\\s*(?:in\\s+|as\\s+|di\\s+)?${cashWords})`)) ||
     // "under 25% each", "below 30% per stock"
     text.match(new RegExp(`(?:under|below|less than|at most|no more than)\\s+${pct}\\s+(?:each|apiece|per\\s+(?:stock|company|name|position)|for\\s+(?:each|any)\\s+(?:stock|company|one))`)) ||
     text.match(new RegExp(`(?:cap|limit|batasi)\\s+(?:each|every|any|one|single|per|tiap|setiap)?\\s*(?:stock|company|name|position|holding|saham)s?\\s+(?:at|to|di|ke)\\s+${pct}`)) ||

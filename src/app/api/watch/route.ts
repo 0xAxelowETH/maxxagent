@@ -1,18 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@farcaster/quick-auth";
 import { kvEnabled } from "@/lib/kv";
-import { parseSavedTarget } from "@/lib/drift";
+import { ALERT_PCT_CHOICES, alertPctOf, parseSavedTarget, type SavedTarget } from "@/lib/drift";
 import { BASE_TOKENIZED_STOCKS } from "@/lib/tokenizedStocks";
-import {
-  ALERT_CHOICES,
-  DEFAULT_ALERT_PCT,
-  deleteWatch,
-  getNotify,
-  getWatch,
-  putWatch,
-  setNotify,
-  validNotifyDetails,
-} from "@/lib/driftWatch";
+import { deleteWatch, getNotifies, getWatch, putWatch, setNotify, validNotifyDetails } from "@/lib/driftWatch";
 
 /**
  * Drift alerts for one Farcaster user. Every call carries a Quick Auth token (from the mini app), which proves
@@ -44,15 +35,15 @@ export async function GET(req: NextRequest) {
   const fid = await fidFrom(req);
   if (!fid) return unauthorized();
   try {
-    const [w, n] = await Promise.all([getWatch(fid), getNotify(fid)]);
+    const [w, n] = await Promise.all([getWatch(fid), getNotifies(fid)]);
     return NextResponse.json(
       {
         ok: true,
         available: true,
         watching: Boolean(w),
         address: w?.address,
-        alertPct: w?.alertPct,
-        notifications: Boolean(n),
+        alertPct: w ? alertPctOf(w.target) : undefined,
+        notifications: n.length > 0,
         lastCheckAt: w?.lastCheckAt,
         lastAlertAt: w?.lastAlertAt,
       },
@@ -69,25 +60,26 @@ export async function POST(req: NextRequest) {
   if (!fid) return unauthorized();
   const body = (await req.json().catch(() => null)) as Record<string, unknown> | null;
   const address = typeof body?.address === "string" && /^0x[a-fA-F0-9]{40}$/.test(body.address) ? (body.address as `0x${string}`) : null;
-  const target = parseSavedTarget(body?.target, BASE_TOKENIZED_STOCKS.map((s) => s.symbol));
-  const alertPct = ALERT_CHOICES.includes(Number(body?.alertPct)) ? Number(body?.alertPct) : DEFAULT_ALERT_PCT;
-  if (!address || !target) return NextResponse.json({ ok: false, error: "A wallet and a saved target are needed." }, { status: 400 });
+  const parsed = parseSavedTarget(body?.target, BASE_TOKENIZED_STOCKS.map((s) => s.symbol));
+  if (!address || !parsed) return NextResponse.json({ ok: false, error: "A wallet and a saved target are needed." }, { status: 400 });
+  // The threshold is part of the target (one source of truth); an older client may still send it separately
+  const target: SavedTarget = { ...parsed, alertPct: parsed.alertPct ?? (ALERT_PCT_CHOICES.includes(Number(body?.alertPct)) ? Number(body?.alertPct) : undefined) };
   try {
     const prev = await getWatch(fid);
-    // A new wallet or target starts fresh; only the threshold changing keeps the last state
-    const same = prev && prev.address.toLowerCase() === address.toLowerCase() && JSON.stringify(prev.target.weights) === JSON.stringify(target.weights);
+    // Same wallet and the very same rules (weights, limit, threshold): keep the alert history; anything else starts fresh
+    const rules = (t: SavedTarget) => JSON.stringify([t.weights, t.maxWeightPct ?? null, alertPctOf(t)]);
+    const same = prev && prev.address.toLowerCase() === address.toLowerCase() && rules(prev.target) === rules(target);
     await putWatch({
       fid,
       address,
       target,
-      alertPct,
       createdAt: prev?.createdAt ?? new Date().toISOString(),
       ...(same ? { lastState: prev.lastState, lastCheckAt: prev.lastCheckAt, lastAlertAt: prev.lastAlertAt } : {}),
     });
     const details = validNotifyDetails(body?.notificationDetails);
     if (details) await setNotify(fid, details);
-    const notifications = Boolean(details || (await getNotify(fid)));
-    return NextResponse.json({ ok: true, watching: true, alertPct, notifications });
+    const notifications = Boolean(details) || (await getNotifies(fid)).length > 0;
+    return NextResponse.json({ ok: true, watching: true, alertPct: alertPctOf(target), notifications });
   } catch {
     return NextResponse.json({ ok: false, error: "Could not save your alert. Try again." }, { status: 502 });
   }

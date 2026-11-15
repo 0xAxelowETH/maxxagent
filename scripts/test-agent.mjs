@@ -80,6 +80,11 @@ for (const [text, cap, cash] of [
   m = parseMandate(text);
   ok(m.maxWeightPct === cap && m.cashPct === cash, `cap phrasing "${text}" -> ${JSON.stringify({ cap: m.maxWeightPct, cash: m.cashPct })}`);
 }
+// A ceiling on cash is not a per-stock limit
+for (const text of ["AI stocks, nothing more than 10% in cash", "big tech, each under 5% in usdc"]) {
+  m = parseMandate(text);
+  ok(m.maxWeightPct === undefined, `a cash ceiling is not a stock limit: "${text}" -> ${JSON.stringify({ cap: m.maxWeightPct, cash: m.cashPct })}`);
+}
 
 m = parseMandate("AMD and Intel only");
 ok(m.only && m.themes.includes("chips") && m.unavailable.every((u) => u.closest === "chips"), `AMD/Intel -> closest available chips -> ${JSON.stringify({ t: m.themes, u: m.unavailable })}`);

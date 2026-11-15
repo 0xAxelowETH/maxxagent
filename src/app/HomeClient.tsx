@@ -67,6 +67,7 @@ import { usMarketStatus } from "@/lib/marketHours";
 import { detectMiniApp } from "@/lib/miniApp";
 import { RebalancePanel } from "@/components/RebalancePanel";
 import { MarketHeatmap } from "@/components/MarketHeatmap";
+import { stopDriftAlerts } from "@/components/DriftAlerts";
 import { TargetWatch, alertPctOf, driftSummary, type RebalanceLogEntry } from "@/components/TargetWatch";
 import { computeDrift, parseSavedTarget, type SavedTarget } from "@/lib/drift";
 import { TermsGate, TERMS_STORAGE_KEY } from "@/components/TermsGate";
@@ -3670,7 +3671,10 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                   pending={basketPending}
                   onSell={(legs, label) => sellStocks(legs, label)}
                   onBuy={(legs, label) => buyStocks(legs, label)}
-                  onRemove={() => saveTarget(null)}
+                  onRemove={() => {
+                    saveTarget(null);
+                    void stopDriftAlerts();
+                  }}
                   onChangeAlert={(p) => saveTarget({ ...savedTarget, alertPct: p })}
                   walletAddress={walletAddress}
                   history={rebalanceLog}

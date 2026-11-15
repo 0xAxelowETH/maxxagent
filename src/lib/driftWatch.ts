@@ -1,20 +1,18 @@
+import { createPublicClient, http, parseAbi } from "viem";
+import { optimism } from "viem/chains";
 import { kv, kvGetJson, kvSetJson } from "./kv";
-import { ALERT_PCT_CHOICES, type SavedTarget } from "./drift";
+import type { SavedTarget } from "./drift";
 
 /**
  * Server-side drift watch: a Farcaster user (verified FID) asks the agent to check one wallet against a
  * saved target every trading day and send a mini app notification when it drifts past their threshold.
  * Read-only: the agent never trades; the notification only opens the normal rebalance plan.
+ * The threshold lives in the target itself (SavedTarget.alertPct, see alertPctOf in drift.ts).
  */
-export const ALERT_CHOICES = ALERT_PCT_CHOICES;
-export const DEFAULT_ALERT_PCT = 5;
-
 export interface DriftWatch {
   fid: number;
   address: `0x${string}`;
   target: SavedTarget;
-  /** drift (share of the stocks that would have to move) that triggers an alert */
-  alertPct: number;
   createdAt: string;
   /** state at the last daily check, so an alert goes out when the basket goes off target, not every day */
   lastState?: "ok" | "off";
@@ -28,7 +26,9 @@ export interface NotifyDetails {
 }
 
 const watchKey = (fid: number) => `watch:${fid}`;
-const notifyKey = (fid: number) => `notify:${fid}`;
+// One token per (FID, client app): Farcaster and the Base app each issue their own, so they are kept side by side
+// in a hash keyed by the client's notification URL
+const notifyKey = (fid: number) => `notify2:${fid}`;
 const SET = "watch:fids";
 
 /** Notification URLs come from the client or the webhook: only send to known mini app hosts, over https */
@@ -58,6 +58,35 @@ export async function deleteWatch(fid: number) {
 }
 export const listWatchFids = async () => ((await kv<string[]>("SMEMBERS", SET)) || []).map(Number).filter((n) => n > 0);
 
-export const getNotify = (fid: number) => kvGetJson<NotifyDetails>(notifyKey(fid));
-export const setNotify = (fid: number, d: NotifyDetails) => kvSetJson(notifyKey(fid), d);
-export const deleteNotify = (fid: number) => kv("DEL", notifyKey(fid));
+/** Every client app's token for this FID */
+export async function getNotifies(fid: number): Promise<NotifyDetails[]> {
+  const flat = (await kv<string[] | null>("HGETALL", notifyKey(fid))) || [];
+  const out: NotifyDetails[] = [];
+  for (let i = 0; i + 1 < flat.length; i += 2) out.push({ url: flat[i], token: flat[i + 1] });
+  return out;
+}
+export const setNotify = (fid: number, d: NotifyDetails) => kv("HSET", notifyKey(fid), d.url, d.token);
+export const deleteNotify = (fid: number, url: string) => kv("HDEL", notifyKey(fid), url);
+
+/**
+ * Whether `keyHex` (Ed25519, 32 bytes) is an active app key of `fid` in Farcaster's Key Registry on Optimism.
+ * Without this check anyone could sign webhook events with their own key and claim any FID.
+ */
+const KEY_REGISTRY = "0x00000000Fc1237824fb747aBDE0FF18990E59b7e";
+const opClient = createPublicClient({ chain: optimism, transport: http(process.env.OPTIMISM_RPC_URL || "https://mainnet.optimism.io", { timeout: 8000 }) });
+const keyCache = new Map<string, { at: number; ok: boolean }>();
+export async function isAppKeyOf(fid: number, keyHex: string): Promise<boolean> {
+  const id = `${fid}:${keyHex.toLowerCase()}`;
+  const hit = keyCache.get(id);
+  if (hit && Date.now() - hit.at < 3_600_000) return hit.ok;
+  const data = await opClient.readContract({
+    address: KEY_REGISTRY,
+    abi: parseAbi(["function keyDataOf(uint256 fid, bytes key) view returns ((uint8 state, uint32 keyType))"]),
+    functionName: "keyDataOf",
+    args: [BigInt(fid), `0x${keyHex.replace(/^0x/, "")}`],
+  });
+  const ok = data.state === 1; // 1 = ADDED
+  keyCache.set(id, { at: Date.now(), ok });
+  if (keyCache.size > 2000) keyCache.clear();
+  return ok;
+}

@@ -100,3 +100,7 @@ export function parseSavedTarget(raw: unknown, knownSymbols: string[]): SavedTar
 
 /** Drift thresholds the user can pick for "warn me when my basket is this far off" */
 export const ALERT_PCT_CHOICES = [2, 5, 10];
+/** Default drift (share of the stock portfolio that would have to move) from which the agent warns */
+export const DRIFT_ALERT_PCT = 5;
+/** The threshold of a target: the one place both the page and the daily server check read it from */
+export const alertPctOf = (t: { alertPct?: number } | null | undefined) => t?.alertPct ?? DRIFT_ALERT_PCT;
