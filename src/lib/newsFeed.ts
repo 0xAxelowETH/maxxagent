@@ -1,6 +1,8 @@
 import { NextRequest } from "next/server";
+import { unstable_cache } from "next/cache";
 import { BASE_TOKENIZED_STOCKS } from "./tokenizedStocks";
 import { SEC_CIK } from "./secFundamentals";
+import { navDailyCloses } from "./riskStats";
 import { GET as getHistory } from "@/app/api/history/route";
 
 /**
@@ -340,16 +342,26 @@ async function headlines(): Promise<Omit<NewsItem, "priceThen" | "priceNow" | "c
   return out;
 }
 
-/** Price series for a symbol: the 24/7 DEX price (hourly, 7 days) or the Chainlink NAV (30 days) */
-async function series(symbol: string, tf: "7D" | "30D", navOnly: boolean): Promise<{ dex: [number, number][]; nav: [number, number][] }> {
+/**
+ * The 24/7 DEX price for a symbol: hourly candles over 7 days, or 4-hour candles over 30 days. DEX only: the
+ * feed never reads Chainlink rounds, which take hundreds of RPC calls and slowed P/L down for everyone.
+ */
+async function dexSeries(symbol: string, tf: "7D" | "30D"): Promise<[number, number][]> {
+  // One try, at most 8 seconds: when GeckoTerminal rate-limits, the item falls back to the daily NAV instead
   try {
-    const url = new URL(`http://internal/api/history?symbol=${symbol}&tf=${tf}${navOnly ? "&only=nav" : ""}`);
-    const res = await getHistory(new NextRequest(url));
-    const body = await res.json();
-    return { dex: body?.dex ?? [], nav: body?.nav ?? [] };
+    const res = await Promise.race([
+      getHistory(new NextRequest(new URL(`http://internal/api/history?symbol=${symbol}&tf=${tf}&only=dex`))),
+      new Promise<null>((r) => setTimeout(() => r(null), 8000)),
+    ]);
+    if (!res) return [];
+    return ((await res.json())?.dex ?? []) as [number, number][];
   } catch {
-    return { dex: [], nav: [] };
+    return [];
   }
+}
+/** Runs `fn` over `items`, `n` at a time */
+async function inBatches<T>(items: T[], n: number, fn: (x: T) => Promise<void>) {
+  for (let i = 0; i < items.length; i += n) await Promise.all(items.slice(i, i + n).map(fn));
 }
 /** Last price at or before `t` (seconds); null if the series starts after it */
 const priceAt = (pts: [number, number][], t: number) => {
@@ -367,14 +379,21 @@ async function build(): Promise<NewsItem[]> {
   const symbols = [...new Set(raw.map((x) => x.symbol))].filter((s) => BASE_TOKENIZED_STOCKS.some((b) => b.symbol === s));
   const weekAgo = Date.now() / 1000 - 7 * 86_400;
   const priced: NewsItem[] = [];
-  for (const symbol of symbols) {
-    // One request per symbol at a time: GeckoTerminal (DEX candles) rate-limits bursts
-    const short = await series(symbol, "7D", false);
-    const long = raw.some((x) => x.symbol === symbol && Date.parse(x.publishedAt) / 1000 < weekAgo) ? await series(symbol, "30D", true) : { dex: [], nav: [] };
-    for (const x of raw.filter((r) => r.symbol === symbol)) {
+  // Prices: the hourly 24/7 DEX price for the last week when GeckoTerminal answers, else the Chainlink NAV daily
+  // close (shared cache, RPC once per 6 h). One symbol at a time, and never past a time budget: an item
+  // without a price is better than a feed that never finishes.
+  const deadline = Date.now() + 30_000;
+  const feedOf = (s: string) => BASE_TOKENIZED_STOCKS.find((b) => b.symbol === s)?.chainlinkFeed;
+  await inBatches(symbols, 1, async (symbol) => {
+    const mine = raw.filter((r) => r.symbol === symbol);
+    const inBudget = Date.now() < deadline;
+    const dex = inBudget && mine.some((x) => Date.parse(x.publishedAt) / 1000 >= weekAgo) ? await dexSeries(symbol, "7D") : [];
+    const feed = feedOf(symbol);
+    const nav = inBudget && feed ? await navDailyCloses(feed).catch(() => [] as [number, number][]) : [];
+    for (const x of mine) {
       const t = Date.parse(x.publishedAt) / 1000;
-      const useDex = t >= weekAgo && short.dex.length > 1;
-      const pts = useDex ? short.dex : t >= weekAgo ? short.nav : long.nav;
+      const useDex = t >= weekAgo && dex.length > 1 && dex[0][0] <= t;
+      const pts = useDex ? dex : nav;
       const then = priceAt(pts, t);
       const now = pts.length ? pts[pts.length - 1][1] : null;
       priced.push({
@@ -385,25 +404,39 @@ async function build(): Promise<NewsItem[]> {
         priceSource: then && now ? (useDex ? "DEX" : "NAV") : null,
       });
     }
-  }
+  });
   return priced.sort((a, b) => (a.publishedAt < b.publishedAt ? 1 : -1));
 }
 
+/**
+ * The built feed is kept in Vercel's shared Data Cache, so one successful build serves every server instance
+ * for 15 minutes (a per-instance memory cache alone meant cold instances kept rebuilding from scratch).
+ */
+const sharedBuild = unstable_cache(build, ["news-feed-v4"], { revalidate: CACHE_MS / 1000 });
+
 let cache: { at: number; items: NewsItem[] } | null = null;
 let inflight: Promise<NewsItem[]> | null = null;
+let lastFailure = 0;
 export const newsPending = () => inflight ?? Promise.resolve();
 
-/** Current feed; waits at most `waitMs` for a rebuild, else serves the previous one (or null if none yet) */
+/** Current feed; waits at most `waitMs`, else serves the previous one (or null if none yet) */
 export async function getNews(waitMs = 40_000): Promise<NewsItem[] | null> {
   if (cache && Date.now() - cache.at < CACHE_MS) return cache.items;
-  if (!inflight)
-    inflight = build()
+  // After a failed build, wait 2 minutes before trying again instead of hammering the sources
+  if (!inflight && Date.now() - lastFailure > 120_000)
+    inflight = sharedBuild()
       .then((items) => {
         if (items.length) cache = { at: Date.now(), items };
+        else lastFailure = Date.now();
         return items;
+      })
+      .catch(() => {
+        lastFailure = Date.now();
+        return [] as NewsItem[];
       })
       .finally(() => (inflight = null));
   if (cache) return cache.items; // stale-while-revalidate
+  if (!inflight) return null;
   const done = await Promise.race([inflight, new Promise<null>((r) => setTimeout(() => r(null), waitMs))]);
-  return done;
+  return done && done.length ? done : null;
 }

@@ -104,15 +104,18 @@ export async function GET(request: NextRequest) {
   const stock = BASE_TOKENIZED_STOCKS.find((s) => s.symbol === symbol);
   if (!stock) return NextResponse.json({ ok: false, error: "Unknown symbol" }, { status: 400 });
 
-  // only=nav skips the rate-limited DEX source (used by small sparklines)
-  const navOnly = request.nextUrl.searchParams.get("only") === "nav";
-  const key = `${symbol}:${tf}:${navOnly ? "nav" : "all"}`;
+  // only=nav skips the rate-limited DEX source (used by small sparklines); only=dex skips the Chainlink rounds
+  // (hundreds of RPC reads) for callers that just need the 24/7 DEX price, like the news feed
+  const only = request.nextUrl.searchParams.get("only");
+  const navOnly = only === "nav";
+  const dexOnly = only === "dex";
+  const key = `${symbol}:${tf}:${navOnly ? "nav" : dexOnly ? "dex" : "all"}`;
   const hit = cache.get(key);
   if (hit && Date.now() - hit.at < TTL_MS) return NextResponse.json(hit.body);
 
   const since = Math.floor(Date.now() / 1000) - TF[tf].seconds;
   const [navRes, dexRes] = await Promise.allSettled([
-    chainlinkHistory(stock.chainlinkFeed, since, TF[tf].maxRounds),
+    dexOnly ? Promise.resolve([] as [number, number][]) : chainlinkHistory(stock.chainlinkFeed, since, TF[tf].maxRounds),
     navOnly ? Promise.resolve({ pool: null, points: [] as [number, number][] }) : dexHistory(stock.b20Address, TF[tf].gecko),
   ]);
 

@@ -1,5 +1,6 @@
 import { createPublicClient, parseAbi } from "viem";
 import { base } from "viem/chains";
+import { unstable_cache } from "next/cache";
 import { baseTransport } from "./rpc";
 
 /**
@@ -62,6 +63,21 @@ async function dailyCloses(feed: `0x${string}`, sinceSec: number): Promise<[stri
   }
   return [...byDay.entries()].sort(([a], [b]) => (a < b ? -1 : 1)).map(([d, x]) => [d, x.v]);
 }
+
+/**
+ * Daily Chainlink NAV closes for the last ~35 days as [unix seconds, USD], oldest first. Kept in Vercel's shared
+ * Data Cache for 6 hours, so the RPC reads happen once per feed per 6 hours across all server instances
+ * (the news feed uses it to price items older than a week).
+ */
+export const navDailyCloses = unstable_cache(
+  async (feed: `0x${string}`): Promise<[number, number][]> => {
+    const closes = await dailyCloses(feed, Math.floor(Date.now() / 1000) - 35 * 86_400);
+    // Stamp each close at the US market close (21:00 UTC) of its day; Chainlink stock feeds use 8 decimals
+    return closes.map(([day, v]) => [Date.parse(`${day}T21:00:00Z`) / 1000, v / 1e8]);
+  },
+  ["nav-daily-closes-v1"],
+  { revalidate: 6 * 3600 }
+);
 
 function compute(closes: [string, number][]): RiskStats | null {
   if (closes.length < MIN_DAYS + 1) return null;
