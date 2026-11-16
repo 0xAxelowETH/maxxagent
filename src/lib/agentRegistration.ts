@@ -7,7 +7,7 @@
 const SITE = (process.env.NEXT_PUBLIC_SITE_URL || "https://maxxagent.xyz").replace(/\/$/, "");
 export const IDENTITY_REGISTRY = "0x8004A169FB4a3325136EB29fA0ceB6D2e539a432";
 /** agentId minted by the Identity Registry on Base (null until registered) */
-export const AGENT_ID: number | null = null;
+export const AGENT_ID: number | null = 1202095;
 
 export function agentRegistration() {
   return {
