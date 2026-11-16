@@ -5,6 +5,7 @@ import { MaxxLoader } from "@/components/MaxxLoader";
 import Link from "next/link";
 import { Moon } from "lucide-react";
 import { nextOpenUnix, usMarketStatus } from "@/lib/marketHours";
+import { earningsLabel, recentEarnings, type EarningsMark } from "@/lib/earnings";
 
 interface HeatStock {
   symbol: string;
@@ -106,6 +107,19 @@ const usdShort = (n: number) =>
 export function MarketHeatmap({ stocks, updatedAt, links = true }: { stocks: HeatStock[]; updatedAt?: string; links?: boolean }) {
   const [sizeBy, setSizeBy] = useState<SizeBy>("value");
   const [colorBy, setColorBy] = useState<ColorBy>("change");
+  // Recent earnings reports (SEC 8-K item 2.02) from the cached news feed; not on the read-only preview
+  const [earnings, setEarnings] = useState<Record<string, EarningsMark>>({});
+  useEffect(() => {
+    if (!links) return;
+    let off = false;
+    fetch("/api/news")
+      .then((r) => r.json())
+      .then((d) => !off && d?.ok && Array.isArray(d.items) && setEarnings(recentEarnings(d.items)))
+      .catch(() => {});
+    return () => {
+      off = true;
+    };
+  }, [links]);
   // The US session, from the viewer's clock (client only, refreshed every minute)
   const [session, setSession] = useState<{ open: boolean; label: string; next: number | null } | null>(null);
   useEffect(() => {
@@ -243,6 +257,11 @@ export function MarketHeatmap({ stocks, updatedAt, links = true }: { stocks: Hea
                   </span>
                   {colorBy === "gap" && m > 60 && <span className="text-[10px] uppercase tracking-wider text-white/70">vs NAV</span>}
                   {big && <span className="text-[11px] text-white/70">{usdShort(size)}</span>}
+                  {earnings[s.symbol] && m > 60 && (
+                    <span className="mt-0.5 rounded-full bg-amber-400/90 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-slate-950" title={earningsLabel(earnings[s.symbol])}>
+                      Earnings
+                    </span>
+                  )}
                 </>
               )}
             </Tile>

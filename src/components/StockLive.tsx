@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { MarketStatus } from "./MarketStatus";
 import { BASE_TOKENIZED_STOCKS } from "@/lib/tokenizedStocks";
+import { earningsLabel, recentEarnings } from "@/lib/earnings";
 
 interface Live {
   navPrice: number;
@@ -26,6 +27,7 @@ interface NewsMark {
   source: string;
   publishedAt: string;
   pressRelease?: boolean;
+  tags?: string[];
   changePct: number | null;
 }
 
@@ -81,6 +83,14 @@ export function StockLive({ symbol, color }: { symbol: string; color: string }) 
   return (
     <div className="space-y-4">
       <MarketStatus showDetail className="text-[11px]" />
+      {(() => {
+        const e = recentEarnings(news.map((n) => ({ ...n, symbol })))[symbol];
+        return e ? (
+          <a href={e.url} target="_blank" rel="noopener noreferrer" data-testid="earnings-badge" className="inline-flex items-center gap-2 rounded-lg border border-amber-400/40 bg-amber-400/10 px-2.5 py-1 text-[11px] font-semibold text-amber-200 hover:border-amber-300">
+            {earningsLabel(e)} · read the SEC report ↗
+          </a>
+        ) : null;
+      })()}
       {failed ? (
         <p className="text-xs text-amber-200">Live data is unavailable right now. Please retry in a moment.</p>
       ) : !live ? (
