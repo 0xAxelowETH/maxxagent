@@ -38,6 +38,8 @@ export interface LiveTokenizedStock extends TokenizedStockMetadata {
   totalSupplyTokens: number;
   totalSupplySharesUI: number;
   uiMultiplier: number;
+  /** B20 transfer policy id set by the issuer (0 = none), when it could be read */
+  b20PolicyId?: number | null;
   onchainMarketCapUsd: number;
   change24hPct: number;
   source:

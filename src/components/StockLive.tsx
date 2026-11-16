@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { MarketStatus } from "./MarketStatus";
+import { BASE_TOKENIZED_STOCKS } from "@/lib/tokenizedStocks";
 
 interface Live {
   navPrice: number;
@@ -13,6 +14,7 @@ interface Live {
   totalSupplyTokens: number;
   onchainMarketCapUsd: number;
   uiMultiplier: number;
+  b20PolicyId?: number | null;
   oracleAgeMinutes: number;
   isOracleStale: boolean;
 }
@@ -99,6 +101,7 @@ export function StockLive({ symbol, color }: { symbol: string; color: string }) 
         </div>
       )}
       <Chart hist={hist} color={color} news={news} />
+      {live && <B20Panel symbol={symbol} live={live} />}
     </div>
   );
 }
@@ -197,6 +200,41 @@ function Chart({ hist, color, news }: { hist: { nav: Point[]; dex: Point[] } | n
           {marks.length} news item{marks.length > 1 ? "s" : ""} and filing{marks.length > 1 ? "s" : ""} on the chart: hover a dot for the title, click to open the original. A dot marks timing only, not a cause.
         </p>
       )}
+    </div>
+  );
+}
+
+/** What the token itself does, read onchain: Base's B20 standard (multiplier for dividends and splits, issuer transfer policy) */
+function B20Panel({ symbol, live }: { symbol: string; live: Live }) {
+  const meta = BASE_TOKENIZED_STOCKS.find((s) => s.symbol === symbol);
+  const policy = live.b20PolicyId;
+  return (
+    <div className="rounded-2xl border border-slate-800 bg-[#0b1120] p-3 text-[11px] text-slate-300" data-testid="b20-panel">
+      <div className="mb-1.5 flex items-center justify-between gap-2">
+        <span className="text-xs font-bold text-white">Built on B20, Base&apos;s token standard</span>
+        {meta && (
+          <a href={meta.basescanUrl} target="_blank" rel="noopener noreferrer" className="text-cyan-300 hover:underline">
+            Token contract ↗
+          </a>
+        )}
+      </div>
+      <ul className="space-y-1">
+        <li>
+          <b className="text-slate-100">Dividends &amp; splits:</b> carried by the token&apos;s multiplier, now{" "}
+          <span className="font-mono">{live.uiMultiplier.toFixed(6)}×</span>. Share counts and values here already include it.
+        </li>
+        <li>
+          <b className="text-slate-100">Transfer policy:</b>{" "}
+          {policy === null || policy === undefined
+            ? "couldn't be read right now."
+            : policy === 0
+            ? "none set by the issuer (policy 0)."
+            : `policy #${policy} set by the issuer, which decides who may hold or receive the token.`}
+        </li>
+        <li>
+          <b className="text-slate-100">Price:</b> Chainlink NAV onchain, plus the 24/7 Base DEX price.
+        </li>
+      </ul>
     </div>
   );
 }

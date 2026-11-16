@@ -240,7 +240,7 @@ async function buildMarket(): Promise<LiveTokenizedStock[]> {
       const liveDexPool = dexPoolsByAddr[meta.b20Address.toLowerCase()];
 
       try {
-        const [roundData, rawSupplyHex, rawMultiplier] = await Promise.all([
+        const [roundData, rawSupplyHex, rawMultiplier, rawPolicy] = await Promise.all([
           publicClient.readContract({
             address: meta.chainlinkFeed,
             abi: B20_AND_CHAINLINK_ABI,
@@ -258,6 +258,11 @@ async function buildMarket(): Promise<LiveTokenizedStock[]> {
               functionName: "uiMultiplier",
             })
             .catch(() => 1000000000000000000n),
+          // B20 transfer policy set by the issuer (0 = none); null when it can't be read
+          publicClient
+            .readContract({ address: meta.b20Address, abi: B20_AND_CHAINLINK_ABI, functionName: "policyId" })
+            .then((v) => Number(v))
+            .catch(() => null),
         ]);
 
         const [roundId, answer, , updatedAt, answeredInRound] = roundData;
@@ -314,6 +319,7 @@ async function buildMarket(): Promise<LiveTokenizedStock[]> {
           totalSupplyTokens,
           totalSupplySharesUI,
           uiMultiplier,
+          b20PolicyId: rawPolicy,
           onchainMarketCapUsd,
           change24hPct,
           source: hasLiveDex

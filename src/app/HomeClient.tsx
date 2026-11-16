@@ -1836,8 +1836,9 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                   </h2>
 
                   <p className="text-xs sm:text-sm text-slate-300 leading-relaxed max-w-2xl">
-                    Tell the agent what you want. It researches 10 Coinbase tokenized stocks from Chainlink, SEC filings and
-                    DEX pools, shows every step with its source, and says what it won&apos;t do. No wallet needed to try.
+                    Own US stocks from anywhere outside the US, from about $1.50, in your own wallet. Tell the agent what you
+                    want: it researches from Chainlink, SEC filings and DEX pools, shows every step with its source, and says
+                    what it won&apos;t do. No wallet needed to try.
                   </p>
 
                   {/* Try the agent right here: no wallet, the result opens on the Agent tab */}
