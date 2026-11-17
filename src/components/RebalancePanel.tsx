@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { ArrowDownUp } from "lucide-react";
 import { planRebalance, type Target } from "@/lib/rebalance";
 
@@ -25,6 +25,7 @@ export function RebalancePanel({
   onSell,
   onBuy,
   maxWeightPct,
+  rebalanceBuyDoneNonce = 0,
 }: {
   stocks: StockPrice[];
   balances: Record<string, { rawTokens: number }>;
@@ -36,11 +37,16 @@ export function RebalancePanel({
   onBuy: (legs: { symbol: string; b20Address: string; usd: number }[], label: string) => void;
   /** per-stock limit (share of the stocks): a stock above it is always trimmed */
   maxWeightPct?: number;
+  /** Incremented only after a Step 2 rebalance buy confirms onchain */
+  rebalanceBuyDoneNonce?: number;
 }) {
   const [addUsdText, setAddUsdText] = useState<string>("");
   const addUsd = Math.max(0, Number(addUsdText) || 0);
   // USDC balance right before step 1: after the sales, the increase is the proceeds that step 2 reinvests
   const [usdcBaseline, setUsdcBaseline] = useState<number | null>(null);
+  useEffect(() => {
+    if (rebalanceBuyDoneNonce > 0) setUsdcBaseline(null);
+  }, [rebalanceBuyDoneNonce]);
   const holdings = stocks
     .map((s) => ({ symbol: s.symbol, b20Address: s.b20Address, tokens: balances[s.symbol]?.rawTokens ?? 0, price: s.navPrice }))
     .filter((h) => h.tokens > 0);
@@ -58,9 +64,9 @@ export function RebalancePanel({
 
   const fmt = (n: number) => `$${n.toFixed(2)}`;
   const nothingToDo = plan.sells.length === 0 && plan.buys.length === 0;
-  // Selling while nothing can be bought back (every buy under the $0.50 minimum) would leave the user in USDC
+  // Selling while nothing can be bought back (below minimum or within tolerance) would leave the user in USDC
   const tooSmall =
-    plan.sells.length > 0 && plan.buys.length === 0 && plan.rows.some((r) => r.deltaUsd > 0 && /minimum|not enough/.test(r.note || ""));
+    plan.sells.length > 0 && plan.buys.length === 0 && plan.rows.some((r) => r.deltaUsd > 0);
   const weights = targets.filter((t) => t.weightBps > 0).map((t) => t.weightBps / 10000);
   const minWeight = weights.length ? Math.min(...weights) : 0;
   // the smallest target slice must reach the $0.50 minimum: total portfolio needed, minus what is already there
@@ -147,10 +153,7 @@ export function RebalancePanel({
             1. Sell overweight{plan.sells.length ? ` (≈ ${fmt(plan.sellUsd)})` : " — none"}
           </button>
           <button
-            onClick={() => {
-              onBuy(plan.buys, "rebalance");
-              setUsdcBaseline(null);
-            }}
+            onClick={() => onBuy(plan.buys, "rebalance")}
             // Buy only once the sales are done (otherwise the USDC is not there yet)
             disabled={pending || plan.buys.length === 0 || plan.sells.length > 0}
             title={plan.sells.length > 0 ? "Do step 1 first: the buys use the USDC from the sales" : undefined}

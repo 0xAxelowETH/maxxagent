@@ -64,8 +64,13 @@ async function chainlinkHistory(feed: `0x${string}`, sinceSec: number, maxRounds
     }
   }
 
+  let roundFailures = 0;
   for (const r of results) {
-    if (r.status !== "success") break; // phase boundary / missing round
+    if (r.status !== "success") {
+      roundFailures++;
+      if (points.length === 0 || roundFailures > 3) throw new Error("Chainlink history RPC failed");
+      break;
+    }
     const [, answer, , updatedAt] = r.result as readonly [bigint, bigint, bigint, bigint, bigint];
     const t = Number(updatedAt);
     if (t < sinceSec) break;
@@ -83,7 +88,7 @@ async function dexHistory(token: string, geckoPath: string) {
   if (!poolsRes.ok) return { pool: null as string | null, points: [] as [number, number][], failed: true };
   const pools: { attributes: { address: string; reserve_in_usd: string } }[] = (await poolsRes.json())?.data ?? [];
   const ranked = [...pools]
-    .sort((a, b) => Number(b.attributes.reserve_in_usd) - Number(a.attributes.reserve_in_usd))
+    .sort((a, b) => (Number(b.attributes.reserve_in_usd) || 0) - (Number(a.attributes.reserve_in_usd) || 0))
     .slice(0, 3);
 
   const sep = geckoPath.includes("?") ? "&" : "?";
@@ -137,12 +142,15 @@ export async function GET(request: NextRequest) {
 
       const navFailed = !dexOnly && navRes.status === "rejected";
       const dexFailed = !navOnly && (dexRes.status === "rejected" || dexRes.value.failed);
+      const navPoints = navRes.status === "fulfilled" ? navRes.value : [];
+      const dexPoints = dexRes.status === "fulfilled" ? dexRes.value.points : [];
+      const hasAnyData = navPoints.length > 0 || dexPoints.length > 0;
       const body = {
-        ok: true,
+        ok: hasAnyData,
         symbol,
         tf,
-        nav: navRes.status === "fulfilled" ? navRes.value : [],
-        dex: dexRes.status === "fulfilled" ? dexRes.value.points : [],
+        nav: navPoints,
+        dex: dexPoints,
         dexPool: dexRes.status === "fulfilled" ? dexRes.value.pool : null,
         sources: {
           nav: `Chainlink feed ${stock.chainlinkFeed} (onchain rounds)`,
@@ -150,7 +158,7 @@ export async function GET(request: NextRequest) {
         },
         fetchedAt: new Date().toISOString(),
       };
-      const filled = (body.nav.length > 0 || body.dex.length > 0) && !navFailed && !dexFailed;
+      const filled = hasAnyData && !navFailed && !dexFailed;
       if (filled) cache.set(key, { at: Date.now(), body });
       return { body, cacheable: filled };
     })().finally(() => inflightHistory.delete(key));

@@ -68,7 +68,11 @@ export async function POST(request: NextRequest) {
   }
   let body: Record<string, unknown>;
   try {
-    body = JSON.parse(raw || "{}");
+    const parsed = JSON.parse(raw || "{}");
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return NextResponse.json({ ok: false, error: "Invalid JSON body." }, { status: 400 });
+    }
+    body = parsed as Record<string, unknown>;
   } catch {
     return NextResponse.json({ ok: false, error: "Invalid JSON body." }, { status: 400 });
   }

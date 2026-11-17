@@ -61,6 +61,7 @@ interface WalletHistory {
   scannedTo: bigint;
   /** raw balances held at scannedFrom - 1 (non-zero = position opened before the window) */
   opening: Map<string, bigint>;
+  openingPartial?: boolean;
   txs: Map<string, TxSummary>;
   at: number;
 }
@@ -129,7 +130,7 @@ async function scanRange(wallet: `0x${string}`, from: bigint, to: bigint, deadli
   };
 }
 
-async function balancesAt(wallet: `0x${string}`, block: bigint): Promise<Map<string, bigint>> {
+async function balancesAt(wallet: `0x${string}`, block: bigint): Promise<{ map: Map<string, bigint>; anyFailed: boolean }> {
   const res = await withRetry(() =>
     client.multicall({
       allowFailure: true,
@@ -137,17 +138,19 @@ async function balancesAt(wallet: `0x${string}`, block: bigint): Promise<Map<str
       contracts: STOCK_ADDRESSES.map((address) => ({ address, abi: ABI, functionName: "balanceOf" as const, args: [wallet] as const })),
     })
   );
-  const out = new Map<string, bigint>();
+  const map = new Map<string, bigint>();
+  let anyFailed = false;
   STOCK_ADDRESSES.forEach((a, i) => {
     const r = res[i];
-    if (r?.status === "success") out.set(a.toLowerCase(), r.result as bigint);
+    if (r?.status === "success") map.set(a.toLowerCase(), r.result as bigint);
+    else anyFailed = true;
   });
-  return out;
+  return { map, anyFailed };
 }
 
 async function summarize(hash: `0x${string}`, wallet: string): Promise<TxSummary> {
   const r = await withRetry(() => client.getTransactionReceipt({ hash }));
-  const moves: Move[] = [];
+  const rawMoves: Move[] = [];
   for (const log of r.logs) {
     const token = log.address.toLowerCase();
     if (token !== USDC && !STOCKS.has(token)) continue;
@@ -156,32 +159,54 @@ async function summarize(hash: `0x${string}`, wallet: string): Promise<TxSummary
       const f = e.args.from.toLowerCase();
       const t = e.args.to.toLowerCase();
       if (e.args.value === 0n || f === t || (f !== wallet && t !== wallet)) continue;
-      moves.push({ token, amount: e.args.value, dir: t === wallet ? 1 : -1, logIndex: log.logIndex });
+      rawMoves.push({ token, amount: e.args.value, dir: t === wallet ? 1 : -1, logIndex: log.logIndex });
     } catch {
       // not a standard Transfer
     }
   }
-  moves.sort((a, b) => a.logIndex - b.logIndex);
-  // Stock received but no USDC paid: maybe paid in ETH (direct EOA tx.value, or Smart Wallet Swapped NATIVE_ETH / WETH Deposit).
+  rawMoves.sort((a, b) => a.logIndex - b.logIndex);
+  // Coalesce consecutive incoming transfers of the same stock in one tx (e.g. KyberSwap split route)
+  const moves: Move[] = [];
+  for (const m of rawMoves) {
+    const prev = moves[moves.length - 1];
+    if (prev && m.dir === 1 && prev.dir === 1 && prev.token === m.token && m.token !== USDC) {
+      prev.amount += m.amount;
+    } else {
+      moves.push({ ...m });
+    }
+  }
+  // Stock received without matching USDC payment: check scoped ETH paid on EOA or KyberRouter Swapped(NATIVE_ETH)
   let ethValue: bigint | undefined;
-  if (moves.some((m) => m.dir === 1 && m.token !== USDC) && !moves.some((m) => m.token === USDC && m.dir === -1)) {
+  const stockInMoves = moves.filter((m) => m.dir === 1 && m.token !== USDC);
+  const usdcOutCount = moves.filter((m) => m.token === USDC && m.dir === -1).length;
+  if (stockInMoves.length > usdcOutCount) {
     const tx = await withRetry(() => client.getTransaction({ hash })).catch(() => null);
-    if (tx && tx.from.toLowerCase() === wallet && tx.value > 0n) {
+    if (tx && tx.from.toLowerCase() === wallet && tx.value > 0n && usdcOutCount === 0) {
       ethValue = tx.value;
     } else {
+      const KYBER_ROUTER = "0x6131b5fae19ea4f9d964eac0408e4408b66337b5";
       const SWAPPED_TOPIC = "0xd6d4f5681c246c9f42c203e287975af1601f8df8035a9251f79aab5c8f09e2f8";
       const NATIVE_ETH_LOWER = "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
       const WETH_BASE = "0x4200000000000000000000000000000000000006";
       const WETH_DEPOSIT_TOPIC = "0xe1fffcc4923d04b559f4d29a8bfc6cda04eb5b0d3c460751c2402c5c5cc9109c";
+      const walletTopic = "0x" + wallet.replace(/^0x/, "").padStart(64, "0");
       let swappedEth = 0n;
       let wethDeposited = 0n;
       for (const log of r.logs) {
-        if (log.topics[0]?.toLowerCase() === SWAPPED_TOPIC && log.data.length >= 2 + 64 * 6) {
+        if (log.address.toLowerCase() === KYBER_ROUTER && log.topics[0]?.toLowerCase() === SWAPPED_TOPIC && log.data.length >= 2 + 64 * 6) {
+          const sender = "0x" + log.data.slice(2 + 24, 2 + 64).toLowerCase();
           const src = "0x" + log.data.slice(2 + 64 + 24, 2 + 128).toLowerCase();
-          if (src === NATIVE_ETH_LOWER) {
+          const dst = "0x" + log.data.slice(2 + 128 + 24, 2 + 192).toLowerCase();
+          const dstReceiver = "0x" + log.data.slice(2 + 192 + 24, 2 + 256).toLowerCase();
+          if (src === NATIVE_ETH_LOWER && STOCKS.has(dst) && (sender === wallet || dstReceiver === wallet)) {
             swappedEth += BigInt("0x" + log.data.slice(2 + 64 * 4, 2 + 64 * 5));
           }
-        } else if (log.address.toLowerCase() === WETH_BASE && log.topics[0]?.toLowerCase() === WETH_DEPOSIT_TOPIC && log.data.length >= 66) {
+        } else if (
+          log.address.toLowerCase() === WETH_BASE &&
+          log.topics[0]?.toLowerCase() === WETH_DEPOSIT_TOPIC &&
+          log.topics[1]?.toLowerCase() === walletTopic &&
+          log.data.length >= 66
+        ) {
           wethDeposited += BigInt(log.data.slice(0, 66));
         }
       }
@@ -211,12 +236,14 @@ async function loadHistory(wallet: `0x${string}`): Promise<WalletHistory> {
 
   let scannedFrom: bigint;
   let opening: Map<string, bigint>;
+  let openingPartial = false;
   let shouldCache = true;
   if (prev) {
     // New blocks since the last scan (small, always completed)
-    if (latest > prev.scannedTo) await addTxs((await scanRange(wallet, prev.scannedTo + 1n, latest)).hashes);
+    if (latest > prev.scannedTo) await addTxs((await scanRange(wallet, prev.scannedTo + 1n, latest, deadline)).hashes);
     scannedFrom = prev.scannedFrom;
     opening = prev.opening;
+    openingPartial = Boolean(prev.openingPartial);
   } else {
     // Recent window first: fast, and enough for most wallets. Also within the time budget: when the RPC is
     // slow, only the gap-free newest part counts and the rest is valued from the balances at its start.
@@ -225,7 +252,9 @@ async function loadHistory(wallet: `0x${string}`): Promise<WalletHistory> {
     await addTxs(first.hashes);
     if (first.coveredFrom === null) shouldCache = false;
     scannedFrom = first.coveredFrom ?? latest;
-    opening = scannedFrom > START_BLOCK ? await balancesAt(wallet, scannedFrom - 1n) : new Map();
+    const ob = scannedFrom > START_BLOCK ? await balancesAt(wallet, scannedFrom - 1n) : { map: new Map(), anyFailed: false };
+    opening = ob.map;
+    openingPartial = ob.anyFailed;
   }
 
   // Positions were already open at the window start: extend backwards (doubling) within the time budget.
@@ -237,11 +266,17 @@ async function loadHistory(wallet: `0x${string}`): Promise<WalletHistory> {
     if (r.coveredFrom === null) break;
     await addTxs(r.hashes);
     scannedFrom = r.coveredFrom;
-    opening = scannedFrom > START_BLOCK ? await balancesAt(wallet, scannedFrom - 1n) : new Map();
+    const ob = scannedFrom > START_BLOCK ? await balancesAt(wallet, scannedFrom - 1n).catch(() => null) : { map: new Map(), anyFailed: false };
+    if (!ob) {
+      openingPartial = true;
+      break;
+    }
+    opening = ob.map;
+    openingPartial = ob.anyFailed;
     if (r.partial) break;
   }
 
-  const history = { scannedFrom, scannedTo: latest, opening, txs, at: Date.now() };
+  const history = { scannedFrom, scannedTo: latest, opening, openingPartial, txs, at: Date.now() };
   if (shouldCache) {
     cache.set(key, history);
     if (cache.size > 500) {
@@ -260,7 +295,10 @@ async function navAt(feed: `0x${string}`, block: bigint): Promise<number | null>
   const k = `${feed}:${block}`;
   if (navCache.has(k)) return navCache.get(k)!;
   try {
-    const [, answer] = await withRetry(() => client.readContract({ address: feed, abi: ABI, functionName: "latestRoundData", blockNumber: block }));
+    const [, answer] = await withRetry(
+      () => client.readContract({ address: feed, abi: ABI, functionName: "latestRoundData", blockNumber: block }),
+      2
+    );
     const v = answer > 0n ? Number(answer) / 1e8 : null;
     if (v) {
       navCache.set(k, v);
@@ -345,20 +383,24 @@ async function computePositions(history: WalletHistory) {
     const ethPaid = tx.ethValue ?? 0n;
     const stockBuyMoves = tx.moves.filter((m) => m.token !== USDC && m.dir === 1);
     let ethLegValues: number[] | null = null;
-    if (ethPaid > 0n && usdcOut === 0n && !tx.moves.some((m) => m.token === USDC && m.dir === -1) && stockBuyMoves.length > 1) {
+    if (ethPaid > 0n && stockBuyMoves.length > 1) {
       const ethUsdPrice = await navAt(ETH_USD_FEED, tx.block);
       if (ethUsdPrice) {
         const totalEthUsd = (Number(ethPaid) / 1e18) * ethUsdPrice;
-        const navEsts = await Promise.all(
-          stockBuyMoves.map(async (m) => ((await navAt(STOCKS.get(m.token)!.chainlinkFeed, tx.block)) ?? 0) * tokensOf(m.amount, m.token))
+        const navs = await Promise.all(
+          stockBuyMoves.map((m) => navAt(STOCKS.get(m.token)!.chainlinkFeed, tx.block))
         );
-        const sumEst = navEsts.reduce((a, b) => a + b, 0);
-        if (sumEst > 0) ethLegValues = navEsts.map((v) => (v / sumEst) * totalEthUsd);
+        // Require every leg's NAV to split ETH proportionally; otherwise mark affected legs unpriced rather than skewed
+        if (navs.every((n) => n !== null && n > 0)) {
+          const navEsts = stockBuyMoves.map((m, idx) => navs[idx]! * tokensOf(m.amount, m.token));
+          const sumEst = navEsts.reduce((a, b) => a + b, 0);
+          if (sumEst > 0) ethLegValues = navEsts.map((v) => (v / sumEst) * totalEthUsd);
+        }
       }
     }
     let ethIdx = 0;
     let ethPaidLeft = ethPaid;
-    const disposals: { token: string; raw: bigint; costRemoved: number; proceeds: bigint }[] = [];
+    const disposals: { token: string; raw: bigint; costRemoved: number; backedRatio: number; wasUnpriced: boolean; proceeds: bigint }[] = [];
     for (const m of tx.moves) {
       if (m.token === USDC) {
         if (m.dir === -1) usdcOut += m.amount;
@@ -376,8 +418,8 @@ async function computePositions(history: WalletHistory) {
         } else if (ethLegValues && ethLegValues[ethIdx] !== undefined) {
           cost = ethLegValues[ethIdx++];
           via = "eth";
-        } else if (ethPaidLeft > 0n && (await navAt(ETH_USD_FEED, tx.block))) {
-          // ETH actually paid x Chainlink ETH/USD at that block (exact enough, not an estimate)
+        } else if (ethPaidLeft > 0n && stockBuyMoves.length === 1 && (await navAt(ETH_USD_FEED, tx.block))) {
+          // Single-stock ETH buy: exact ETH paid x Chainlink ETH/USD at that block
           cost = (Number(ethPaidLeft) / 1e18) * (await navAt(ETH_USD_FEED, tx.block))!;
           ethPaidLeft = 0n;
           via = "eth";
@@ -396,13 +438,16 @@ async function computePositions(history: WalletHistory) {
         p.buys++;
         activity.push({ hash: tx.hash, block: tx.block, side: "buy", symbol: p.symbol, tokens: tokensOf(m.amount, m.token), usd: cost, via });
       } else {
+        const wasUnpriced = Boolean(p.unpriced);
         const sold = m.amount > p.raw ? p.raw : m.amount;
+        const backedRatio = m.amount > 0n && sold > 0n ? Number(sold) / Number(m.amount) : 0;
         const avg = p.raw > 0n ? p.costUsd / tokensOf(p.raw, m.token) : 0;
         const costRemoved = avg * tokensOf(sold, m.token);
         p.raw -= sold;
         p.costUsd = p.raw > 0n ? Math.max(0, p.costUsd - costRemoved) : 0;
+        if (p.raw === 0n) p.unpriced = false; // clean slate for future positions after full exit
         p.sells++;
-        disposals.push({ token: m.token, raw: m.amount, costRemoved, proceeds: 0n });
+        disposals.push({ token: m.token, raw: m.amount, costRemoved, backedRatio, wasUnpriced, proceeds: 0n });
       }
     }
     for (const d of disposals) {
@@ -415,8 +460,8 @@ async function computePositions(history: WalletHistory) {
         if (nav !== null) proceeds = nav * tokensOf(d.raw, d.token);
         p.estimated = true;
       }
-      if (proceeds !== null && !p.unpriced) {
-        p.realizedUsd += proceeds - d.costRemoved;
+      if (proceeds !== null && !d.wasUnpriced && d.backedRatio > 0) {
+        p.realizedUsd += proceeds * d.backedRatio - d.costRemoved;
       }
       activity.push({ hash: tx.hash, block: tx.block, side: "sell", symbol: p.symbol, tokens: tokensOf(d.raw, d.token), usd: proceeds ?? 0, via });
     }
@@ -479,7 +524,7 @@ export async function GET(request: NextRequest) {
       wallet,
       // realized P/L and exact cost basis cover trades since this date
       since: fromBlock ? new Date(Number(fromBlock.timestamp) * 1000).toISOString() : null,
-      complete: !anyHeld(history.opening),
+      complete: !anyHeld(history.opening) && !history.openingPartial,
       trades: history.txs.size,
       positions,
       activity,

@@ -49,6 +49,7 @@ export async function GET(req: NextRequest) {
         watching: Boolean(w),
         address: w?.address,
         alertPct: w ? alertPctOf(w.target) : undefined,
+        target: w ? { weights: w.target.weights, maxWeightPct: w.target.maxWeightPct } : undefined,
         notifications: n.length > 0,
         lastCheckAt: w?.lastCheckAt,
         lastAlertAt: w?.lastAlertAt,

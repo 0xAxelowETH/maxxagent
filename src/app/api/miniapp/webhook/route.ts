@@ -15,20 +15,28 @@ import { getWatch, isAppKeyOf, setNotify, validNotifyDetails } from "@/lib/drift
  */
 export const dynamic = "force-dynamic";
 
-const b64url = (s: string) => Buffer.from(s.replace(/-/g, "+").replace(/_/g, "/"), "base64");
+const b64url = (s: string): Buffer | null => {
+  if (!/^[A-Za-z0-9_-]+$/.test(s)) return null;
+  const buf = Buffer.from(s, "base64url");
+  return buf.toString("base64url") === s ? buf : null;
+};
 const SPKI_ED25519 = Buffer.from("302a300506032b6570032100", "hex");
 
 function signed(body: { header: string; payload: string; signature: string }): { fid: number; key: string; payload: Record<string, unknown> } | null {
   try {
-    const header = JSON.parse(b64url(body.header).toString("utf8")) as { fid?: number; key?: string } | null;
-    const payload = JSON.parse(b64url(body.payload).toString("utf8")) as Record<string, unknown> | null;
+    const hdrBuf = b64url(body.header);
+    const payBuf = b64url(body.payload);
+    const sigBuf = b64url(body.signature);
+    if (!hdrBuf || !payBuf || !sigBuf) return null;
+    const header = JSON.parse(hdrBuf.toString("utf8")) as { fid?: number; key?: string } | null;
+    const payload = JSON.parse(payBuf.toString("utf8")) as Record<string, unknown> | null;
     if (!header || typeof header !== "object" || Array.isArray(header)) return null;
     if (!payload || typeof payload !== "object" || Array.isArray(payload)) return null;
     const fid = Number(header.fid);
     const key = String(header.key || "").replace(/^0x/, "");
-    if (!Number.isInteger(fid) || fid <= 0 || !/^[0-9a-fA-F]{64}$/.test(key)) return null;
+    if (!Number.isSafeInteger(fid) || fid <= 0 || !/^[0-9a-fA-F]{64}$/.test(key)) return null;
     const pub = createPublicKey({ key: Buffer.concat([SPKI_ED25519, Buffer.from(key, "hex")]), format: "der", type: "spki" });
-    return verify(null, Buffer.from(`${body.header}.${body.payload}`), pub, b64url(body.signature)) ? { fid, key, payload } : null;
+    return verify(null, Buffer.from(`${body.header}.${body.payload}`), pub, sigBuf) ? { fid, key, payload } : null;
   } catch {
     return null;
   }
@@ -58,12 +66,18 @@ export async function POST(req: NextRequest) {
   try {
     // Verify Farcaster key ownership BEFORE checking getWatch(fid) so unauthenticated callers cannot enumerate FIDs
     if (!(await isAppKeyOf(v.fid, v.key))) return NextResponse.json({ ok: false }, { status: 401 });
-    // Replay guard: ignore replayed signed webhook payloads so an old token cannot overwrite a fresher one
-    const sigDigest = createHash("sha256").update(`${body.header}.${body.payload}.${body.signature}`).digest("hex").slice(0, 32);
-    const fresh = await kv("SET", `wh:seen:${sigDigest}`, "1", "EX", 86_400, "NX");
-    if (fresh !== "OK") return NextResponse.json({ ok: true, replayed: true });
     if (!(await getWatch(v.fid))) return NextResponse.json({ ok: true, stored: false }); // no drift alert on: nothing to keep
-    await setNotify(v.fid, details);
+    // Replay guard over the immutable signed payload (header.payload); clean up if setNotify throws
+    const sigDigest = createHash("sha256").update(`${body.header}.${body.payload}`).digest("hex").slice(0, 32);
+    const seenKey = `wh:seen:${sigDigest}`;
+    const fresh = await kv("SET", seenKey, "1", "EX", 86_400, "NX");
+    if (fresh !== "OK") return NextResponse.json({ ok: true, replayed: true });
+    try {
+      await setNotify(v.fid, details);
+    } catch (e) {
+      await kv("DEL", seenKey).catch(() => {});
+      throw e;
+    }
     return NextResponse.json({ ok: true });
   } catch {
     return NextResponse.json({ ok: false }, { status: 502 });

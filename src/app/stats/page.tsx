@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ExternalLink, RefreshCw } from "lucide-react";
 import { SiteNav } from "@/components/SiteNav";
 
@@ -25,17 +25,19 @@ export default function StatsPage() {
   const [data, setData] = useState<Stats | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // The first scan after a deploy can take a minute: the API then answers "loading" and this retries
-  const load = (attempt = 0) => {
+  const load = useCallback((attempt = 0, bypassCache = false) => {
+    if (timerRef.current) clearTimeout(timerRef.current);
     setLoading(true);
     setError("");
     let retrying = false;
     const retry = (ms: number) => {
       retrying = true;
-      setTimeout(() => load(attempt + 1), ms);
+      timerRef.current = setTimeout(() => load(attempt + 1, bypassCache), ms);
     };
-    fetch("/api/stats")
+    fetch("/api/stats", bypassCache ? { cache: "no-store" } : undefined)
       .then((r) => r.json())
       .then((d: Stats & { loading?: boolean }) => {
         if (d?.ok) setData(d);
@@ -44,9 +46,13 @@ export default function StatsPage() {
       })
       .catch(() => (attempt < 2 ? retry(5_000) : setError("Stats are unavailable right now.")))
       .finally(() => !retrying && setLoading(false));
-  };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => load(), []);
+  }, []);
+  useEffect(() => {
+    load(0, false);
+    return () => {
+      if (timerRef.current) clearTimeout(timerRef.current);
+    };
+  }, [load]);
 
   const t = data?.totals;
   return (
@@ -59,7 +65,7 @@ export default function StatsPage() {
             <p className="text-sm text-slate-400">Every trade made through MAXXAGENT on Base, read directly from the chain.</p>
           </div>
           <button
-            onClick={() => load()}
+            onClick={() => load(0, true)}
             disabled={loading}
             className="inline-flex items-center gap-2 rounded-xl border border-slate-700 px-3 py-2 text-xs font-semibold text-slate-200 hover:bg-slate-800 cursor-pointer disabled:opacity-50"
           >

@@ -216,9 +216,9 @@ const enriched = new Map<string, { title?: string; summary?: string; url?: strin
 async function enrich8K(cik: number, accession: string, url: string, company: string) {
   if (enriched.has(accession)) return enriched.get(accession)!;
   const pr = await pressRelease(cik, accession, company).catch(() => null);
-  const value = pr
-    ? { title: pr.title, summary: pr.opening ?? undefined, url: pr.url, pressRelease: true }
-    : { summary: (await filingOpening(url).catch(() => null)) ?? undefined };
+  const opening = pr ? null : await filingOpening(url).catch(() => null);
+  if (!pr && !opening) return { summary: undefined };
+  const value = pr ? { title: pr.title, summary: pr.opening ?? undefined, url: pr.url, pressRelease: true } : { summary: opening ?? undefined };
   enriched.set(accession, value);
   if (enriched.size > 500) {
     const oldest = enriched.keys().next().value;
@@ -395,9 +395,9 @@ const decode = (s: string) =>
     .replace(/&nbsp;/g, " ")
     .replace(/&mdash;/g, "—")
     .replace(/&ndash;/g, "–")
-    .replace(/<[^>]+>/g, " ")
     .replace(/&lt;/g, "<")
     .replace(/&gt;/g, ">")
+    .replace(/<[^>]+>/g, " ")
     .replace(/&amp;/g, "&")
     .replace(/\s+/g, " ")
     .trim();
@@ -425,10 +425,10 @@ async function newsrooms(): Promise<Omit<NewsItem, "priceThen" | "priceNow" | "c
         for (const b of blocks) {
           const title = decode(tag(b, "title"));
           // RSS <link>url</link>, or Atom <link rel="alternate" href="url"/>
-          const link = decode(tag(b, "link")) || b.match(/<link[^>]*rel="alternate"[^>]*href="([^"]+)"/i)?.[1] || b.match(/<link[^>]*href="([^"]+)"/i)?.[1] || "";
+          const link = decode(tag(b, "link") || b.match(/<link[^>]*rel="alternate"[^>]*href="([^"]+)"/i)?.[1] || b.match(/<link[^>]*href="([^"]+)"/i)?.[1] || "");
           const date = Date.parse(decode(tag(b, "pubDate") || tag(b, "published") || tag(b, "updated") || tag(b, "dc:date")));
           const categories = [...b.matchAll(/<category(?:\s[^>]*)?>([\s\S]*?)<\/category>|<category[^>]*term="([^"]+)"/gi)].map((m) => decode(m[1] || m[2] || ""));
-          if (!title || !/^https:\/\//.test(link) || !(date > since) || date > Date.now() + 86_400_000) continue;
+          if (!title || !/^https:\/\//i.test(link) || !(date > since) || date > Date.now() + 86_400_000) continue;
           if (n.keep && !n.keep({ link, title, categories })) continue;
           // WordPress feeds add "The post X appeared first on Y." — not a teaser
           const teaser = decode(tag(b, "description") || tag(b, "summary"))
@@ -513,12 +513,15 @@ async function build(): Promise<NewsItem[]> {
   await inBatches(symbols, 3, async (symbol) => {
     const mine = raw.filter((r) => r.symbol === symbol);
     const inBudget = Date.now() < deadline;
-    const dex = inBudget && mine.some((x) => Date.parse(x.publishedAt) / 1000 >= weekAgo) ? await dexSeries(symbol, "7D") : [];
     const feed = feedOf(symbol);
-    const nav =
-      inBudget && feed
-        ? await Promise.race([navDailyCloses(feed).catch(() => [] as [number, number][]), new Promise<[number, number][]>((r) => setTimeout(() => r([]), 8000))])
-        : [];
+    const needDex = inBudget && mine.some((x) => Date.parse(x.publishedAt) / 1000 >= weekAgo);
+    const needNav = inBudget && Boolean(feed);
+    const [dex, nav] = await Promise.all([
+      needDex ? dexSeries(symbol, "7D") : Promise.resolve([] as [number, number][]),
+      needNav && feed
+        ? Promise.race([navDailyCloses(feed).catch(() => [] as [number, number][]), new Promise<[number, number][]>((r) => setTimeout(() => r([]), 8000))])
+        : Promise.resolve([] as [number, number][]),
+    ]);
     for (const x of mine) {
       const t = Date.parse(x.publishedAt) / 1000;
       const useDex = t >= weekAgo && dex.length > 1 && dex[0][0] <= t;

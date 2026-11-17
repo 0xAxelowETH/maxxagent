@@ -63,15 +63,20 @@ export async function indexCount(): Promise<number> {
 
 export async function readIndexes(ids: number[]): Promise<PublishedIndex[]> {
   if (!registryDeployed() || ids.length === 0) return [];
-  const results = await client.multicall({
-    allowFailure: true,
-    contracts: ids.map((id) => ({ address: REGISTRY as `0x${string}`, abi: INDEX_REGISTRY_ABI, functionName: "getIndex" as const, args: [BigInt(id)] })),
-  });
-  return results.flatMap((r, i) => {
-    if (r.status !== "success") return [];
-    const ix = toIndex(ids[i], r.result as unknown as Raw);
-    return ix ? [ix] : [];
-  });
+  const out: PublishedIndex[] = [];
+  for (let start = 0; start < ids.length; start += 50) {
+    const chunk = ids.slice(start, start + 50);
+    const results = await client.multicall({
+      allowFailure: true,
+      contracts: chunk.map((id) => ({ address: REGISTRY as `0x${string}`, abi: INDEX_REGISTRY_ABI, functionName: "getIndex" as const, args: [BigInt(id)] })),
+    });
+    results.forEach((r, i) => {
+      if (r.status !== "success") return;
+      const ix = toIndex(chunk[i], r.result as unknown as Raw);
+      if (ix) out.push(ix);
+    });
+  }
+  return out;
 }
 
 export async function readIndex(id: number): Promise<PublishedIndex | null> {

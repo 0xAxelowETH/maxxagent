@@ -46,8 +46,12 @@ async function dailyCloses(feed: `0x${string}`, sinceSec: number): Promise<[stri
       contracts: ids.map((id) => ({ address: feed, abi: FEED_ABI, functionName: "getRoundData" as const, args: [id] })),
     });
     let oldest = Infinity;
+    let failedCount = 0;
     for (const r of res) {
-      if (r.status !== "success") continue;
+      if (r.status !== "success") {
+        failedCount++;
+        continue;
+      }
       const [, answer, , updatedAt] = r.result as readonly [bigint, bigint, bigint, bigint, bigint];
       const t = Number(updatedAt);
       if (!t || answer <= 0n) continue;
@@ -59,6 +63,9 @@ async function dailyCloses(feed: `0x${string}`, sinceSec: number): Promise<[stri
       if (weekday === "Sat" || weekday === "Sun" || isUsHoliday(day)) continue;
       const prev = byDay.get(day);
       if (!prev || t > prev.t) byDay.set(day, { t, v: Number(answer) });
+    }
+    if (res.length > 0 && failedCount > res.length / 2 && byDay.size < MIN_DAYS + 1) {
+      throw new Error("Chainlink multicall failed");
     }
     if (oldest < sinceSec) break;
   }
@@ -113,7 +120,8 @@ async function refresh(stocks: { symbol: string; chainlinkFeed: `0x${string}` }[
       stocks.slice(i, i + 2).map(async (s) => {
         try {
           const val = compute(await dailyCloses(s.chainlinkFeed, since));
-          if (val !== null) cache.set(s.symbol, { at: Date.now(), value: val });
+          // Cache valid stats for 12h; genuinely short feeds cache null for 30m so cold waits don't repeat on every call
+          cache.set(s.symbol, { at: val !== null ? Date.now() : Date.now() - CACHE_MS + 1_800_000, value: val });
         } catch {
           // keep any older value; retried on the next request
         }

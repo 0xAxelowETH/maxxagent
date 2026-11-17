@@ -570,9 +570,13 @@ export default function StockMaxxingDashboard() {
     }
   }, [rebalanceKey]);
 
+  const [rebalanceBuyDoneNonce, setRebalanceBuyDoneNonce] = useState(0);
   const recordResult = useCallback(
     (result: BasketResult, label: string) => {
       setBasketResult(result);
+      if (label === "rebalance" && result.side === "buy" && result.bought.length > 0) {
+        setRebalanceBuyDoneNonce((n) => n + 1);
+      }
       if (label === "rebalance" && rebalanceKey && result.txHashes.length) {
         const summary =
           result.side === "sell"
@@ -707,8 +711,8 @@ export default function StockMaxxingDashboard() {
         const sender = await resolveSender(eth);
         if (sender.toLowerCase() !== walletAddress.toLowerCase()) {
           // The sell amounts came from the balances of the previously shown account: refresh, don't sell
-          setWalletAddress(sender);
-          setBalanceRefreshNonce((n) => n + 1);
+          const cid = normalizeChainHex(await eth.request({ method: "eth_chainId" }).catch(() => "")) || "0x2105";
+          attachWalletRef.current(eth, sender, cid);
           throw new Error("Your wallet switched to another account. Balances were refreshed: check them and try again.");
         }
         const order = await prepareSell({ eth, sender, legs: validLegs, slippageBps: slippageRef.current, onStatus: setBasketStatus });
@@ -751,7 +755,7 @@ export default function StockMaxxingDashboard() {
     } catch (err: unknown) {
       if (walletRef.current !== targetSender) return;
       setReview(null);
-      setBasketError(err instanceof Error ? err.message : "Could not refresh the quote");
+      setBasketError(errMsg(err, "Could not refresh the quote"));
     } finally {
       setBasketStatus("");
       setReviewBusy(false);
@@ -1299,7 +1303,7 @@ export default function StockMaxxingDashboard() {
       recordOnchainActivity(`PUBLISH_INDEX ${cleanTicker}`, hash, "Base Mainnet (8453)");
       loadPublishedIndexes();
     } catch (err: unknown) {
-      setTxError(err instanceof Error ? err.message : "Transaction cancelled or failed");
+      setTxError(errMsg(err, "Transaction cancelled or failed"));
     } finally {
       setPublishStatus("");
       setTxPending(false);
@@ -3890,6 +3894,7 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                   onChangeAlert={(p) => saveTarget({ ...savedTarget, alertPct: p })}
                   walletAddress={walletAddress}
                   history={rebalanceLog}
+                  rebalanceBuyDoneNonce={rebalanceBuyDoneNonce}
                 />
               )}
 
@@ -4614,7 +4619,7 @@ const walletClient = createWalletClient({
       )}
 
       {/* Purchase status toast (visible from any tab, including final result on Agent tab on mobile) */}
-      {(basketPending || basketError || basketResult) && (activeTab !== "agent" || !basketPending) && (
+      {(basketPending || basketError || basketResult) && (
         <div className="fixed bottom-24 md:bottom-4 left-3 right-3 sm:left-auto sm:right-4 sm:w-96 z-50 rounded-2xl border border-slate-700 bg-[#0b1120]/95 p-4 text-xs shadow-2xl backdrop-blur space-y-2">
           <div className="flex items-start justify-between gap-3">
             <div className="font-bold text-white">

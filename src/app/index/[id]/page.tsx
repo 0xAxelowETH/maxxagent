@@ -13,7 +13,7 @@ import { basketImagePath } from "@/lib/shareBasket";
 
 export const revalidate = 60;
 
-const SITE = process.env.NEXT_PUBLIC_SITE_URL || "https://maxxagent.xyz";
+const SITE = (process.env.NEXT_PUBLIC_SITE_URL || "https://maxxagent.xyz").replace(/\/$/, "");
 const parseId = (v: string) => (/^\d{1,9}$/.test(v) ? Number(v) : -1);
 
 async function load(idParam: string) {

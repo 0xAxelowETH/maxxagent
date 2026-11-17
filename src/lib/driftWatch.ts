@@ -39,7 +39,7 @@ export function validNotifyDetails(d: unknown): NotifyDetails | null {
   if (typeof url !== "string" || typeof token !== "string" || url.length > 300 || token.length < 8 || token.length > 512) return null;
   try {
     const u = new URL(url);
-    if (u.protocol !== "https:") return null;
+    if (u.protocol !== "https:" || u.username || u.password || u.port !== "") return null;
     if (!NOTIFY_HOSTS.some((h) => u.hostname === h || u.hostname.endsWith(`.${h}`))) return null;
     return { url: u.toString(), token };
   } catch {
@@ -69,8 +69,12 @@ export async function getNotifies(fid: number): Promise<NotifyDetails[]> {
 const MAX_NOTIFY_PER_FID = 4;
 export async function setNotify(fid: number, d: NotifyDetails) {
   const existing = await getNotifies(fid);
-  if (existing.length >= MAX_NOTIFY_PER_FID && !existing.some((e) => e.url === d.url)) {
-    await deleteNotify(fid, existing[0].url);
+  if (!existing.some((e) => e.url === d.url)) {
+    let count = existing.length;
+    for (let i = 0; i < existing.length && count >= MAX_NOTIFY_PER_FID; i++) {
+      await deleteNotify(fid, existing[i].url);
+      count--;
+    }
   }
   return kv("HSET", notifyKey(fid), d.url, d.token);
 }

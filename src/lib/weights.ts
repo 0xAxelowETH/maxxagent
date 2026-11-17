@@ -57,7 +57,7 @@ export function roundWeightsBps(weights: number[], capBps = 10000): number[] | n
 export function capWeightsBps(weights: number[], capBps: number): number[] | null {
   const n = weights.length;
   if (n === 0) return [];
-  if (n * Math.floor(capBps) < 10000) return null;
+  if (!Number.isFinite(capBps) || n * Math.floor(capBps) < 10000) return null;
   const total = weights.reduce((a, w) => a + Math.max(0, w), 0) || 1;
   let w = weights.map((x) => (Math.max(0, x) / total) * 10000);
   const fixed = new Array(n).fill(false);

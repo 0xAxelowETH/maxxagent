@@ -73,7 +73,7 @@ export const THEMES: { id: string; label: string; words: string[]; symbols: stri
  * "Strategy" is also an ordinary word ("a growth strategy"), so it means Strategy Inc (MSTRc) only in a list
  * of companies ("Tesla, Amazon and Strategy") or next to stock words ("Strategy shares")
  */
-const STRATEGY_IN_LIST_RE = /(?:,|\band|\bdan|&|\bplus|\bor|\batau)\s+strategy\b(?![:\-])(?!\s+(?:for|to|that|is|of|untuk|yang|driven|based))/;
+const STRATEGY_IN_LIST_RE = /(?:^[^a-z0-9]*strategy\b(?=\s*(?:,|and\b|&|plus\b))|(?:,|\band|\bdan|&|\bplus|\bor|\batau)\s+strategy\b)(?![:\-])(?!\s+(?:for|to|that|is|of|untuk|yang|driven|based|with\b))/;
 const STRATEGY_SHARES_RE = /\bstrategy\s+(?:stock|stocks|shares|saham|token)\b/;
 
 /**
@@ -139,7 +139,7 @@ function mentions(text: string) {
 }
 
 /** Words that make a percent a limit, not a weight ("max 30%", "no more than 25%") */
-const CAP_BEFORE = /(?:max(?:imum)?|cap(?:ped)?(?:\s+at)?|at most|no more than|not more than|up to|limit(?:ed)?(?:\s+to)?|maks(?:imal|imum)?|paling banyak|tidak lebih dari|over|above|more than|lebih dari|di atas)\s*(?:of\s+)?$/;
+const CAP_BEFORE = /(?:max(?:imum)?|cap(?:ped)?(?:\s+(?:each|every|any)\s+(?:stock|company|name|position))?(?:\s+at)?|at most|no more than|not more than|up to|limit(?:ed)?(?:\s+to)?|maks(?:imal|imum)?|paling banyak|tidak lebih dari|over|above|more than|lebih dari|di atas)\s*(?:of\s+|at\s+)?$/;
 /** Words that make a percent a cash amount or a per-stock rule ("20% in cash", "30% each") */
 const NOT_WEIGHT_AFTER = /^\s*(?:(?:in|as|of|di|dalam|sebagai)\s+)?(?:cash|usdc|stablecoins?|tunai|kas|reserve|cadangan)|^\s*(?:per|each|a piece|per saham|tiap|setiap|max|maks)/;
 const PCT_BEFORE_NAME = /^\s*(?:(?:in|of|on|into|to|for|di|ke|untuk)\s+)?(?:the\s+)?$/;
@@ -198,6 +198,9 @@ export function parseMandate(input: string): ParsedMandate {
   };
   const negatedText: string[] = [];
   for (const m of text.matchAll(negRe)) {
+    const rawClause = m[1].trim();
+    // Cap / quantifier phrases ("no more than 25%", "no single stock over 30%", "not only AI") are limits, not exclusions
+    if (/^(?:more than|single\b|one\b|other\b|only\b|less than)/i.test(rawClause)) continue;
     const segs = m[1].split(",");
     let end = 1;
     while (end < segs.length && bareName(segs[end])) end++;
@@ -259,10 +262,11 @@ export function parseMandate(input: string): ParsedMandate {
   const pct = "(\\d{1,3}(?:\\.\\d+)?)\\s*(?:%|percent|persen)";
   const cashWords = "(?:cash|usdc|stablecoins?|tunai|kas|reserve|cadangan)";
   let cashPct: number | undefined;
+  const allThemeWords = THEMES.flatMap((t) => t.words).map(esc).join("|");
   const cashMatch =
     text.match(new RegExp(`${pct}\\s*(?:in\\s+|as\\s+|of\\s+|di\\s+|dalam\\s+|sebagai\\s+)?${cashWords}`)) ||
-    // "keep 20%" is cash, but "hold 40% nvidia" is a weight
-    text.match(new RegExp(`(?:keep|hold|leave|reserve|set aside|sisakan|simpan|sisihkan)\\s+${pct}(?!\\s*(?:(?:in|of|on|into|di|ke)\\s+)?(?:the\\s+)?(?:${ALL_STOCK_ALIASES})(?![a-z0-9]))`)) ||
+    // "keep 20%" is cash, but "hold 40% nvidia" or "keep 25% max" or "hold 40% in big tech" is not cash
+    text.match(new RegExp(`(?:keep|hold|leave|reserve|set aside|sisakan|simpan|sisihkan)\\s+${pct}(?!\\s*(?:(?:in|of|on|into|di|ke)\\s+)?(?:the\\s+)?(?:${ALL_STOCK_ALIASES}|${allThemeWords}|max(?:imum)?|cap|limit|per\\b|each\\b)(?![a-z0-9]))`)) ||
     text.match(new RegExp(`${cashWords}\\s*(?:reserve\\s*)?(?:of\\s+)?${pct}`));
   if (cashMatch) {
     const v = Number(cashMatch[1]);
@@ -270,7 +274,7 @@ export function parseMandate(input: string): ParsedMandate {
   }
   let maxWeightPct: number | undefined;
   const maxMatch =
-    text.match(new RegExp(`(?:max(?:imum)?|cap(?:ped)?(?:\\s+at)?|at most|no more than|not more than|up to|limit(?:ed)?(?:\\s+to)?|maks(?:imal|imum)?|paling banyak|tidak lebih dari)\\s*(?:of\\s+)?${pct}(?!\\s*(?:in\\s+|as\\s+|di\\s+)?${cashWords})`)) ||
+    text.match(new RegExp(`(?:max(?:imum)?|cap(?:ped)?(?:\\s+at)?|at most|no more than|not more than|up to|limit(?:ed)?(?:\\s+to)?|maks(?:imal|imum)?|paling banyak|tidak lebih dari)\\s*(?:of\\s+)?${pct}(?!\\s*(?:in\\s+|as\\s+|of\\s+|di\\s+)?${cashWords})`)) ||
     text.match(new RegExp(`(?:no|not|tidak ada)\\s+(?:single\\s+|one\\s+)?(?:stock|company|name|position|holding|saham)s?\\s+(?:over|above|more than|bigger than|exceeding|di atas|lebih dari)\\s+${pct}`)) ||
     // "nothing above 25%", "none of them over 30%", "tidak ada yang lebih dari 30%"
     text.match(new RegExp(`(?:nothing|none(?:\\s+of\\s+them)?|no\\s+one|(?:tidak|jangan)\\s+ada\\s+yang)\\s+(?:is\\s+|should\\s+be\\s+|goes\\s+)?(?:over|above|more than|bigger than|larger than|greater than|exceeding|beyond|di atas|lebih dari)\\s+${pct}(?!\\s*(?:in\\s+|as\\s+|di\\s+)?${cashWords})`)) ||

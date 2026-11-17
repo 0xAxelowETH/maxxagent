@@ -95,22 +95,35 @@ export function scoresToWeightsBps(scores: number[]): number[] {
   const max = Math.max(MAX_WEIGHT_BPS, Math.ceil(10000 / n));
   const strength = scores.map((s) => Math.pow(Math.max(1, s - 45), 1.65));
 
-  // Iteratively clamp to [min, max] while keeping the total at 10,000
+  // Two-stage water-filling: first lock floors (raises small weights -> reduces remaining),
+  // then lock ceilings (lowers huge weights -> adds to remaining) so fixedTotal never exceeds 10,000.
   let weights = new Array(n).fill(0);
   const fixed = new Array(n).fill(false);
   for (let iter = 0; iter < n + 1; iter++) {
     const fixedTotal = weights.reduce((a, w, i) => (fixed[i] ? a + w : a), 0);
     const freeStrength = strength.reduce((a, s, i) => (fixed[i] ? a : a + s), 0);
+    if (freeStrength <= 0) break;
     const remaining = 10000 - fixedTotal;
     let changed = false;
     weights = weights.map((w, i) => (fixed[i] ? w : (strength[i] / freeStrength) * remaining));
     weights.forEach((w, i) => {
-      if (fixed[i]) return;
-      if (w < min) {
+      if (!fixed[i] && w < min) {
         weights[i] = min;
         fixed[i] = true;
         changed = true;
-      } else if (w > max) {
+      }
+    });
+    if (!changed) break;
+  }
+  for (let iter = 0; iter < n + 1; iter++) {
+    const fixedTotal = weights.reduce((a, w, i) => (fixed[i] ? a + w : a), 0);
+    const freeStrength = strength.reduce((a, s, i) => (fixed[i] ? a : a + s), 0);
+    if (freeStrength <= 0) break;
+    const remaining = 10000 - fixedTotal;
+    let changed = false;
+    weights = weights.map((w, i) => (fixed[i] ? w : (strength[i] / freeStrength) * remaining));
+    weights.forEach((w, i) => {
+      if (!fixed[i] && w > max) {
         weights[i] = max;
         fixed[i] = true;
         changed = true;
@@ -234,10 +247,17 @@ export function runAutonomousStockAgent(params: {
           (dropped.length ? `Left out ${dropped.join(", ")}, from their SEC filings.` : "Every candidate reported a profit in its last 10-K.") +
           (unknown ? ` ${unknown} stock${unknown > 1 ? "s" : ""} couldn't be checked right now (SEC data still loading), so ${unknown > 1 ? "they stay" : "it stays"} in.` : ""),
       });
+    } else {
+      profitLimit.push({
+        label: "Profitable companies only",
+        status: "adjusted",
+        detail: "None of the matching stocks met the profitability check (or reported a 10-K profit yet), so the profitable filter was skipped.",
+      });
     }
   }
+  const riskComplete = pool.every((st) => risk[st.symbol]);
   // A conservative basket leaves out the wildest stocks (over 60% a year on live Chainlink history), unless named
-  if (riskProfile === "Conservative") {
+  if (riskProfile === "Conservative" && riskComplete) {
     const wild = pool.filter((st) => !mandate.include.includes(st.symbol) && (risk[st.symbol]?.volPct ?? 0) > 60);
     if (wild.length && pool.length - wild.length >= 2) {
       for (const st of wild) drop(st.symbol, `volatility ${risk[st.symbol]!.volPct.toFixed(0)}% a year, above 60% for a conservative basket`);
@@ -253,7 +273,6 @@ export function runAutonomousStockAgent(params: {
     interpretation.push("Every stock was excluded, so the exclusions were ignored.");
   }
 
-  const riskComplete = pool.every((st) => risk[st.symbol]);
   const scored = pool.map((stock) => {
     let score = stock.aiScoreBase;
     const reasons: string[] = [];
@@ -361,7 +380,8 @@ export function runAutonomousStockAgent(params: {
   const fixedSyms = Object.keys(mandate.weightsPct).filter((s) => selected.some((x) => x.stock.symbol === s));
   const investedFor = (n: number) => (capPct && n * capPct < investPct - 1e-9 ? n * capPct : investPct);
   let fixedBase = investedFor(selected.length);
-  const fixedOfStocks = (s: string) => (mandate.weightsPct[s] / fixedBase) * 100;
+  const cappedFixedPct = (s: string) => (capPct ? Math.min(mandate.weightsPct[s], capPct) : mandate.weightsPct[s]);
+  const fixedOfStocks = (s: string) => (cappedFixedPct(s) / fixedBase) * 100;
   let fixedSum = fixedSyms.reduce((a, s) => a + fixedOfStocks(s), 0);
   if (fixedSyms.length) {
     const restIdx = selected.filter((x) => !fixedSyms.includes(x.stock.symbol));
@@ -380,7 +400,9 @@ export function runAutonomousStockAgent(params: {
   const added = selected.filter((x) => !mandate.include.includes(x.stock.symbol) && !themeOf(x.stock.symbol).length).length;
   if (added > 0 && (mandate.include.length || mandate.themes.length) && !mandate.only)
     interpretation.push(`Added ${added} more by score to diversify (say "only" to keep just what you named).`);
-  if (mandate.count && mandate.count > pool.length) interpretation.push(`Only ${pool.length} stock${pool.length > 1 ? "s" : ""} match, so the basket has ${pool.length}.`);
+  if (mandate.count && mandate.count > selected.length && !fixedSyms.length) {
+    interpretation.push(`Only ${pool.length} stock${pool.length > 1 ? "s" : ""} match, so the basket has ${pool.length}.`);
+  }
   let weights: number[];
   const fixedLimits: AgentAnalysisReport["limits"] = [];
   if (fixedSyms.length) {
@@ -392,11 +414,11 @@ export function runAutonomousStockAgent(params: {
       weights = roundWeightsBps(selected.map((x) => fixedOfStocks(x.stock.symbol)))!;
       // Talk in the user's own numbers (share of their money), not the internal share of the invested part
       const userSum = fixedSyms.reduce((a, s) => a + mandate.weightsPct[s], 0);
-      if (Math.abs(userSum - 100) > 0.5)
+      if (Math.abs(userSum - fixedBase) > 0.5 && !overLimit)
         fixedLimits.push({
           label: "Your weights",
           status: "adjusted",
-          detail: `${setText} add up to ${userSum.toFixed(0)}% of your money, so they were scaled to 100% in the same proportions${userSum < 100 ? " (the rest was too small to spread over more stocks)" : ""}.`,
+          detail: `${setText} add up to ${userSum.toFixed(0)}% of your money, so they were scaled to ${fixedBase.toFixed(0)}% in the same proportions${userSum < fixedBase ? " (the rest was too small to spread over more stocks)" : ""}.`,
         });
       // When the per-stock limit is what changed them, "Your weights vs your limit" below says so; no second card
       else if (!overLimit) fixedLimits.push({ label: "Your weights", status: "kept", detail: `${setText}, as you set them.` });
@@ -406,11 +428,13 @@ export function runAutonomousStockAgent(params: {
       const restPct = 100 - fixedSum;
       const raw = selected.map((x) => (fixedSyms.includes(x.stock.symbol) ? fixedOfStocks(x.stock.symbol) : (restShares[rest.indexOf(x)] / 10000) * restPct));
       weights = roundWeightsBps(raw)!;
-      fixedLimits.push({
-        label: "Your weights",
-        status: overLimit ? "adjusted" : "kept",
-        detail: `${setText}, as you set them. The other ${((restPct * fixedBase) / 100).toFixed(0)}% of your money is spread by score across ${rest.map((x) => x.stock.symbol).join(", ")}.`,
-      });
+      if (!overLimit) {
+        fixedLimits.push({
+          label: "Your weights",
+          status: "kept",
+          detail: `${setText}, as you set them. The other ${((restPct * fixedBase) / 100).toFixed(0)}% of your money is spread by score across ${rest.map((x) => x.stock.symbol).join(", ")}.`,
+        });
+      }
     }
     const over = fixedSyms.filter((s) => mandate.maxWeightPct && mandate.weightsPct[s] > mandate.maxWeightPct);
     if (over.length)

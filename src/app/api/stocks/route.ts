@@ -68,18 +68,17 @@ async function fetchCoinbaseTokenizedStocksViaDoH(): Promise<
   Record<string, { multiplier?: number; navPrice?: number }>
 > {
   const result: Record<string, { multiplier?: number; navPrice?: number }> = {};
+  const dohCtrl = new AbortController();
+  const dohTimer = setTimeout(() => dohCtrl.abort(), 2000);
   try {
-    const dohCtrl = new AbortController();
-    const dohTimer = setTimeout(() => dohCtrl.abort(), 2000);
     const dohRes = await fetch("https://cloudflare-dns.com/dns-query?name=api.coinbase.com&type=A", {
       signal: dohCtrl.signal,
       headers: { Accept: "application/dns-json" },
     });
-    clearTimeout(dohTimer);
     if (!dohRes.ok) return result;
     const dohJson = await dohRes.json();
     const ip = dohJson?.Answer?.find((a: { type: number; data?: string }) => a.type === 1)?.data;
-    if (!ip) return result;
+    if (!ip || !/^(?:\d{1,3}\.){3}\d{1,3}$/.test(ip)) return result;
 
     const rawBody = await new Promise<string>((resolve, reject) => {
       const req = https.request(
@@ -126,6 +125,8 @@ async function fetchCoinbaseTokenizedStocksViaDoH(): Promise<
     }
   } catch {
     // Gracefully fall back to direct Base Mainnet B20 + Chainlink + Aerodrome DEX reads
+  } finally {
+    clearTimeout(dohTimer);
   }
   return result;
 }
@@ -283,10 +284,17 @@ async function buildMarket(): Promise<LiveTokenizedStock[]> {
       const rawLiveDex = liveDexPool?.priceUsd ? Number(liveDexPool.priceUsd) : 0;
       const hasLiveDex = Number.isFinite(rawLiveDex) && rawLiveDex > 0;
       const dexPrice24_7 = hasLiveDex ? Number(rawLiveDex.toFixed(2)) : Number(navPrice.toFixed(2));
-      const weekendGapPct = hasLiveDex && navPrice > 0 ? Number((((rawLiveDex - navPrice) / navPrice) * 100).toFixed(2)) : 0;
+      const weekendGapPct = isRoundValid && hasLiveDex && navPrice > 0 ? Number((((rawLiveDex - navPrice) / navPrice) * 100).toFixed(2)) : 0;
       const weekendSignal: "BUY_DEX_DISCOUNT" | "SHORT_DEX_PREMIUM" | "FAIR_PARITY" =
-        weekendGapPct <= -0.15 ? "BUY_DEX_DISCOUNT" : weekendGapPct >= 0.15 ? "SHORT_DEX_PREMIUM" : "FAIR_PARITY";
-      const change24hPct = liveDexPool?.priceChange?.h24 !== undefined ? Number(liveDexPool.priceChange.h24) : 0;
+        !isRoundValid
+          ? "FAIR_PARITY"
+          : weekendGapPct <= -0.15
+          ? "BUY_DEX_DISCOUNT"
+          : weekendGapPct >= 0.15
+          ? "SHORT_DEX_PREMIUM"
+          : "FAIR_PARITY";
+      const rawChange = liveDexPool?.priceChange?.h24 !== undefined ? Number(liveDexPool.priceChange.h24) : 0;
+      const change24hPct = Number.isFinite(rawChange) ? rawChange : 0;
       const dexTxns24h = (liveDexPool?.txns?.h24?.buys ?? 0) + (liveDexPool?.txns?.h24?.sells ?? 0);
 
       return {
@@ -327,9 +335,9 @@ async function buildMarket(): Promise<LiveTokenizedStock[]> {
     const totalSupplySharesUI = totalSupplyTokens * uiMultiplier;
     const hasLiveDex = Boolean(liveDexPool?.priceUsd && Number(liveDexPool.priceUsd) > 0);
     const dexPrice24_7 = hasLiveDex ? Number(Number(liveDexPool!.priceUsd).toFixed(2)) : fb.price;
-    const weekendGapPct = Number((((dexPrice24_7 - fb.price) / fb.price) * 100).toFixed(2));
-    const weekendSignal: "BUY_DEX_DISCOUNT" | "SHORT_DEX_PREMIUM" | "FAIR_PARITY" =
-      weekendGapPct <= -0.15 ? "BUY_DEX_DISCOUNT" : weekendGapPct >= 0.15 ? "SHORT_DEX_PREMIUM" : "FAIR_PARITY";
+    const rawFbChange = liveDexPool?.priceChange?.h24 !== undefined ? Number(liveDexPool.priceChange.h24) : 0;
+    const weekendGapPct = 0;
+    const weekendSignal: "BUY_DEX_DISCOUNT" | "SHORT_DEX_PREMIUM" | "FAIR_PARITY" = "FAIR_PARITY";
 
     return {
       ...meta,
@@ -352,7 +360,7 @@ async function buildMarket(): Promise<LiveTokenizedStock[]> {
       totalSupplySharesUI,
       uiMultiplier,
       onchainMarketCapUsd: totalSupplyTokens * fb.price,
-      change24hPct: liveDexPool?.priceChange?.h24 ?? 0,
+      change24hPct: Number.isFinite(rawFbChange) ? rawFbChange : 0,
       source: "fallback-snapshot",
     };
   });
@@ -428,7 +436,9 @@ export async function GET(request: NextRequest) {
       const usdcRaw = val(perStock.length);
       walletUsdc = usdcRaw !== null ? Number(usdcRaw) / 1e6 : undefined;
       walletEth = await publicClient.getBalance({ address: walletAddr }).then((w) => Number(w) / 1e18).catch(() => undefined);
-      if (Object.keys(walletBalances).length < liveStocks.length) walletError = "Some balances could not be read. Retry in a moment.";
+      if (Object.keys(walletBalances).length < liveStocks.length || usdcRaw === null) {
+        walletError = "Some balances could not be read. Retry in a moment.";
+      }
     } catch {
       walletError = "Wallet balances are unavailable right now. Retry in a moment.";
     }

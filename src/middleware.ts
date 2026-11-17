@@ -80,6 +80,7 @@ const LIMITS: Record<string, number> = {
   "/api/replay": 30,
   "/api/miniapp/webhook": 30,
   "/api/og": 60,
+  "/preview": 30,
 };
 const WINDOW_MS = 60_000;
 const hits = new Map<string, { start: number; count: number }>();
@@ -98,6 +99,7 @@ function rateLimited(request: NextRequest): { limited: boolean; retryAfter: numb
   const now = Date.now();
   const entry = hits.get(key);
   if (!entry || now - entry.start > WINDOW_MS) {
+    if (entry) hits.delete(key);
     hits.set(key, { start: now, count: 1 });
     if (hits.size > 5000) {
       for (const [k, v] of hits) if (now - v.start > WINDOW_MS) hits.delete(k);
@@ -133,7 +135,7 @@ export function middleware(request: NextRequest) {
   }
 
   const path = request.nextUrl.pathname;
-  if (path.startsWith("/api/")) {
+  if (path.startsWith("/api/") || path === "/preview") {
     const { limited, retryAfter } = rateLimited(request);
     if (limited) {
       return NextResponse.json(

@@ -86,6 +86,7 @@ async function notify(fid: number, today: string, title: string, body: string): 
       const res = await fetch(n.url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        redirect: "error",
         body: JSON.stringify({ notificationId: `drift-${fid}-${today}`, title: title.slice(0, 32), body: body.slice(0, 128), targetUrl: `${SITE}/?tab=portfolio`, tokens: [n.token] }),
         signal: AbortSignal.timeout(4000),
       });
@@ -108,19 +109,20 @@ function secretsEqual(a: string, b: string): boolean {
 export async function GET(req: NextRequest) {
   // Vercel Cron sends "Authorization: Bearer $CRON_SECRET"; without a secret nobody may start the check
   const secret = process.env.CRON_SECRET;
-  if (!secret) return NextResponse.json({ ok: true, skipped: "CRON_SECRET not set" });
+  const NO_STORE = { "Cache-Control": "no-store" };
+  if (!secret) return NextResponse.json({ ok: true, skipped: "CRON_SECRET not set" }, { headers: NO_STORE });
   const auth = req.headers.get("authorization") || "";
-  if (!secretsEqual(auth, `Bearer ${secret}`)) return NextResponse.json({ ok: false }, { status: 401 });
-  if (!kvEnabled()) return NextResponse.json({ ok: true, skipped: "storage not configured" });
+  if (!secretsEqual(auth, `Bearer ${secret}`)) return NextResponse.json({ ok: false }, { status: 401, headers: NO_STORE });
+  if (!kvEnabled()) return NextResponse.json({ ok: true, skipped: "storage not configured" }, { headers: NO_STORE });
   const lock = await kv<string | null>("SET", "cron:drift:lock", "1", "NX", "EX", 55).catch(() => null);
-  if (lock !== "OK") return NextResponse.json({ ok: true, skipped: "already running" }, { headers: { "Cache-Control": "no-store" } });
+  if (lock !== "OK") return NextResponse.json({ ok: true, skipped: "already running" }, { headers: NO_STORE });
 
   const started = Date.now();
   const counts = { watches: 0, checked: 0, off: 0, alerted: 0, skipped: 0, failed: 0 };
   try {
     const all = await listWatchFids();
     counts.watches = all.length;
-    if (!all.length) return NextResponse.json({ ok: true, ...counts });
+    if (!all.length) return NextResponse.json({ ok: true, ...counts }, { headers: NO_STORE });
     const nav = await navPrices();
     const today = new Date().toISOString().slice(0, 10);
     // Continue from the last saved cursor so every wallet gets checked fairly across runs

@@ -27,7 +27,7 @@ const SOURCE_TAG = toHex('"Source":"maxxagent"').slice(2);
 // First swap built by MAXXAGENT (2026-11-07). Nothing to scan before it.
 const START_BLOCK = 54_150_000n;
 const CHUNK = process.env.BASE_RPC_URL ? 100_000n : 45_000n;
-const CONCURRENCY = 3;
+const CONCURRENCY = 2;
 const BUILDER_CODE = process.env.NEXT_PUBLIC_BASE_BUILDER_CODE || "bc_ewm6gcvz";
 const USDC = "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913";
 const NATIVE_ETH = "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
@@ -72,13 +72,17 @@ interface SerializedStats {
 
 async function loadPersistedState(): Promise<StatsState | null> {
   if (!kvEnabled()) return null;
-  const saved = await kvGetJson<SerializedStats>(KV_STATE_KEY).catch(() => null);
-  if (!saved || !saved.scannedTo || !Array.isArray(saved.trades)) return null;
-  const trades = new Map<string, Trade>();
-  for (const t of saved.trades) {
-    trades.set(`${t.hash}:${t.logIndex}`, { ...t, block: BigInt(t.block) });
+  try {
+    const saved = await kvGetJson<SerializedStats>(KV_STATE_KEY);
+    if (!saved || !saved.scannedTo || !Array.isArray(saved.trades) || !Number.isFinite(saved.since)) return null;
+    const trades = new Map<string, Trade>();
+    for (const t of saved.trades) {
+      trades.set(`${t.hash}:${t.logIndex}`, { ...t, block: BigInt(t.block) });
+    }
+    return { scannedTo: BigInt(saved.scannedTo), trades, at: Number.isFinite(saved.at) ? saved.at : Date.now(), since: saved.since };
+  } catch {
+    return null;
   }
-  return { scannedTo: BigInt(saved.scannedTo), trades, at: saved.at || Date.now(), since: saved.since };
 }
 
 async function savePersistedState(s: StatsState): Promise<void> {
@@ -135,8 +139,8 @@ async function isAttributed(hash: `0x${string}`, wallet: string): Promise<boolea
       try {
         const { functionName, args } = decodeFunctionData({ abi, data: tx.input });
         if (functionName !== "handleOps") continue;
-        const op = (args[0] as readonly { sender: string; callData: `0x${string}` }[]).find((o) => o.sender.toLowerCase() === wallet);
-        return op ? codesOf(op.callData).includes(BUILDER_CODE) : false;
+        const ops = args[0] as readonly { sender: string; callData: `0x${string}` }[];
+        return ops.some((o) => o.sender.toLowerCase() === wallet && codesOf(o.callData).includes(BUILDER_CODE));
       } catch {}
     }
     return false;
@@ -152,7 +156,15 @@ async function readTrades(hash: `0x${string}`, entries: { logIndex: number; usd:
   const block = await withRetry(() => client.getBlock({ blockNumber: r.blockNumber }));
   const attrCache = new Map<string, boolean>();
   const out: Trade[] = [];
-  const usedEntries = new Set<number>();
+  // Global minimum-distance pairing between stock Swapped logs and MAXXAGENT ClientData entries
+  // so non-MAXXAGENT swaps in the same tx cannot steal a ClientData entry or emit phantom $0 trades.
+  const candidates: {
+    swapIdx: number;
+    swapLogIdx: number;
+    wallet: string;
+    side: "buy" | "sell";
+    symbol: string;
+  }[] = [];
   for (let i = 0; i < swappedLogs.length; i++) {
     const log = swappedLogs[i];
     const [sender, src, dst] = decodeAbiParameters(
@@ -167,36 +179,44 @@ async function readTrades(hash: `0x${string}`, entries: { logIndex: number; usd:
     if (!attrCache.has(wallet)) {
       attrCache.set(wallet, await isAttributed(hash, wallet).catch(() => false));
     }
-    const swapLogIdx = log.logIndex ?? i;
-    // Pair by nearest unused ClientData logIndex so extra Swapped hops don't duplicate entries[0].usd
-    let bestIdx = -1;
-    let bestDist = Infinity;
-    for (let k = 0; k < entries.length; k++) {
-      if (usedEntries.has(k)) continue;
-      const dist = Math.abs(entries[k].logIndex - swapLogIdx);
-      if (dist < bestDist) {
-        bestDist = dist;
-        bestIdx = k;
-      }
+    candidates.push({ swapIdx: i, swapLogIdx: log.logIndex ?? i, wallet, side, symbol: STOCKS.get(side === "buy" ? d : s)!.symbol });
+  }
+  const pairs: { ci: number; ei: number; dist: number }[] = [];
+  for (let ci = 0; ci < candidates.length; ci++) {
+    for (let ei = 0; ei < entries.length; ei++) {
+      pairs.push({ ci, ei, dist: Math.abs(entries[ei].logIndex - candidates[ci].swapLogIdx) });
     }
-    if (bestIdx >= 0) usedEntries.add(bestIdx);
-    const matchedEntry = bestIdx >= 0 ? entries[bestIdx] : undefined;
+  }
+  pairs.sort((a, b) => a.dist - b.dist);
+  const usedSwaps = new Set<number>();
+  const usedEntries = new Set<number>();
+  const matchForCandidate = new Map<number, number>();
+  for (const p of pairs) {
+    if (usedSwaps.has(p.ci) || usedEntries.has(p.ei)) continue;
+    usedSwaps.add(p.ci);
+    usedEntries.add(p.ei);
+    matchForCandidate.set(p.ci, p.ei);
+  }
+  for (let ci = 0; ci < candidates.length; ci++) {
+    const ei = matchForCandidate.get(ci);
+    if (ei === undefined) continue;
+    const c = candidates[ci];
     out.push({
       hash,
-      logIndex: swapLogIdx,
+      logIndex: c.swapLogIdx,
       block: r.blockNumber,
       time: Number(block.timestamp),
-      wallet,
-      side,
-      symbol: STOCKS.get(side === "buy" ? d : s)!.symbol,
-      usd: matchedEntry?.usd ?? 0,
-      attributed: attrCache.get(wallet)!,
+      wallet: c.wallet,
+      side: c.side,
+      symbol: c.symbol,
+      usd: entries[ei].usd,
+      attributed: attrCache.get(c.wallet)!,
     });
   }
   return out;
 }
 
-type RawLog = { transactionHash: `0x${string}`; logIndex?: string; data: string };
+type RawLog = { transactionHash: `0x${string}`; blockNumber?: string; logIndex?: string; data: string };
 
 async function fetchLogsAdaptive(a: bigint, b: bigint): Promise<RawLog[]> {
   try {
@@ -209,13 +229,19 @@ async function fetchLogsAdaptive(a: bigint, b: bigint): Promise<RawLog[]> {
   } catch (e) {
     if (b - a <= 1_000n) throw e;
     const mid = a + (b - a) / 2n;
-    const [left, right] = await Promise.all([fetchLogsAdaptive(a, mid), fetchLogsAdaptive(mid + 1n, b)]);
+    const left = await fetchLogsAdaptive(a, mid);
+    const right = await fetchLogsAdaptive(mid + 1n, b);
     return [...left, ...right];
   }
 }
 
 async function refresh(): Promise<StatsState> {
-  if (!state) state = await loadPersistedState();
+  const persisted = await loadPersistedState();
+  if (persisted && (!state || persisted.scannedTo >= state.scannedTo)) {
+    const merged = new Map(state?.trades ?? []);
+    for (const [k, v] of persisted.trades) merged.set(k, v);
+    state = { scannedTo: persisted.scannedTo, trades: merged, at: persisted.at, since: persisted.since };
+  }
   const latest = await client.getBlockNumber();
   const since = state?.since ?? Number((await withRetry(() => client.getBlock({ blockNumber: START_BLOCK }))).timestamp);
   const trades = new Map(state?.trades ?? []);
@@ -223,36 +249,48 @@ async function refresh(): Promise<StatsState> {
   const ranges: [bigint, bigint][] = [];
   for (let a = from; a <= latest; a += CHUNK) ranges.push([a, a + CHUNK - 1n > latest ? latest : a + CHUNK - 1n]);
 
-  // ClientData logs of the router; keep only MAXXAGENT ones (filtered by the JSON source tag)
+  // ClientData logs of the router; keep only MAXXAGENT ones (verified from decoded JSON Source field)
   const found = await pool(ranges, CONCURRENCY, ([a, b]) => fetchLogsAdaptive(a, b));
-  const ours = new Map<string, { logIndex: number; usd: number }[]>();
+  const ours = new Map<string, { block: bigint; entries: { logIndex: number; usd: number }[] }>();
   for (const logs of found) {
     for (const l of logs) {
-      if (!l.data.includes(SOURCE_TAG)) continue;
+      if (!l.data.toLowerCase().includes(SOURCE_TAG)) continue;
       let usd = 0;
+      let isMaxxagent = false;
       try {
         const [bytes] = decodeAbiParameters([{ type: "bytes" }], l.data as `0x${string}`);
         const json = JSON.parse(Buffer.from(bytes.slice(2), "hex").toString("utf8"));
-        const parsedUsd = Number(json.AmountInUSD);
-        usd = Number.isFinite(parsedUsd) && parsedUsd >= 0 && parsedUsd <= 1_000_000 ? parsedUsd : 0;
+        if (json?.Source === "maxxagent") {
+          isMaxxagent = true;
+          const parsedUsd = Number(json.AmountInUSD);
+          usd = Number.isFinite(parsedUsd) && parsedUsd >= 0 && parsedUsd <= 1_000_000 ? parsedUsd : 0;
+        }
       } catch {}
-      const list = ours.get(l.transactionHash) ?? [];
-      list.push({ logIndex: l.logIndex ? Number(l.logIndex) : list.length, usd });
-      ours.set(l.transactionHash, list);
+      if (!isMaxxagent) continue;
+      const cur = ours.get(l.transactionHash) ?? {
+        block: l.blockNumber ? BigInt(l.blockNumber) : latest,
+        entries: [],
+      };
+      cur.entries.push({ logIndex: l.logIndex ? Number(l.logIndex) : cur.entries.length, usd });
+      ours.set(l.transactionHash, cur);
     }
   }
   const seenHashes = new Set([...trades.values()].map((t) => t.hash));
   const fresh = [...ours.entries()].filter(([h]) => !seenHashes.has(h));
-  let anyReadFailed = false;
-  const read = await pool(fresh, 4, ([h, entries]) =>
-    readTrades(h as `0x${string}`, entries.sort((a, b) => a.logIndex - b.logIndex)).catch(() => {
-      anyReadFailed = true;
+  let failedMinBlock: bigint | null = null;
+  const read = await pool(fresh, 4, ([h, info]) =>
+    readTrades(h as `0x${string}`, info.entries.sort((a, b) => a.logIndex - b.logIndex)).catch(() => {
+      failedMinBlock = failedMinBlock === null || info.block < failedMinBlock ? info.block : failedMinBlock;
       return [] as Trade[];
     })
   );
   for (const list of read) for (const t of list) trades.set(`${t.hash}:${t.logIndex}`, t);
+  const nextScannedTo =
+    failedMinBlock !== null
+      ? failedMinBlock - 1n
+      : latest;
   const nextState: StatsState = {
-    scannedTo: anyReadFailed && state ? state.scannedTo : latest,
+    scannedTo: nextScannedTo,
     trades,
     at: Date.now(),
     since,

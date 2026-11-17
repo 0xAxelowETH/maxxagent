@@ -269,7 +269,7 @@ export function MarketHeatmap({ stocks, updatedAt, links = true }: { stocks: Hea
         })}
         {!tiles.length && (
           <div className="absolute inset-0 grid place-items-center text-xs text-slate-400">
-            {stocks.length > 0 ? "24h volume data unavailable right now." : <MaxxLoader label="Loading the market…" />}
+            {sizeBy === "volume" && width > 0 && stocks.length > 0 ? "24h volume data unavailable right now." : <MaxxLoader label="Loading the market…" />}
           </div>
         )}
       </div>

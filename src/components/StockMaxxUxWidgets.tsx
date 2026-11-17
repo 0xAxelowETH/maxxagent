@@ -683,7 +683,10 @@ function SwapPanel({
   const [sellPct, setSellPct] = useState<number>(100);
   const [draft, setDraft] = useState<string>(String(tradeUsd));
   // Follow outside changes (chips, Max) without clobbering what is being typed ("1." → 1)
-  useEffect(() => setDraft((d) => (Number(d) === tradeUsd ? d : String(tradeUsd))), [tradeUsd]);
+  useEffect(
+    () => setDraft((d) => (d === "." || (Number.isFinite(Number(d)) && Number(d) === tradeUsd) ? d : String(tradeUsd))),
+    [tradeUsd]
+  );
 
   const holdingUsd = holdingTokens * price;
   const sellTokens = (holdingTokens * sellPct) / 100;

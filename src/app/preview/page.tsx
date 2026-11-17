@@ -34,13 +34,24 @@ interface Report {
   cashReservePct: number;
 }
 
-// One build serves every reviewer for 10 minutes (the agent run and the news wait take seconds); kept only when complete
-let cached: { at: number; data: Awaited<ReturnType<typeof build>> } | null = null;
+// One build serves every reviewer (coalesced to prevent concurrent upstream bursts)
+let cached: { at: number; full: boolean; data: Awaited<ReturnType<typeof build>> } | null = null;
+let inflightPreview: Promise<Awaited<ReturnType<typeof build>>> | null = null;
 async function load() {
-  if (cached && Date.now() - cached.at < 600_000) return cached.data;
-  const data = await build();
-  if (data.stocks.length && data.report && data.news.length) cached = { at: Date.now(), data };
-  return data;
+  const ttl = cached?.full ? 600_000 : 45_000;
+  if (cached && Date.now() - cached.at < ttl) return cached.data;
+  if (!inflightPreview) {
+    inflightPreview = build()
+      .then((data) => {
+        const full = Boolean(data.stocks.length && data.report && data.news.length);
+        if (data.stocks.length && data.report) cached = { at: Date.now(), full, data };
+        return data;
+      })
+      .finally(() => {
+        inflightPreview = null;
+      });
+  }
+  return inflightPreview;
 }
 
 async function build() {

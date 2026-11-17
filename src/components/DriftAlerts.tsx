@@ -5,7 +5,14 @@ import { Bell, BellOff } from "lucide-react";
 import type { SavedTarget } from "@/lib/drift";
 
 type Sdk = (typeof import("@farcaster/miniapp-sdk"))["sdk"];
-type Status = { watching: boolean; notifications: boolean; alertPct?: number; lastCheckAt?: string; address?: string };
+type Status = {
+  watching: boolean;
+  notifications: boolean;
+  alertPct?: number;
+  lastCheckAt?: string;
+  address?: string;
+  target?: { weights: { symbol: string; weightBps: number }[]; maxWeightPct?: number };
+};
 
 /**
  * Stops the server-side watch when the user removes their target (inside a mini app only; elsewhere there is
@@ -74,14 +81,17 @@ export function DriftAlerts({ address, target, alertPct }: { address: string; ta
 
   const watchingThis = Boolean(status?.watching && status.address?.toLowerCase() === address.toLowerCase());
 
-  // Keep the server's copy in step when the threshold or the target changes here
+  // Keep the server's copy in step when the threshold or the target changes here (even across tab switches)
   const sig = `${alertPct}|${JSON.stringify(target.weights)}|${target.maxWeightPct ?? ""}`;
+  const serverSig = status?.target
+    ? `${status.alertPct ?? alertPct}|${JSON.stringify(status.target.weights)}|${status.target.maxWeightPct ?? ""}`
+    : null;
   const synced = useRef<string | null>(null);
   useEffect(() => {
     if (!sdk || !watchingThis) return;
     if (synced.current === null) {
-      synced.current = sig; // first render after loading the status: nothing changed yet
-      return;
+      synced.current = serverSig ?? sig;
+      if (synced.current === sig) return;
     }
     if (synced.current === sig) return;
     const prevSig = synced.current;
@@ -92,7 +102,7 @@ export function DriftAlerts({ address, target, alertPct }: { address: string; ta
         if (synced.current === sig) synced.current = prevSig;
       });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sig, sdk, watchingThis]);
+  }, [sig, serverSig, sdk, watchingThis]);
 
   const turnOn = async () => {
     if (!sdk) return;

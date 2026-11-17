@@ -169,7 +169,9 @@ async function basePublicRpc(method: string, params: unknown[]): Promise<unknown
         ...(ctrl ? { signal: ctrl.signal } : {}),
       });
       const json = (await res.json()) as { result?: unknown; error?: { message?: string } };
+      if (!res.ok) throw new Error(json.error?.message || `RPC HTTP ${res.status}`);
       if (json.error) throw new Error(json.error.message || "RPC error");
+      if (json.result === undefined) throw new Error("Empty RPC response");
       return json.result;
     } catch (e) {
       lastErr = e;
@@ -211,7 +213,7 @@ async function readErc20Public(token: string, owner: string): Promise<bigint | n
 async function rpcRead(eth: EthProvider, method: string, params: unknown[]): Promise<unknown> {
   try {
     const res = await withTimeout(eth.request({ method, params }), 4000);
-    if (res !== null && res !== undefined) return res;
+    if (res !== null && res !== undefined && res !== "0x") return res;
   } catch {
     // Fall through to public Base Mainnet RPC
   }
@@ -450,9 +452,10 @@ function preferSequentialWallet(eth: EthProvider): boolean {
     isOkxWallet?: boolean;
     isOKExWallet?: boolean;
     providerInfo?: { name?: string; rdns?: string };
+    session?: { peer?: { metadata?: { name?: string; url?: string } } };
   };
   if (p?.isBitKeep || p?.isBitgetWallet || p?.isOkxWallet || p?.isOKExWallet) return true;
-  if (/bitkeep|bitget|okx|okex|okapp/i.test(`${p?.providerInfo?.name || ""} ${p?.providerInfo?.rdns || ""}`)) return true;
+  if (/bitkeep|bitget|okx|okex|okapp/i.test(`${p?.providerInfo?.name || ""} ${p?.providerInfo?.rdns || ""} ${p?.session?.peer?.metadata?.name || ""} ${p?.session?.peer?.metadata?.url || ""}`)) return true;
   if (typeof navigator !== "undefined" && /bitkeep|bitget|okx|okex|okapp/i.test(navigator.userAgent || "")) return true;
   return false;
 }
@@ -571,9 +574,12 @@ async function sendCalls(
         }
       }
 
-      // Fallback 2: Direct Base Mainnet Transfer(to = sender) log + balanceOf check
+      // Fallback 2: Direct Base Mainnet Transfer(to = sender) log + balanceOf check.
+      // Never short-circuit while wallet_getCallsStatus is actively reporting pending (`!parsed.isPending`),
+      // otherwise multi-leg non-atomic SELL batches (shared USDC_BASE) return after leg 1 finishes.
       let foundHashes: string[] = [];
-      if (uniqueReceive.length > 0 && (Date.now() - start >= 2000 || misses > 0 || parsed.isDone)) {
+      const fallbackActive = !parsed.isPending || misses > 0 || statusUnsupported || Date.now() - start >= 25_000;
+      if (uniqueReceive.length > 0 && fallbackActive && (Date.now() - start >= 2000 || misses > 0 || parsed.isDone)) {
         try {
           const latestHex = (await basePublicRpc("eth_blockNumber", []).catch(() => null)) as string | null;
           const latest = latestHex ? BigInt(latestHex) : null;
@@ -713,7 +719,7 @@ async function sendCalls(
     const isSellLeg = !isNative(token) && targetReceive?.toLowerCase() === USDC_BASE.toLowerCase();
     const watchToken = isSellLeg ? token.toLowerCase() : targetReceive;
     const senderTopic = "0x" + sender.toLowerCase().replace(/^0x/, "").padStart(64, "0");
-    const legBlockHex = (await basePublicRpc("eth_blockNumber", []).catch(() => null)) as string | null;
+    const legBlockHex = (await withTimeout(basePublicRpc("eth_blockNumber", []), 1200).catch(() => null)) as string | null;
     const legStartBlock = legBlockHex ? BigInt(legBlockHex) : startBlock;
     const seenHashes = new Set(txHashes.map((h) => h.toLowerCase()));
     const sendSwapPromise = eth
@@ -866,10 +872,13 @@ export async function sendContractCall(params: {
 
       if (startBlock !== null && (Date.now() - start >= 3000 || misses > 0 || parsed.isDone)) {
         try {
+          const latestHex = (await basePublicRpc("eth_blockNumber", []).catch(() => null)) as string | null;
+          const latest = latestHex ? BigInt(latestHex) : null;
+          const fromBlock = latest !== null && latest - startBlock > 1500n ? latest - 1500n : startBlock;
           const logs = (await basePublicRpc("eth_getLogs", [
             {
               address: to,
-              fromBlock: toHex(startBlock),
+              fromBlock: toHex(fromBlock),
               toBlock: "latest",
             },
           ])) as { topics?: string[]; transactionHash?: string }[] | null;

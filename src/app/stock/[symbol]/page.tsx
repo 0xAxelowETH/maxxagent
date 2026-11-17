@@ -27,7 +27,7 @@ export async function generateMetadata({ params }: { params: Promise<{ symbol: s
     twitter: { card: "summary_large_image", title, description, images: ["/brand/maxxagent-og.png"] },
     // Shared in Farcaster, the card launches the mini app straight on this stock
     other: miniappEmbedTags({
-      siteUrl: process.env.NEXT_PUBLIC_SITE_URL || "https://maxxagent.xyz",
+      siteUrl: (process.env.NEXT_PUBLIC_SITE_URL || "https://maxxagent.xyz").replace(/\/$/, ""),
       path: `/stock/${s.symbol}`,
       buttonTitle: `Trade ${s.symbol}`,
     }),
