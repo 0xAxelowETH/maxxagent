@@ -339,8 +339,12 @@ async function trackReceipts(
     try {
       let r: RpcReceipt | null = null;
       for (let attempt = 0; attempt < 3 && !r; attempt++) {
-        if (attempt > 0) await sleep(1000);
-        r = (await rpcRead(eth, "eth_getTransactionReceipt", [hash]).catch(() => null)) as RpcReceipt | null;
+        if (attempt > 0) await sleep(800);
+        const [publicRec, walletRec] = await Promise.all([
+          basePublicRpc("eth_getTransactionReceipt", [hash]).catch(() => null),
+          withTimeout(eth.request({ method: "eth_getTransactionReceipt", params: [hash] }), 2500).catch(() => null),
+        ]);
+        r = (publicRec || walletRec) as RpcReceipt | null;
       }
       if (!r) {
         txs.push({ hash, status: "unknown" });
@@ -641,8 +645,10 @@ function preferSequentialWallet(eth: EthProvider): boolean {
     onStatus(`${labels[j]} (${approveCalls.length + j + 1}/${calls.length})…`);
     let hash: string | undefined;
     try {
-      hash = (await eth.request({ method: "eth_sendTransaction", params: [{ from: sender, to: c.to, data: c.data, value: c.value }] })) as string;
+      const rawHash = await eth.request({ method: "eth_sendTransaction", params: [{ from: sender, to: c.to, data: c.data, value: c.value }] });
+      hash = extractBatchId(rawHash) || String(rawHash || "");
       txHashes.push(hash);
+      onStatus(`Waiting for ${labels[j]} confirmation…`);
       await waitForReceipt(eth, hash);
       spentSoFar.set(token.toLowerCase(), (spentSoFar.get(token.toLowerCase()) ?? 0n) + amount);
       swapped++;

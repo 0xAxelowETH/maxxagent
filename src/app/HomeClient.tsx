@@ -4549,8 +4549,8 @@ const walletClient = createWalletClient({
         />
       )}
 
-      {/* Purchase status toast (visible from any tab) */}
-      {(basketPending || basketError || basketResult) && activeTab !== "agent" && (
+      {/* Purchase status toast (visible from any tab, including final result on Agent tab on mobile) */}
+      {(basketPending || basketError || basketResult) && (activeTab !== "agent" || !basketPending) && (
         <div className="fixed bottom-24 md:bottom-4 left-3 right-3 sm:left-auto sm:right-4 sm:w-96 z-50 rounded-2xl border border-slate-700 bg-[#0b1120]/95 p-4 text-xs shadow-2xl backdrop-blur space-y-2">
           <div className="flex items-start justify-between gap-3">
             <div className="font-bold text-white">
