@@ -132,12 +132,17 @@ async function scanRange(wallet: `0x${string}`, from: bigint, to: bigint, deadli
 async function balancesAt(wallet: `0x${string}`, block: bigint): Promise<Map<string, bigint>> {
   const res = await withRetry(() =>
     client.multicall({
-      allowFailure: false,
+      allowFailure: true,
       blockNumber: block,
       contracts: STOCK_ADDRESSES.map((address) => ({ address, abi: ABI, functionName: "balanceOf" as const, args: [wallet] as const })),
     })
   );
-  return new Map(STOCK_ADDRESSES.map((a, i) => [a.toLowerCase(), res[i] as bigint]));
+  const out = new Map<string, bigint>();
+  STOCK_ADDRESSES.forEach((a, i) => {
+    const r = res[i];
+    if (r?.status === "success") out.set(a.toLowerCase(), r.result as bigint);
+  });
+  return out;
 }
 
 async function summarize(hash: `0x${string}`, wallet: string): Promise<TxSummary> {
@@ -157,11 +162,32 @@ async function summarize(hash: `0x${string}`, wallet: string): Promise<TxSummary
     }
   }
   moves.sort((a, b) => a.logIndex - b.logIndex);
-  // Stock received but no USDC paid: maybe paid in ETH. Only then fetch the tx for its value.
+  // Stock received but no USDC paid: maybe paid in ETH (direct EOA tx.value, or Smart Wallet Swapped NATIVE_ETH / WETH Deposit).
   let ethValue: bigint | undefined;
   if (moves.some((m) => m.dir === 1 && m.token !== USDC) && !moves.some((m) => m.token === USDC && m.dir === -1)) {
     const tx = await withRetry(() => client.getTransaction({ hash })).catch(() => null);
-    if (tx && tx.from.toLowerCase() === wallet && tx.value > 0n) ethValue = tx.value;
+    if (tx && tx.from.toLowerCase() === wallet && tx.value > 0n) {
+      ethValue = tx.value;
+    } else {
+      const SWAPPED_TOPIC = "0xd6d4f5681c246c9f42c203e287975af1601f8df8035a9251f79aab5c8f09e2f8";
+      const NATIVE_ETH_LOWER = "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
+      const WETH_BASE = "0x4200000000000000000000000000000000000006";
+      const WETH_DEPOSIT_TOPIC = "0xe1fffcc4923d04b559f4d29a8bfc6cda04eb5b0d3c460751c2402c5c5cc9109c";
+      let swappedEth = 0n;
+      let wethDeposited = 0n;
+      for (const log of r.logs) {
+        if (log.topics[0]?.toLowerCase() === SWAPPED_TOPIC && log.data.length >= 2 + 64 * 6) {
+          const src = "0x" + log.data.slice(2 + 64 + 24, 2 + 128).toLowerCase();
+          if (src === NATIVE_ETH_LOWER) {
+            swappedEth += BigInt("0x" + log.data.slice(2 + 64 * 4, 2 + 64 * 5));
+          }
+        } else if (log.address.toLowerCase() === WETH_BASE && log.topics[0]?.toLowerCase() === WETH_DEPOSIT_TOPIC && log.data.length >= 66) {
+          wethDeposited += BigInt(log.data.slice(0, 66));
+        }
+      }
+      const detected = swappedEth > 0n ? swappedEth : wethDeposited;
+      if (detected > 0n) ethValue = detected;
+    }
   }
   return { hash, block: r.blockNumber, moves, ethValue };
 }
@@ -256,6 +282,7 @@ interface Position {
   costUsd: number;
   realizedUsd: number;
   estimated: boolean;
+  unpriced?: boolean;
   buys: number;
   sells: number;
 }
@@ -303,7 +330,12 @@ async function computePositions(history: WalletHistory) {
     const p = get(token);
     const nav = await navAt(STOCKS.get(token)!.chainlinkFeed, history.scannedFrom - 1n);
     p.raw = raw;
-    p.costUsd = (nav ?? 0) * tokensOf(raw, token);
+    if (nav === null) {
+      p.costUsd = 0;
+      p.unpriced = true;
+    } else {
+      p.costUsd = nav * tokensOf(raw, token);
+    }
     p.estimated = true;
   }
 
@@ -351,7 +383,12 @@ async function computePositions(history: WalletHistory) {
           via = "eth";
         } else {
           const nav = await navAt(STOCKS.get(m.token)!.chainlinkFeed, tx.block);
-          cost = (nav ?? 0) * tokensOf(m.amount, m.token);
+          if (nav === null) {
+            cost = 0;
+            p.unpriced = true;
+          } else {
+            cost = nav * tokensOf(m.amount, m.token);
+          }
           p.estimated = true;
         }
         p.raw += m.amount;
@@ -370,16 +407,18 @@ async function computePositions(history: WalletHistory) {
     }
     for (const d of disposals) {
       const p = get(d.token);
-      let proceeds: number;
+      let proceeds: number | null = null;
       const via: Activity["via"] = d.proceeds > 0n ? "usdc" : "other";
       if (d.proceeds > 0n) proceeds = Number(d.proceeds) / 1e6;
       else {
         const nav = await navAt(STOCKS.get(d.token)!.chainlinkFeed, tx.block);
-        proceeds = (nav ?? 0) * tokensOf(d.raw, d.token);
+        if (nav !== null) proceeds = nav * tokensOf(d.raw, d.token);
         p.estimated = true;
       }
-      p.realizedUsd += proceeds - d.costRemoved;
-      activity.push({ hash: tx.hash, block: tx.block, side: "sell", symbol: p.symbol, tokens: tokensOf(d.raw, d.token), usd: proceeds, via });
+      if (proceeds !== null && !p.unpriced) {
+        p.realizedUsd += proceeds - d.costRemoved;
+      }
+      activity.push({ hash: tx.hash, block: tx.block, side: "sell", symbol: p.symbol, tokens: tokensOf(d.raw, d.token), usd: proceeds ?? 0, via });
     }
   }
 
@@ -390,7 +429,7 @@ async function computePositions(history: WalletHistory) {
       b20Address: p.b20Address,
       tokens,
       costBasisUsd: p.costUsd,
-      avgCostUsd: tokens > 0 ? p.costUsd / tokens : null,
+      avgCostUsd: tokens > 0 && !p.unpriced ? p.costUsd / tokens : null,
       realizedUsd: p.realizedUsd,
       estimated: p.estimated,
       buys: p.buys,
@@ -413,10 +452,11 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ ok: false, error: "Invalid wallet address." }, { status: 400 });
   }
   const key = wallet.toLowerCase();
+  const fresh = request.nextUrl.searchParams.get("fresh") === "1";
   try {
     const cached = cache.get(key);
     let history: WalletHistory;
-    if (cached && Date.now() - cached.at < 15_000) history = cached;
+    if (!fresh && cached && Date.now() - cached.at < 15_000) history = cached;
     else if (!cached && !inflight.has(key) && inflight.size >= MAX_PARALLEL_SCANS) {
       // A first scan costs dozens of RPC calls: cap them globally so random addresses can't drain the RPC quota
       return NextResponse.json({ ok: false, error: "P/L is busy right now. Please retry in a few seconds." }, { status: 503 });

@@ -280,9 +280,11 @@ async function waitForReceipt(eth: EthProvider, hash: string, timeoutMs = 120_00
         withTimeout(eth.request({ method: "eth_getTransactionReceipt", params: [hash] }), 2500).catch(() => null),
         basePublicRpc("eth_getTransactionReceipt", [hash]).catch(() => null),
       ]);
-      const receipt = (publicRec || walletRec) as { status?: string } | null;
+      const receipt = (publicRec || walletRec) as { status?: string | number } | null;
       if (receipt) {
-        if (receipt.status && receipt.status !== "0x1") throw new Error(`Transaction ${hash} reverted`);
+        if (receipt.status !== undefined && receipt.status !== null && BigInt(receipt.status) !== 1n) {
+          throw new Error(`Transaction ${hash} reverted`);
+        }
         return;
       }
     } catch (e) {
@@ -305,7 +307,10 @@ function isUnsupportedMethod(err: unknown) {
 async function ensureBase(eth: EthProvider, onStatus: StatusFn) {
   const rawChain = await withTimeout(eth.request({ method: "eth_chainId" }), 4000).catch(() => "");
   const chain = normalizeChainHex(rawChain);
-  if (chain && chain !== BASE_CHAIN_HEX) {
+  if (!chain) {
+    throw new Error("Could not verify your wallet network. Make sure your wallet is on Base Mainnet and try again.");
+  }
+  if (chain !== BASE_CHAIN_HEX) {
     onStatus("Switching wallet to Base Mainnet…");
     try {
       await eth.request({ method: "wallet_switchEthereumChain", params: [{ chainId: BASE_CHAIN_HEX }] });
@@ -338,16 +343,17 @@ type RpcReceipt = {
   logs?: { address: string; topics: string[]; data: string }[];
 };
 
-/** Reads receipts and sums Transfer(to = sender) events for the given tokens. */
+/** Reads receipts and sums Transfer(to = sender) events for the given tokens, plus outgoing Transfer tokens. */
 async function trackReceipts(
   eth: EthProvider,
   txHashes: string[],
   sender: string,
   watch: { address: string; symbol: string; decimals: number; quoted?: number }[]
-): Promise<{ received: ReceivedAmount[]; txs: TrackedTx[] }> {
+): Promise<{ received: ReceivedAmount[]; txs: TrackedTx[]; spentTokens: Set<string> }> {
   const senderTopic = "0x" + sender.toLowerCase().replace(/^0x/, "").padStart(64, "0");
   const byAddr = new Map(watch.map((w) => [w.address.toLowerCase(), w]));
   const sums = new Map<string, bigint>();
+  const spentTokens = new Set<string>();
   const txs: TrackedTx[] = [];
   for (const hash of txHashes) {
     try {
@@ -364,17 +370,23 @@ async function trackReceipts(
         txs.push({ hash, status: "unknown" });
         continue;
       }
+      const st = r.status !== undefined && r.status !== null ? BigInt(r.status) : null;
       txs.push({
         hash,
-        status: r.status === "0x1" ? "confirmed" : r.status === "0x0" ? "failed" : "unknown",
+        status: st === 1n ? "confirmed" : st === 0n ? "failed" : "unknown",
         gasUsed: r.gasUsed ? BigInt(r.gasUsed).toString() : undefined,
         blockNumber: r.blockNumber ? Number(BigInt(r.blockNumber)) : undefined,
       });
       for (const log of r.logs || []) {
+        if ((log.topics[0] || "").toLowerCase() !== TRANSFER_TOPIC) continue;
         const addr = log.address.toLowerCase();
-        if (!byAddr.has(addr) || log.topics[0] !== TRANSFER_TOPIC) continue;
+        if ((log.topics[1] || "").toLowerCase() === senderTopic) {
+          spentTokens.add(addr);
+        }
+        if (!byAddr.has(addr)) continue;
         if ((log.topics[2] || "").toLowerCase() !== senderTopic) continue;
-        sums.set(addr, (sums.get(addr) ?? 0n) + BigInt(log.data));
+        const amt = log.data && log.data !== "0x" ? BigInt(log.data) : 0n;
+        sums.set(addr, (sums.get(addr) ?? 0n) + amt);
       }
     } catch {
       txs.push({ hash, status: "unknown" });
@@ -384,7 +396,7 @@ async function trackReceipts(
     const raw = sums.get(addr) ?? 0n;
     return { symbol: w.symbol, b20Address: addr, raw: raw.toString(), tokens: Number(raw) / 10 ** w.decimals, quotedTokens: w.quoted };
   });
-  return { received, txs };
+  return { received, txs, spentTokens };
 }
 
 /** Exact-amount approvals per (token, router) pair, only where the current allowance is too low. */
@@ -427,6 +439,25 @@ export interface FailedLeg {
 }
 
 /**
+ * Mobile/multi-chain wallets like Bitget Wallet (BitKeep) and OKX Wallet can either return a stub batchId
+ * or reject `wallet_sendCalls` with 4001 ("Transaksi dibatalkan") instead of -32601.
+ * Skip EIP-5792 batching on those providers and go straight to `eth_sendTransaction` (which prompts immediately).
+ */
+function preferSequentialWallet(eth: EthProvider): boolean {
+  const p = eth as {
+    isBitKeep?: boolean;
+    isBitgetWallet?: boolean;
+    isOkxWallet?: boolean;
+    isOKExWallet?: boolean;
+    providerInfo?: { name?: string; rdns?: string };
+  };
+  if (p?.isBitKeep || p?.isBitgetWallet || p?.isOkxWallet || p?.isOKExWallet) return true;
+  if (/bitkeep|bitget|okx|okex|okapp/i.test(`${p?.providerInfo?.name || ""} ${p?.providerInfo?.rdns || ""}`)) return true;
+  if (typeof navigator !== "undefined" && /bitkeep|bitget|okx|okex|okapp/i.test(navigator.userAgent || "")) return true;
+  return false;
+}
+
+/**
  * Sends approvals + swaps: one EIP-5792 batch if the wallet supports it, otherwise one by one.
  * `spend` = tokens the order spends; their balances guard the fallback against sending twice.
  */
@@ -446,8 +477,13 @@ async function sendCalls(
 ): Promise<{ mode: "batch" | "sequential"; txHashes: string[]; failed: FailedLeg[] }> {
   const calls = [...approveCalls, ...swapCalls];
   const balancesOf = () => Promise.all(spend.map((t) => readErc20(eth, t, "balanceOf", [sender as `0x${string}`]).catch(() => null)));
-  const before = await balancesOf();
-  // Nonce = number of txs this address has sent: covers ETH-paid orders (no token balance to compare)
+  const ethSpendTotal = swapSpend.filter((s) => isNative(s.token)).reduce((a, b) => a + b.amount, 0n);
+  const ethBalanceOf = () =>
+    ethSpendTotal > 0n
+      ? (rpcRead(eth, "eth_getBalance", [sender, "latest"]) as Promise<string>).then((h) => BigInt(h)).catch(() => null)
+      : Promise.resolve(null);
+  const [before, ethBefore] = await Promise.all([balancesOf(), ethBalanceOf()]);
+  // Nonce = number of txs this address has sent: covers ETH-paid EOA orders (no token balance to compare)
   const nonceOf = () =>
     (rpcRead(eth, "eth_getTransactionCount", [sender, "latest"]) as Promise<string>).then((n) => BigInt(n)).catch(() => null);
   const uniqueReceive = [...new Set(receiveTokens.map((t) => t.toLowerCase()))];
@@ -461,24 +497,6 @@ async function sendCalls(
   // Smart wallets (ERC-4337) wrap calls in executeBatch, so the per-call suffix is not at the end of
   // the UserOp callData. Base's documented fix: the optional `dataSuffix` capability, appended by the wallet.
   const base = { version: "2.0.0", chainId: BASE_CHAIN_HEX, from: sender, atomicRequired: false, calls };
-/**
- * Mobile/multi-chain wallets like Bitget Wallet (BitKeep) and OKX Wallet can either return a stub batchId
- * or reject `wallet_sendCalls` with 4001 ("Transaksi dibatalkan") instead of -32601.
- * Skip EIP-5792 batching on those providers and go straight to `eth_sendTransaction` (which prompts immediately).
- */
-function preferSequentialWallet(eth: EthProvider): boolean {
-  const p = eth as {
-    isBitKeep?: boolean;
-    isBitgetWallet?: boolean;
-    isOkxWallet?: boolean;
-    isOKExWallet?: boolean;
-    providerInfo?: { name?: string; rdns?: string };
-  };
-  if (p?.isBitKeep || p?.isBitgetWallet || p?.isOkxWallet || p?.isOKExWallet) return true;
-  if (/bitkeep|bitget|okx|okex|okapp/i.test(`${p?.providerInfo?.name || ""} ${p?.providerInfo?.rdns || ""}`)) return true;
-  if (typeof navigator !== "undefined" && /bitkeep|bitget|okx|okex|okapp/i.test(navigator.userAgent || "")) return true;
-  return false;
-}
 
   let batchId: string | undefined;
   if (preferSequentialWallet(eth)) {
@@ -502,11 +520,12 @@ function preferSequentialWallet(eth: EthProvider): boolean {
       if (isUserRejection(err)) throw err;
       if (!isUnsupportedMethod(err)) {
         // Unknown error (wallets word "no batching" in many ways). Before sending one by one, make sure the
-        // batch did not go through anyway: if any spent balance dropped, never resend (no double trade).
+        // batch did not go through anyway: if any spent balance or ETH dropped, never resend (no double trade).
         await sleep(5000);
-        const [after, nonceAfter] = await Promise.all([balancesOf(), nonceOf()]);
+        const [after, nonceAfter, ethAfter] = await Promise.all([balancesOf(), nonceOf(), ethBalanceOf()]);
         const nonceMoved = nonceBefore !== null && nonceAfter !== null && nonceAfter > nonceBefore;
-        if (nonceMoved || after.some((a, i) => a !== null && before[i] !== null && a < before[i]!)) {
+        const ethDropped = ethBefore !== null && ethAfter !== null && ethBefore > ethAfter && ethBefore - ethAfter >= ethSpendTotal;
+        if (nonceMoved || ethDropped || after.some((a, i) => a !== null && before[i] !== null && a < before[i]!)) {
           throw new Error("Your wallet reported an error, but funds have moved. Check your wallet activity before retrying.");
         }
       }
@@ -520,6 +539,7 @@ function preferSequentialWallet(eth: EthProvider): boolean {
     const start = Date.now();
     const senderTopic = "0x" + sender.toLowerCase().replace(/^0x/, "").padStart(64, "0");
     let misses = 0;
+    let statusUnsupported = false;
     let firstTransferSeenAt = 0;
     let firstDoneWithoutHashesAt = 0;
     while (Date.now() - start < 180_000) {
@@ -533,12 +553,7 @@ function preferSequentialWallet(eth: EthProvider): boolean {
       } catch (statusErr) {
         misses++;
         if (isUnsupportedMethod(statusErr)) {
-          const nonceAfter = await nonceOf();
-          const nonceMoved = nonceBefore !== null && nonceAfter !== null && nonceAfter > nonceBefore;
-          if (!nonceMoved) {
-            onStatus("Your wallet doesn't support batch status: confirming each step…");
-            break;
-          }
+          statusUnsupported = true;
         }
       }
       const parsed = parseCallsStatus(status);
@@ -568,8 +583,8 @@ function preferSequentialWallet(eth: EthProvider): boolean {
                 ? latest - 1500n
                 : startBlock
               : latest !== null
-              ? latest > 300n
-                ? latest - 300n
+              ? latest > 15n
+                ? latest - 15n
                 : 0n
               : null;
           if (scanFrom !== null) {
@@ -598,13 +613,16 @@ function preferSequentialWallet(eth: EthProvider): boolean {
           // Ignore transient log query errors and check balanceOf below
         }
 
-        // Balance-delta check in case eth_getLogs is throttled on public RPC
+        // Balance-delta check only keeps us waiting until logs/receipts resolve; never return txHashes: []
         const receiveNow = await Promise.all(uniqueReceive.map((t) => readErc20Public(t, sender)));
         const receivedMore = receiveNow.some((now, i) => now !== null && receiveBefore[i] !== null && now > receiveBefore[i]!);
         if (receivedMore) {
           if (!firstTransferSeenAt) firstTransferSeenAt = Date.now();
-          if (foundHashes.length > 0 || parsed.isDone || Date.now() - firstTransferSeenAt >= 4000) {
+          if (foundHashes.length > 0) {
             return { mode: "batch", txHashes: foundHashes, failed: [] };
+          }
+          if (Date.now() - firstTransferSeenAt >= 8000) {
+            throw new Error("Funds arrived onchain, but transaction hashes could not be read from RPC. Check your wallet activity.");
           }
         }
       }
@@ -612,12 +630,12 @@ function preferSequentialWallet(eth: EthProvider): boolean {
       if (parsed.isDone) {
         if (!firstDoneWithoutHashesAt) firstDoneWithoutHashesAt = Date.now();
         if (Date.now() - firstDoneWithoutHashesAt >= 5000) {
-          return { mode: "batch", txHashes: foundHashes, failed: [] };
+          throw new Error("Batch finished without confirmed transaction hashes (some or all swaps may have reverted). Check your wallet activity.");
         }
       }
 
-      if (misses > 15 && Date.now() - start > 60_000) {
-        throw new Error("Batch was sent but its status is unavailable. Check your wallet activity before retrying.");
+      if ((statusUnsupported && Date.now() - start > 45_000) || (misses > 15 && Date.now() - start > 60_000)) {
+        throw new Error("Batch was sent, but status is unavailable. Check your wallet activity before retrying.");
       }
       await sleep(2000);
     }
@@ -640,6 +658,8 @@ function preferSequentialWallet(eth: EthProvider): boolean {
     const sendPromise = eth
       .request({ method: "eth_sendTransaction", params: [{ from: sender, to: c.to, data: c.data, value: c.value }] })
       .then((raw) => ({ kind: "hash" as const, hash: extractBatchId(raw) || String(raw || "") }));
+    // Prevent late wallet rejections from becoming unhandled after watchAllowance wins Promise.race
+    sendPromise.catch(() => {});
     const watchAllowance = (async () => {
       await sleep(4000);
       while (!settled && spender && targetAmt > 0n) {
@@ -690,24 +710,33 @@ function preferSequentialWallet(eth: EthProvider): boolean {
     let hash: string | undefined;
     let swapSettled = false;
     const targetReceive = uniqueReceive[j] || uniqueReceive[0];
+    const isSellLeg = !isNative(token) && targetReceive?.toLowerCase() === USDC_BASE.toLowerCase();
+    const watchToken = isSellLeg ? token.toLowerCase() : targetReceive;
     const senderTopic = "0x" + sender.toLowerCase().replace(/^0x/, "").padStart(64, "0");
+    const legBlockHex = (await basePublicRpc("eth_blockNumber", []).catch(() => null)) as string | null;
+    const legStartBlock = legBlockHex ? BigInt(legBlockHex) : startBlock;
+    const seenHashes = new Set(txHashes.map((h) => h.toLowerCase()));
     const sendSwapPromise = eth
       .request({ method: "eth_sendTransaction", params: [{ from: sender, to: c.to, data: c.data, value: c.value }] })
       .then((raw) => ({ kind: "hash" as const, hash: extractBatchId(raw) || String(raw || "") }));
+    sendSwapPromise.catch(() => {});
     const watchSwapOnchain = (async () => {
       await sleep(5000);
-      while (!swapSettled && startBlock !== null && targetReceive) {
+      while (!swapSettled && legStartBlock !== null && watchToken) {
         try {
+          const latestHex = (await basePublicRpc("eth_blockNumber", []).catch(() => null)) as string | null;
+          const latest = latestHex ? BigInt(latestHex) : null;
+          const fromBlock = latest !== null && latest - legStartBlock > 1500n ? latest - 1500n : legStartBlock;
           const logs = (await basePublicRpc("eth_getLogs", [
             {
-              address: targetReceive,
-              fromBlock: toHex(startBlock),
+              address: watchToken,
+              fromBlock: toHex(fromBlock),
               toBlock: "latest",
-              topics: [TRANSFER_TOPIC, null, senderTopic],
+              topics: isSellLeg ? [TRANSFER_TOPIC, senderTopic, null] : [TRANSFER_TOPIC, null, senderTopic],
             },
           ])) as { transactionHash?: string }[] | null;
           const hit = (logs || []).find(
-            (l) => /^0x[0-9a-fA-F]{64}$/.test(l?.transactionHash || "") && !txHashes.includes(l.transactionHash!)
+            (l) => /^0x[0-9a-fA-F]{64}$/.test(l?.transactionHash || "") && !seenHashes.has(l.transactionHash!.toLowerCase())
           );
           if (hit?.transactionHash) return { kind: "onchain" as const, hash: hit.transactionHash };
         } catch {}
@@ -770,27 +799,31 @@ export async function sendContractCall(params: {
   onStatus("Confirm in your wallet…");
   const base = { version: "2.0.0", chainId: BASE_CHAIN_HEX, from: sender, atomicRequired: false, calls: [call] };
   let batchId: string | undefined;
-  try {
-    let res: unknown;
+  if (preferSequentialWallet(eth)) {
+    onStatus("Confirming in your wallet…");
+  } else {
     try {
-      res = await eth.request({
-        method: "wallet_sendCalls",
-        params: [{ ...base, capabilities: { dataSuffix: { value: suffix, optional: true } } }],
-      });
-    } catch (capErr) {
-      const e = capErr as { code?: number; message?: string };
-      if (e?.code !== 5700 && !/capabilit/i.test(e?.message || "")) throw capErr;
-      res = await eth.request({ method: "wallet_sendCalls", params: [base] });
-    }
-    batchId = extractBatchId(res);
-  } catch (err) {
-    if (isUserRejection(err)) throw new Error("Cancelled in wallet.");
-    if (!isUnsupportedMethod(err)) {
-      // Unknown wallet error: make sure nothing was sent before asking again another way
-      await sleep(5000);
-      const nonceAfter = await nonceOf();
-      if (nonceBefore !== null && nonceAfter !== null && nonceAfter > nonceBefore) {
-        throw new Error("Your wallet reported an error, but a transaction was sent. Check your wallet activity before retrying.");
+      let res: unknown;
+      try {
+        res = await eth.request({
+          method: "wallet_sendCalls",
+          params: [{ ...base, capabilities: { dataSuffix: { value: suffix, optional: true } } }],
+        });
+      } catch (capErr) {
+        const e = capErr as { code?: number; message?: string };
+        if (e?.code !== 5700 && !/capabilit/i.test(e?.message || "")) throw capErr;
+        res = await eth.request({ method: "wallet_sendCalls", params: [base] });
+      }
+      batchId = extractBatchId(res);
+    } catch (err) {
+      if (isUserRejection(err)) throw new Error("Cancelled in wallet.");
+      if (!isUnsupportedMethod(err)) {
+        // Unknown wallet error: make sure nothing was sent before asking again another way
+        await sleep(5000);
+        const nonceAfter = await nonceOf();
+        if (nonceBefore !== null && nonceAfter !== null && nonceAfter > nonceBefore) {
+          throw new Error("Your wallet reported an error, but a transaction was sent. Check your wallet activity before retrying.");
+        }
       }
     }
   }
@@ -800,6 +833,7 @@ export async function sendContractCall(params: {
     const start = Date.now();
     const senderTopic = "0x" + sender.toLowerCase().replace(/^0x/, "").padStart(64, "0");
     let misses = 0;
+    let statusUnsupported = false;
     while (Date.now() - start < 180_000) {
       let status: CallsStatusResponse | undefined;
       try {
@@ -811,12 +845,7 @@ export async function sendContractCall(params: {
       } catch (statusErr) {
         misses++;
         if (isUnsupportedMethod(statusErr)) {
-          const nonceAfter = await nonceOf();
-          const nonceMoved = nonceBefore !== null && nonceAfter !== null && nonceAfter > nonceBefore;
-          if (!nonceMoved) {
-            onStatus("Your wallet doesn't support batch status: confirming each step…");
-            break;
-          }
+          statusUnsupported = true;
         }
       }
       const parsed = parseCallsStatus(status);
@@ -853,7 +882,7 @@ export async function sendContractCall(params: {
         } catch {}
       }
 
-      if (misses > 15 && (startBlock === null || Date.now() - start > 60_000)) {
+      if ((statusUnsupported && Date.now() - start > 45_000) || (misses > 15 && (startBlock === null || Date.now() - start > 60_000))) {
         throw new Error("Sent, but the status is unavailable. Check your wallet activity before retrying.");
       }
       await sleep(2000);
@@ -962,7 +991,15 @@ export interface PreparedOrder {
   preparedAt: number;
 }
 
-function summarize(side: "buy" | "sell", sender: string, legs: LegQuote[], skipped: LegQuote[], approvals: number, slippageBps: number): PreparedOrder {
+function summarize(
+  side: "buy" | "sell",
+  sender: string,
+  legs: LegQuote[],
+  skipped: LegQuote[],
+  approvals: number,
+  slippageBps: number,
+  preparedAt = Date.now()
+): PreparedOrder {
   // Each leg's cost % comes from the aggregator's own consistent USD pricing. Mixing face-value USDC
   // with aggregator USD (which prices USDC slightly below $1) would overstate the cost, so totals are
   // built from the per-leg cost: buy value received = USDC paid x (1 - cost).
@@ -983,7 +1020,7 @@ function summarize(side: "buy" | "sell", sender: string, legs: LegQuote[], skipp
     costPct,
     slippageBps,
     approvals,
-    preparedAt: Date.now(),
+    preparedAt,
   };
 }
 
@@ -991,8 +1028,8 @@ function summarize(side: "buy" | "sell", sender: string, legs: LegQuote[], skipp
 async function gasCheck(eth: EthProvider, sender: string, ethSpent: bigint): Promise<string | undefined> {
   try {
     const [balHex, code] = await Promise.all([
-      eth.request({ method: "eth_getBalance", params: [sender, "latest"] }) as Promise<string>,
-      (eth.request({ method: "eth_getCode", params: [sender, "latest"] }) as Promise<string>).catch(() => "0x"),
+      rpcRead(eth, "eth_getBalance", [sender, "latest"]) as Promise<string>,
+      (rpcRead(eth, "eth_getCode", [sender, "latest"]) as Promise<string>).catch(() => "0x"),
     ]);
     const left = BigInt(balHex) - ethSpent;
     if (left >= MIN_GAS_WEI) return undefined;
@@ -1030,6 +1067,7 @@ export async function prepareBuy(params: {
 }): Promise<PreparedOrder> {
   const { eth, sender, legs, slippageBps = 50, onStatus = () => {} } = params;
   await ensureBase(eth, onStatus);
+  const quoteStartedAt = Date.now();
   const quotes = await quoteAll(legs, (l) => quoteLeg(l, sender, slippageBps), "for", onStatus);
   const bought = quotes.filter(usable);
   const skipped = quotes.filter((q) => !bought.includes(q)).map(withSkipReason);
@@ -1044,12 +1082,12 @@ export async function prepareBuy(params: {
     }
   }
   if (ethIn > 0n) {
-    const balance = BigInt((await eth.request({ method: "eth_getBalance", params: [sender, "latest"] })) as string);
+    const balance = BigInt((await rpcRead(eth, "eth_getBalance", [sender, "latest"])) as string);
     if (balance < ethIn) {
       throw new Error(`Not enough ETH on Base: need ${(Number(ethIn) / 1e18).toFixed(6)}, have ${(Number(balance) / 1e18).toFixed(6)}.`);
     }
   }
-  const order = summarize("buy", sender, bought, skipped, await countApprovals(eth, sender, bought), slippageBps);
+  const order = summarize("buy", sender, bought, skipped, await countApprovals(eth, sender, bought), slippageBps, quoteStartedAt);
   order.gasWarning = await gasCheck(eth, sender, ethIn);
   return order;
 }
@@ -1064,6 +1102,7 @@ export async function prepareSell(params: {
 }): Promise<PreparedOrder> {
   const { eth, sender, legs, slippageBps = 50, onStatus = () => {} } = params;
   await ensureBase(eth, onStatus);
+  const quoteStartedAt = Date.now();
   const quotes = await quoteAll(legs, (l) => quoteSellLeg(l, sender, slippageBps), "to sell", onStatus);
   const sold = quotes.filter(usable);
   const skipped = quotes.filter((q) => !sold.includes(q)).map(withSkipReason);
@@ -1073,7 +1112,7 @@ export async function prepareSell(params: {
     const bal = await readErc20(eth, q.tokenIn!, "balanceOf", [sender as `0x${string}`]);
     if (bal < BigInt(q.amountInRaw!)) throw new Error(`Not enough ${q.symbol} in this wallet.`);
   }
-  const order = summarize("sell", sender, sold, skipped, await countApprovals(eth, sender, sold), slippageBps);
+  const order = summarize("sell", sender, sold, skipped, await countApprovals(eth, sender, sold), slippageBps, quoteStartedAt);
   order.gasWarning = await gasCheck(eth, sender, 0n);
   return order;
 }
@@ -1124,6 +1163,12 @@ export async function submitOrder(params: {
       }
     } else if ((tracked.received[0]?.raw ?? "0") === "0") {
       for (const q of legs) failed.push({ label: `${verb} ${q.symbol}`, error: "No USDC arrived: the swap reverted; only gas was spent" });
+    } else {
+      for (const q of legs) {
+        if (!tracked.spentTokens.has(q.b20Address!.toLowerCase())) {
+          failed.push({ label: `${verb} ${q.symbol}`, error: "Stock did not leave wallet: the swap reverted; only gas was spent" });
+        }
+      }
     }
     if (failed.length === legs.length) throw new Error("The batch was mined but every swap reverted (price moved). Your funds stayed in your wallet; only gas was spent.");
   }

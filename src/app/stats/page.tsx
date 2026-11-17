@@ -16,7 +16,7 @@ interface Stats {
   perStock: { symbol: string; trades: number; volumeUsd: number }[];
   indexBuys?: { id: number; buys: number; volumeUsd: number; wallets: number }[];
   daily: { date: string; trades: number; volumeUsd: number; wallets: number }[];
-  recent: { time: string; wallet: string; side: "buy" | "sell"; symbol: string; usd: number; hash: string; attributed: boolean }[];
+  recent: { time: string; wallet: string; side: "buy" | "sell"; symbol: string; usd: number; hash: string; logIndex?: number; attributed: boolean }[];
 }
 
 const usd = (n: number) => `$${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -194,7 +194,7 @@ export default function StatsPage() {
                   <div className="divide-y divide-slate-800/70">
                     {data.recent.map((r) => (
                       <a
-                        key={r.hash}
+                        key={`${r.hash}:${r.logIndex ?? 0}`}
                         href={`https://basescan.org/tx/${r.hash}`}
                         target="_blank"
                         rel="noopener noreferrer"

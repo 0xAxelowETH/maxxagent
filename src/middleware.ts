@@ -12,7 +12,8 @@ const BLOCKED_COUNTRIES = new Set(["US", "PR", "GU", "VI", "AS", "MP", "UM"]);
 const STOCK_SYMBOLS = ["NVDAc", "AAPLc", "TSLAc", "MSFTc", "METAc", "GOOGLc", "AMZNc", "MSTRc", "SNDKc", "SPCXc"];
 // Server-to-server endpoints (Vercel Cron and Farcaster's webhook run in the US) also stay reachable: no trading there
 // "/preview" is the read-only, no-trading page for reviewers anywhere (informational only, rendered on the server)
-const PUBLIC_EVERYWHERE = ["/preview", "/agent-registration.json", "/.well-known/", "/api/og", "/api/cron/", "/api/miniapp/webhook", "/brand/", "/robots.txt", "/sitemap.xml", "/icon.svg", "/apple-icon.png", "/favicon.ico"];
+const PUBLIC_EXACT = new Set(["/preview", "/agent-registration.json", "/api/og", "/api/miniapp/webhook", "/robots.txt", "/sitemap.xml", "/icon.svg", "/apple-icon.png", "/favicon.ico"]);
+const PUBLIC_PREFIXES = ["/.well-known/", "/api/cron/", "/brand/"];
 const SITE = (process.env.NEXT_PUBLIC_SITE_URL || "https://maxxagent.xyz").replace(/\/$/, "");
 const esc = (v: string) => v.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
 const PREVIEW_DESC = "Build your own index of Coinbase tokenized stocks on Base, or let an agent propose one, and buy it in one click from your own wallet. Not financial advice.";
@@ -86,9 +87,12 @@ const hits = new Map<string, { start: number; count: number }>();
 function rateLimited(request: NextRequest): { limited: boolean; retryAfter: number } {
   const route = Object.keys(LIMITS).find((r) => request.nextUrl.pathname.startsWith(r));
   if (!route) return { limited: false, retryAfter: 0 };
+  const xff = request.headers.get("x-forwarded-for");
+  const lastHop = xff ? xff.split(",").at(-1)?.trim() : undefined;
   const ip =
-    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
-    request.headers.get("x-real-ip") ||
+    request.headers.get("x-vercel-forwarded-for")?.split(",")[0]?.trim() ||
+    request.headers.get("x-real-ip")?.trim() ||
+    lastHop ||
     "local";
   const key = `${route}|${ip}`;
   const now = Date.now();
@@ -97,6 +101,13 @@ function rateLimited(request: NextRequest): { limited: boolean; retryAfter: numb
     hits.set(key, { start: now, count: 1 });
     if (hits.size > 5000) {
       for (const [k, v] of hits) if (now - v.start > WINDOW_MS) hits.delete(k);
+      if (hits.size > 5000) {
+        let drop = hits.size - 5000;
+        for (const k of hits.keys()) {
+          hits.delete(k);
+          if (--drop <= 0) break;
+        }
+      }
     }
     return { limited: false, retryAfter: 0 };
   }
@@ -132,19 +143,16 @@ export function middleware(request: NextRequest) {
     }
   }
 
-  const country = (
-    request.headers.get("cf-ipcountry") ||
-    request.headers.get("x-vercel-ip-country") ||
-    ""
-  ).toUpperCase();
+  const cfCountry = (request.headers.get("cf-ipcountry") || "").toUpperCase();
+  const vercelCountry = (request.headers.get("x-vercel-ip-country") || "").toUpperCase();
 
-  if (!BLOCKED_COUNTRIES.has(country)) {
+  if (!BLOCKED_COUNTRIES.has(cfCountry) && !BLOCKED_COUNTRIES.has(vercelCountry)) {
     return NextResponse.next();
   }
 
   // Public, non-trading files stay reachable from everywhere: link-preview and mini app crawlers
   // (X, Farcaster…) run in the US and would otherwise get 451 for the manifest and images
-  if (PUBLIC_EVERYWHERE.some((p) => path === p || path.startsWith(p))) return NextResponse.next();
+  if (PUBLIC_EXACT.has(path) || PUBLIC_PREFIXES.some((p) => path.startsWith(p))) return NextResponse.next();
 
   if (path.startsWith("/api/")) {
     return NextResponse.json(

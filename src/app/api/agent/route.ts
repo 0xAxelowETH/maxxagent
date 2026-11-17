@@ -81,14 +81,11 @@ export async function POST(request: NextRequest) {
       : "Balanced";
     const capitalUsd = inRange(Number(body.capitalUsd), MIN_BUY_USD, 100_000) ? Number(body.capitalUsd) : 20;
 
-    let stocksToAnalyze = sanitizeStocks(body.stocks);
-    if (stocksToAnalyze.length < 5) {
-      // In-process call (shares the 15s market cache). A self-fetch over HTTP failed on Vercel, and it
-      // would also trust the Host header for the URL.
-      const liveRes = await getStocks(new NextRequest(new URL("/api/stocks", request.url)));
-      const liveData = liveRes.ok ? await liveRes.json() : null;
-      stocksToAnalyze = sanitizeStocks(liveData?.stocks);
-    }
+    // Always load live market data server-side (in-process call sharing the 15s cache)
+    // so stale or manipulated client-supplied prices/addresses cannot affect agent scoring.
+    const liveRes = await getStocks(new NextRequest(new URL("/api/stocks", request.url)));
+    const liveData = liveRes.ok ? await liveRes.json() : null;
+    const stocksToAnalyze = sanitizeStocks(liveData?.stocks);
     if (stocksToAnalyze.length === 0) {
       return NextResponse.json(
         { ok: false, error: "Live market data is unavailable right now. Please retry in a moment." },
@@ -96,8 +93,13 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const currentWeights =
-      body.currentWeights && typeof body.currentWeights === "object" ? (body.currentWeights as Record<string, number>) : {};
+    const rawWeights = body.currentWeights && typeof body.currentWeights === "object" ? (body.currentWeights as Record<string, unknown>) : {};
+    const currentWeights: Record<string, number> = {};
+    for (const [sym, val] of Object.entries(rawWeights)) {
+      if (typeof val === "number" && Number.isFinite(val) && val >= 0 && val <= 10000) {
+        currentWeights[sym] = Math.round(val);
+      }
+    }
 
     // Company figures from SEC filings and live risk from each Chainlink feed (both cached, left out if slow);
     // live Base liquidity of any unsupported Coinbase stock the request named (explains why it's left out)

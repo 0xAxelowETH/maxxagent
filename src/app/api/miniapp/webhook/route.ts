@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createPublicKey, verify } from "node:crypto";
-import { kvEnabled } from "@/lib/kv";
+import { createHash, createPublicKey, verify } from "node:crypto";
+import { kv, kvEnabled } from "@/lib/kv";
 import { getWatch, isAppKeyOf, setNotify, validNotifyDetails } from "@/lib/driftWatch";
 
 /**
@@ -20,8 +20,10 @@ const SPKI_ED25519 = Buffer.from("302a300506032b6570032100", "hex");
 
 function signed(body: { header: string; payload: string; signature: string }): { fid: number; key: string; payload: Record<string, unknown> } | null {
   try {
-    const header = JSON.parse(b64url(body.header).toString("utf8")) as { fid?: number; key?: string };
-    const payload = JSON.parse(b64url(body.payload).toString("utf8")) as Record<string, unknown>;
+    const header = JSON.parse(b64url(body.header).toString("utf8")) as { fid?: number; key?: string } | null;
+    const payload = JSON.parse(b64url(body.payload).toString("utf8")) as Record<string, unknown> | null;
+    if (!header || typeof header !== "object" || Array.isArray(header)) return null;
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) return null;
     const fid = Number(header.fid);
     const key = String(header.key || "").replace(/^0x/, "");
     if (!Number.isInteger(fid) || fid <= 0 || !/^[0-9a-fA-F]{64}$/.test(key)) return null;
@@ -56,6 +58,10 @@ export async function POST(req: NextRequest) {
   try {
     // Verify Farcaster key ownership BEFORE checking getWatch(fid) so unauthenticated callers cannot enumerate FIDs
     if (!(await isAppKeyOf(v.fid, v.key))) return NextResponse.json({ ok: false }, { status: 401 });
+    // Replay guard: ignore replayed signed webhook payloads so an old token cannot overwrite a fresher one
+    const sigDigest = createHash("sha256").update(`${body.header}.${body.payload}.${body.signature}`).digest("hex").slice(0, 32);
+    const fresh = await kv("SET", `wh:seen:${sigDigest}`, "1", "EX", 86_400, "NX");
+    if (fresh !== "OK") return NextResponse.json({ ok: true, replayed: true });
     if (!(await getWatch(v.fid))) return NextResponse.json({ ok: true, stored: false }); // no drift alert on: nothing to keep
     await setNotify(v.fid, details);
     return NextResponse.json({ ok: true });

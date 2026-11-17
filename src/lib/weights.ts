@@ -32,7 +32,19 @@ export function roundWeightsBps(weights: number[], capBps = 10000): number[] | n
         }
       }
     }
-    const droppedPositive = step === 50 && weights.some((w, i) => w > 0 && out[i] <= 0);
+    if (step === 1 && rest === 0) {
+      // Ensure tiny positive weights never round down to 0 when step === 1
+      for (let idx = 0; idx < out.length; idx++) {
+        if (weights[idx] > 0 && out[idx] <= 0) {
+          const donor = out.reduce((best, v, k) => (v > out[best] ? k : best), 0);
+          if (out[donor] > 1) {
+            out[donor] -= 1;
+            out[idx] = 1;
+          }
+        }
+      }
+    }
+    const droppedPositive = weights.some((w, i) => w > 0 && out[i] <= 0);
     if (rest === 0 && !droppedPositive) return out;
   }
   return null;

@@ -85,8 +85,8 @@ export function planRebalance(
       if (sellUsd < minSellUsd) note = `below $${minSellUsd} minimum`;
       else {
         action = "sell";
-        // Selling (almost) everything: sell the exact holding so no dust is left
-        amount = targetUsd <= band || sellUsd >= currentUsd * 0.99 ? x.tokens : sellUsd / x.price;
+        // Selling everything: sell the exact holding so no dust is left
+        amount = x.weightBps === 0 || targetUsd === 0 || sellUsd >= currentUsd * 0.99 ? x.tokens : sellUsd / x.price;
       }
     } else if (deltaUsd < minBuyUsd) note = `below $${minBuyUsd.toFixed(2)} minimum`;
     else {

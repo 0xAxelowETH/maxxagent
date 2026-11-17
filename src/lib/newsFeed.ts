@@ -326,30 +326,36 @@ async function headlines(): Promise<Omit<NewsItem, "priceThen" | "priceNow" | "c
   const to = new Date();
   const from = new Date(Date.now() - 3 * 86_400_000);
   const out: Omit<NewsItem, "priceThen" | "priceNow" | "changePct" | "priceSource">[] = [];
-  for (const s of BASE_TOKENIZED_STOCKS) {
-    try {
-      const res = await fetch(
-        `https://finnhub.io/api/v1/company-news?symbol=${encodeURIComponent(s.tickerUnderlying)}&from=${day(from)}&to=${day(to)}&token=${key}`,
-        { next: { revalidate: 600 }, signal: AbortSignal.timeout(8000) }
-      );
-      if (!res.ok) continue;
-      const list = (await res.json()) as { headline?: string; summary?: string; source?: string; url?: string; datetime?: number }[];
-      const seen = new Set<string>();
-      for (const n of Array.isArray(list) ? list : []) {
-        const title = fixText(n.headline || "");
-        if (!title || !n.url || !n.datetime || seen.has(title.toLowerCase())) continue;
-        // Keep headlines that actually name the company (company feeds include market round-ups)
-        if (NAME_RE[s.symbol] && !NAME_RE[s.symbol].test(title)) continue;
-        seen.add(title.toLowerCase());
-        // The provider's own teaser, kept to a couple of sentences; the article itself stays on the publisher's site
-        const teaser = fixText(n.summary || "");
-        const summary = teaser ? (teaser.length > 220 ? `${teaser.slice(0, 217).replace(/\s+\S*$/, "")}…` : teaser) : undefined;
-        out.push({ symbol: s.symbol, kind: "news", title: title.slice(0, 200), summary, source: n.source || "news", url: n.url, publishedAt: new Date(n.datetime * 1000).toISOString() });
-        if (seen.size >= 8) break;
-      }
-    } catch {
-      // one ticker failing leaves the others
-    }
+  const targets = BASE_TOKENIZED_STOCKS.filter((s) => s.symbol !== "SPCXc");
+  for (let i = 0; i < targets.length; i += 5) {
+    const batch = targets.slice(i, i + 5);
+    await Promise.all(
+      batch.map(async (s) => {
+        try {
+          const res = await fetch(
+            `https://finnhub.io/api/v1/company-news?symbol=${encodeURIComponent(s.tickerUnderlying)}&from=${day(from)}&to=${day(to)}&token=${key}`,
+            { next: { revalidate: 600 }, signal: AbortSignal.timeout(8000) }
+          );
+          if (!res.ok) return;
+          const list = (await res.json()) as { headline?: string; summary?: string; source?: string; url?: string; datetime?: number }[];
+          const seen = new Set<string>();
+          for (const n of Array.isArray(list) ? list : []) {
+            const title = fixText(n.headline || "");
+            if (!title || !n.url || !/^https:\/\//i.test(n.url) || !n.datetime || seen.has(title.toLowerCase())) continue;
+            // Keep headlines that actually name the company (company feeds include market round-ups)
+            if (NAME_RE[s.symbol] && !NAME_RE[s.symbol].test(title)) continue;
+            seen.add(title.toLowerCase());
+            // The provider's own teaser, kept to a couple of sentences; the article itself stays on the publisher's site
+            const teaser = fixText(n.summary || "");
+            const summary = teaser ? (teaser.length > 220 ? `${teaser.slice(0, 217).replace(/\s+\S*$/, "")}…` : teaser) : undefined;
+            out.push({ symbol: s.symbol, kind: "news", title: title.slice(0, 200), summary, source: n.source || "news", url: n.url, publishedAt: new Date(n.datetime * 1000).toISOString() });
+            if (seen.size >= 8) break;
+          }
+        } catch {
+          // one ticker failing leaves the others
+        }
+      })
+    );
   }
   return out;
 }

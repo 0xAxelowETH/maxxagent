@@ -703,6 +703,7 @@ function SwapPanel({
   else if (holdingTokens <= 0) problem = `You don't hold ${stock.symbol}`;
   else if (!(price > 0)) problem = "Loading price…";
   else if (sellUsd < SELL_MIN_USD) problem = `Minimum sell is $${SELL_MIN_USD}`;
+  else if (sellUsd > BUY_MAX_USD) problem = `Maximum is $${BUY_MAX_USD.toLocaleString("en-US")} per order`;
 
   const commit = (v: string) => {
     const n = Math.round((Number(v) || 0) * 100) / 100;

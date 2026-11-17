@@ -17,7 +17,7 @@ export function basketToQuery(weightsBps: Record<string, number>, amountUsd?: nu
 export function parseBasketParam(raw: string | null | undefined): Record<string, number> | null {
   if (!raw) return null;
   const pct = new Map<string, number>();
-  for (const part of raw.split(",")) {
+  for (const part of raw.slice(0, 500).split(",", 20)) {
     if (pct.size >= 10) break;
     const [sym, val] = part.split("-");
     const n = Number(val);

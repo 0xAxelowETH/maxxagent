@@ -60,7 +60,8 @@ export async function getUnsupportedLive(tokens: string[]): Promise<Record<strin
       const a = UNSUPPORTED_COINBASE_STOCKS[t].address.toLowerCase();
       const ps = pairs.filter((p) => p.baseToken?.address?.toLowerCase() === a || p.quoteToken?.address?.toLowerCase() === a);
       const top = [...ps].sort((x, y) => (y.liquidity?.usd || 0) - (x.liquidity?.usd || 0))[0];
-      const value = { liquidityUsd: ps.reduce((s, p) => s + (p.liquidity?.usd || 0), 0), poolUrl: top?.url };
+      const safeUrl = top?.url && /^https:\/\//i.test(top.url) ? top.url : undefined;
+      const value = { liquidityUsd: ps.reduce((s, p) => s + (p.liquidity?.usd || 0), 0), poolUrl: safeUrl };
       cache.set(t, { at: Date.now(), value });
       out[t] = value;
     }

@@ -14,9 +14,9 @@ export async function GET() {
   }
   try {
     const total = await indexCount();
-    // newest first, skipping hidden ids (scan a little further so hidden ones don't shrink the list)
+    // Newest first, skipping hidden ids up to a generous bound so spam/hidden ids don't hide real indexes
     const ids: number[] = [];
-    for (let id = total - 1; id >= 0 && ids.length < MAX_RESULTS && total - id <= MAX_RESULTS * 3; id--) {
+    for (let id = total - 1; id >= 0 && ids.length < MAX_RESULTS && total - id <= MAX_RESULTS * 10; id--) {
       if (!HIDDEN.has(id)) ids.push(id);
     }
     const indexes = await readIndexes(ids);

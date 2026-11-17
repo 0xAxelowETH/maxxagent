@@ -45,8 +45,9 @@ export function RebalancePanel({
     .map((s) => ({ symbol: s.symbol, b20Address: s.b20Address, tokens: balances[s.symbol]?.rawTokens ?? 0, price: s.navPrice }))
     .filter((h) => h.tokens > 0);
   const usdc = usdcBalance ?? 0;
-  const extra = Math.min(Math.max(0, addUsd), usdc);
   const proceeds = usdcBaseline !== null ? Math.max(0, usdc - usdcBaseline) : 0;
+  const nonProceedsUsdc = Math.max(0, usdc - proceeds);
+  const extra = Math.min(Math.max(0, addUsd), nonProceedsUsdc);
   const plan = useMemo(
     // proceeds count both as money to invest and as part of the portfolio the targets apply to
     () => planRebalance(holdings, targets, { usdcAvailable: extra + proceeds, addUsd: extra + proceeds, maxWeightPct }),
@@ -88,7 +89,7 @@ export function RebalancePanel({
             className="w-20 rounded-lg border border-slate-700 bg-[#040814] px-2 py-1 font-mono text-xs text-white outline-none focus:border-cyan-400"
             aria-label="Extra USDC to invest while rebalancing"
           />
-          {usdcBalance !== null && <span className="text-slate-500">of {usdc.toFixed(2)}</span>}
+          {usdcBalance !== null && <span className="text-slate-500">of {nonProceedsUsdc.toFixed(2)}</span>}
         </label>
       </div>
 
@@ -137,16 +138,19 @@ export function RebalancePanel({
         <div className="flex flex-wrap gap-2">
           <button
             onClick={() => {
-              setUsdcBaseline(usdcBalance ?? 0);
+              if (usdcBalance !== null) setUsdcBaseline(usdcBalance);
               onSell(plan.sells, "rebalance");
             }}
-            disabled={pending || plan.sells.length === 0 || tooSmall}
+            disabled={pending || plan.sells.length === 0 || tooSmall || usdcBalance === null}
             className="inline-flex items-center gap-2 rounded-xl bg-rose-600 px-4 py-2.5 text-xs font-bold text-white hover:bg-rose-500 disabled:opacity-40 cursor-pointer"
           >
             1. Sell overweight{plan.sells.length ? ` (≈ ${fmt(plan.sellUsd)})` : " — none"}
           </button>
           <button
-            onClick={() => onBuy(plan.buys, "rebalance")}
+            onClick={() => {
+              onBuy(plan.buys, "rebalance");
+              setUsdcBaseline(null);
+            }}
             // Buy only once the sales are done (otherwise the USDC is not there yet)
             disabled={pending || plan.buys.length === 0 || plan.sells.length > 0}
             title={plan.sells.length > 0 ? "Do step 1 first: the buys use the USDC from the sales" : undefined}

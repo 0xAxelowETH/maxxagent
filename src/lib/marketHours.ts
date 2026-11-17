@@ -11,6 +11,8 @@ const HOLIDAYS = new Set([
 ]);
 const EARLY_CLOSE = new Set(["2026-11-27", "2026-12-24", "2027-11-26"]);
 
+export const isUsHoliday = (date: string) => HOLIDAYS.has(date);
+
 export type MarketState = "open" | "pre" | "after" | "closed" | "weekend" | "holiday";
 
 function nyParts(d: Date) {

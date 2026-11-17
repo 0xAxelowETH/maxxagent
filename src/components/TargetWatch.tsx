@@ -115,9 +115,13 @@ export function TargetWatch({
 
       {drift === null ? (
         <p className="text-xs text-slate-300">You don&apos;t hold any of these stocks yet. Buy the basket from the Agent tab to start tracking it.</p>
-      ) : off ? (
+      ) : off || open ? (
         <div className="space-y-2">
-          {breached ? (
+          {!off ? (
+            <p className="text-xs text-emerald-200">
+              On target: only <strong className="font-mono">{pct(drift.driftPct)}</strong> of your stocks would have to move. Finish any remaining buys below if needed.
+            </p>
+          ) : breached ? (
             <p className="text-xs text-amber-100" data-testid="limit-breach">
               <strong>Limit broken:</strong> {driftSummary(drift, target.maxWeightPct)}. The plan trims it back to the target.
             </p>
@@ -141,7 +145,7 @@ export function TargetWatch({
         </p>
       )}
 
-      {open && off && (
+      {open && (
         <RebalancePanel
           stocks={stocks}
           balances={balances}

@@ -2,7 +2,7 @@ import { createPublicClient, parseAbi } from "viem";
 import { base } from "viem/chains";
 import { unstable_cache } from "next/cache";
 import { baseTransport } from "./rpc";
-import { nyCloseUnix, nyDay } from "./marketHours";
+import { nyCloseUnix, nyDay, isUsHoliday } from "./marketHours";
 
 /**
  * Live risk for each supported stock from its own Chainlink NAV feed on Base: annualised volatility of
@@ -54,9 +54,9 @@ async function dailyCloses(feed: `0x${string}`, sinceSec: number): Promise<[stri
       oldest = Math.min(oldest, t);
       if (t < sinceSec) continue;
       // Trading days only, in New York time (a Friday close posted after midnight UTC still belongs to Friday):
-      // weekend heartbeat rounds repeat Friday's price and would understate volatility
+      // weekend & NYSE holiday heartbeat rounds repeat the prior close and would understate volatility
       const { date: day, weekday } = nyDay(new Date(t * 1000));
-      if (weekday === "Sat" || weekday === "Sun") continue;
+      if (weekday === "Sat" || weekday === "Sun" || isUsHoliday(day)) continue;
       const prev = byDay.get(day);
       if (!prev || t > prev.t) byDay.set(day, { t, v: Number(answer) });
     }
@@ -112,7 +112,8 @@ async function refresh(stocks: { symbol: string; chainlinkFeed: `0x${string}` }[
     await Promise.all(
       stocks.slice(i, i + 2).map(async (s) => {
         try {
-          cache.set(s.symbol, { at: Date.now(), value: compute(await dailyCloses(s.chainlinkFeed, since)) });
+          const val = compute(await dailyCloses(s.chainlinkFeed, since));
+          if (val !== null) cache.set(s.symbol, { at: Date.now(), value: val });
         } catch {
           // keep any older value; retried on the next request
         }

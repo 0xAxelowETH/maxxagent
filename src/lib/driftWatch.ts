@@ -66,7 +66,14 @@ export async function getNotifies(fid: number): Promise<NotifyDetails[]> {
   for (let i = 0; i + 1 < flat.length; i += 2) out.push({ url: flat[i], token: flat[i + 1] });
   return out;
 }
-export const setNotify = (fid: number, d: NotifyDetails) => kv("HSET", notifyKey(fid), d.url, d.token);
+const MAX_NOTIFY_PER_FID = 4;
+export async function setNotify(fid: number, d: NotifyDetails) {
+  const existing = await getNotifies(fid);
+  if (existing.length >= MAX_NOTIFY_PER_FID && !existing.some((e) => e.url === d.url)) {
+    await deleteNotify(fid, existing[0].url);
+  }
+  return kv("HSET", notifyKey(fid), d.url, d.token);
+}
 export const deleteNotify = (fid: number, url: string) => kv("HDEL", notifyKey(fid), url);
 
 /**
@@ -79,7 +86,8 @@ const keyCache = new Map<string, { at: number; ok: boolean }>();
 export async function isAppKeyOf(fid: number, keyHex: string): Promise<boolean> {
   const id = `${fid}:${keyHex.toLowerCase()}`;
   const hit = keyCache.get(id);
-  if (hit && Date.now() - hit.at < 3_600_000) return hit.ok;
+  const ttl = hit?.ok ? 300_000 : 15_000;
+  if (hit && Date.now() - hit.at < ttl) return hit.ok;
   const data = await opClient.readContract({
     address: KEY_REGISTRY,
     abi: parseAbi(["function keyDataOf(uint256 fid, bytes key) view returns ((uint8 state, uint32 keyType))"]),
@@ -88,6 +96,9 @@ export async function isAppKeyOf(fid: number, keyHex: string): Promise<boolean> 
   });
   const ok = data.state === 1 && data.keyType === 1; // 1 = ADDED, keyType 1 = Ed25519
   keyCache.set(id, { at: Date.now(), ok });
-  if (keyCache.size > 2000) keyCache.clear();
+  if (keyCache.size > 2000) {
+    const oldest = keyCache.keys().next().value;
+    if (oldest) keyCache.delete(oldest);
+  }
   return ok;
 }

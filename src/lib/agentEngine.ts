@@ -119,11 +119,33 @@ export function scoresToWeightsBps(scores: number[]): number[] {
     if (!changed) break;
   }
 
-  // Round to 50 bps and push the rounding difference onto the largest weight
-  const rounded = weights.map((w) => Math.round(w / 50) * 50);
-  const diff = 10000 - rounded.reduce((a, b) => a + b, 0);
-  const largest = rounded.indexOf(Math.max(...rounded));
-  rounded[largest] += diff;
+  // Round to 50 bps and distribute the rounding difference step-by-step within [min, max]
+  const step = 50;
+  const rounded = weights.map((w) => Math.min(max, Math.max(min, Math.round(w / step) * step)));
+  let diff = 10000 - rounded.reduce((a, b) => a + b, 0);
+  const order = weights
+    .map((w, i) => ({ i, frac: w - rounded[i] }))
+    .sort((a, b) => (diff > 0 ? b.frac - a.frac : a.frac - b.frac));
+  let guard = 0;
+  while (Math.abs(diff) >= step && guard++ < n * 20) {
+    let moved = false;
+    for (const { i } of order) {
+      if (diff >= step && rounded[i] + step <= max) {
+        rounded[i] += step;
+        diff -= step;
+        moved = true;
+      } else if (diff <= -step && rounded[i] - step >= min) {
+        rounded[i] -= step;
+        diff += step;
+        moved = true;
+      }
+    }
+    if (!moved) break;
+  }
+  if (diff !== 0) {
+    const idx = order.find(({ i }) => rounded[i] + diff >= min && rounded[i] + diff <= max)?.i ?? rounded.indexOf(Math.max(...rounded));
+    rounded[idx] += diff;
+  }
   return rounded;
 }
 
@@ -258,7 +280,7 @@ export function runAutonomousStockAgent(params: {
     }
     if (mandate.prefersProfitable && fund && fund.netIncomeUsd !== null && fund.netIncomeUsd > 0) {
       score += Math.min(10, (fund.netIncomeUsd / Math.max(1, fund.revenueUsd)) * 30);
-      reasons.push(`profitable: net income ${big(fund.netIncomeUsd)}, ${((fund.netIncomeUsd / fund.revenueUsd) * 100).toFixed(0)}% of revenue (SEC 10-K)`);
+      reasons.push(`profitable: net income ${big(fund.netIncomeUsd)}, ${((fund.netIncomeUsd / Math.max(1, fund.revenueUsd)) * 100).toFixed(0)}% of revenue (SEC 10-K)`);
     }
 
     // 2. Live market factors
@@ -348,6 +370,12 @@ export function runAutonomousStockAgent(params: {
     selected = selected.filter((x) => fixedSyms.includes(x.stock.symbol) || keepRest.has(x));
     fixedBase = investedFor(selected.length);
     fixedSum = fixedSyms.reduce((a, s) => a + fixedOfStocks(s), 0);
+    // Recompute check: if shrinking selected made fixedSum >= 99.5, drop remaining non-fixed stocks so restPct is never negative
+    if (fixedSum >= 99.5 && selected.some((x) => !fixedSyms.includes(x.stock.symbol))) {
+      selected = selected.filter((x) => fixedSyms.includes(x.stock.symbol));
+      fixedBase = investedFor(selected.length);
+      fixedSum = fixedSyms.reduce((a, s) => a + fixedOfStocks(s), 0);
+    }
   }
   const added = selected.filter((x) => !mandate.include.includes(x.stock.symbol) && !themeOf(x.stock.symbol).length).length;
   if (added > 0 && (mandate.include.length || mandate.themes.length) && !mandate.only)

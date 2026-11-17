@@ -7,6 +7,7 @@ import { baseTransport, redactSecrets } from "@/lib/rpc";
 import { BASE_TOKENIZED_STOCKS } from "@/lib/tokenizedStocks";
 import { indexCount, readIndexes } from "@/lib/indexRegistry";
 import { matchIndexBuys } from "@/lib/indexMatch";
+import { kvEnabled, kvGetJson, kvSetJson } from "@/lib/kv";
 
 /**
  * Public traction stats for MAXXAGENT, computed only from onchain data (anyone can verify them):
@@ -58,8 +59,38 @@ interface StatsState {
   since: number;
 }
 let state: StatsState | null = null;
+const KV_STATE_KEY = "stats:state:v1";
 const RESPONSE_BUDGET_MS = 45_000;
 let inflight: Promise<StatsState> | null = null;
+
+interface SerializedStats {
+  scannedTo: string;
+  at: number;
+  since: number;
+  trades: (Omit<Trade, "block"> & { block: string })[];
+}
+
+async function loadPersistedState(): Promise<StatsState | null> {
+  if (!kvEnabled()) return null;
+  const saved = await kvGetJson<SerializedStats>(KV_STATE_KEY).catch(() => null);
+  if (!saved || !saved.scannedTo || !Array.isArray(saved.trades)) return null;
+  const trades = new Map<string, Trade>();
+  for (const t of saved.trades) {
+    trades.set(`${t.hash}:${t.logIndex}`, { ...t, block: BigInt(t.block) });
+  }
+  return { scannedTo: BigInt(saved.scannedTo), trades, at: saved.at || Date.now(), since: saved.since };
+}
+
+async function savePersistedState(s: StatsState): Promise<void> {
+  if (!kvEnabled()) return;
+  const payload: SerializedStats = {
+    scannedTo: s.scannedTo.toString(),
+    at: s.at,
+    since: s.since,
+    trades: [...s.trades.values()].map((t) => ({ ...t, block: t.block.toString() })),
+  };
+  await kvSetJson(KV_STATE_KEY, payload).catch(() => {});
+}
 
 async function withRetry<T>(fn: () => Promise<T>, tries = 3): Promise<T> {
   let last: unknown;
@@ -121,6 +152,7 @@ async function readTrades(hash: `0x${string}`, entries: { logIndex: number; usd:
   const block = await withRetry(() => client.getBlock({ blockNumber: r.blockNumber }));
   const attrCache = new Map<string, boolean>();
   const out: Trade[] = [];
+  const usedEntries = new Set<number>();
   for (let i = 0; i < swappedLogs.length; i++) {
     const log = swappedLogs[i];
     const [sender, src, dst] = decodeAbiParameters(
@@ -135,10 +167,23 @@ async function readTrades(hash: `0x${string}`, entries: { logIndex: number; usd:
     if (!attrCache.has(wallet)) {
       attrCache.set(wallet, await isAttributed(hash, wallet).catch(() => false));
     }
-    const matchedEntry = entries[i] ?? entries[0];
+    const swapLogIdx = log.logIndex ?? i;
+    // Pair by nearest unused ClientData logIndex so extra Swapped hops don't duplicate entries[0].usd
+    let bestIdx = -1;
+    let bestDist = Infinity;
+    for (let k = 0; k < entries.length; k++) {
+      if (usedEntries.has(k)) continue;
+      const dist = Math.abs(entries[k].logIndex - swapLogIdx);
+      if (dist < bestDist) {
+        bestDist = dist;
+        bestIdx = k;
+      }
+    }
+    if (bestIdx >= 0) usedEntries.add(bestIdx);
+    const matchedEntry = bestIdx >= 0 ? entries[bestIdx] : undefined;
     out.push({
       hash,
-      logIndex: log.logIndex ?? i,
+      logIndex: swapLogIdx,
       block: r.blockNumber,
       time: Number(block.timestamp),
       wallet,
@@ -151,7 +196,26 @@ async function readTrades(hash: `0x${string}`, entries: { logIndex: number; usd:
   return out;
 }
 
+type RawLog = { transactionHash: `0x${string}`; logIndex?: string; data: string };
+
+async function fetchLogsAdaptive(a: bigint, b: bigint): Promise<RawLog[]> {
+  try {
+    return (await withRetry(() =>
+      client.request({
+        method: "eth_getLogs",
+        params: [{ address: ROUTER, topics: [CLIENT_DATA_TOPIC], fromBlock: toHex(a), toBlock: toHex(b) }],
+      })
+    )) as unknown as RawLog[];
+  } catch (e) {
+    if (b - a <= 1_000n) throw e;
+    const mid = a + (b - a) / 2n;
+    const [left, right] = await Promise.all([fetchLogsAdaptive(a, mid), fetchLogsAdaptive(mid + 1n, b)]);
+    return [...left, ...right];
+  }
+}
+
 async function refresh(): Promise<StatsState> {
+  if (!state) state = await loadPersistedState();
   const latest = await client.getBlockNumber();
   const since = state?.since ?? Number((await withRetry(() => client.getBlock({ blockNumber: START_BLOCK }))).timestamp);
   const trades = new Map(state?.trades ?? []);
@@ -160,23 +224,17 @@ async function refresh(): Promise<StatsState> {
   for (let a = from; a <= latest; a += CHUNK) ranges.push([a, a + CHUNK - 1n > latest ? latest : a + CHUNK - 1n]);
 
   // ClientData logs of the router; keep only MAXXAGENT ones (filtered by the JSON source tag)
-  const found = await pool(ranges, CONCURRENCY, ([a, b]) =>
-    withRetry(() =>
-      client.request({
-        method: "eth_getLogs",
-        params: [{ address: ROUTER, topics: [CLIENT_DATA_TOPIC], fromBlock: toHex(a), toBlock: toHex(b) }],
-      })
-    )
-  );
+  const found = await pool(ranges, CONCURRENCY, ([a, b]) => fetchLogsAdaptive(a, b));
   const ours = new Map<string, { logIndex: number; usd: number }[]>();
-  for (const logs of found as unknown as { transactionHash: `0x${string}`; logIndex?: string; data: string }[][]) {
+  for (const logs of found) {
     for (const l of logs) {
       if (!l.data.includes(SOURCE_TAG)) continue;
       let usd = 0;
       try {
         const [bytes] = decodeAbiParameters([{ type: "bytes" }], l.data as `0x${string}`);
         const json = JSON.parse(Buffer.from(bytes.slice(2), "hex").toString("utf8"));
-        usd = Number(json.AmountInUSD) || 0;
+        const parsedUsd = Number(json.AmountInUSD);
+        usd = Number.isFinite(parsedUsd) && parsedUsd >= 0 && parsedUsd <= 1_000_000 ? parsedUsd : 0;
       } catch {}
       const list = ours.get(l.transactionHash) ?? [];
       list.push({ logIndex: l.logIndex ? Number(l.logIndex) : list.length, usd });
@@ -185,17 +243,29 @@ async function refresh(): Promise<StatsState> {
   }
   const seenHashes = new Set([...trades.values()].map((t) => t.hash));
   const fresh = [...ours.entries()].filter(([h]) => !seenHashes.has(h));
+  let anyReadFailed = false;
   const read = await pool(fresh, 4, ([h, entries]) =>
-    readTrades(h as `0x${string}`, entries.sort((a, b) => a.logIndex - b.logIndex)).catch(() => [] as Trade[])
+    readTrades(h as `0x${string}`, entries.sort((a, b) => a.logIndex - b.logIndex)).catch(() => {
+      anyReadFailed = true;
+      return [] as Trade[];
+    })
   );
   for (const list of read) for (const t of list) trades.set(`${t.hash}:${t.logIndex}`, t);
-  return { scannedTo: latest, trades, at: Date.now(), since };
+  const nextState: StatsState = {
+    scannedTo: anyReadFailed && state ? state.scannedTo : latest,
+    trades,
+    at: Date.now(),
+    since,
+  };
+  await savePersistedState(nextState);
+  return nextState;
 }
 
 export async function GET(request: NextRequest) {
   // Dev only: ?team=1 includes the team test wallet, to check the pipeline against real trades
   const includeTeam = process.env.NODE_ENV !== "production" && request.nextUrl.searchParams.has("team");
   try {
+    if (!state) state = await loadPersistedState();
     if (!state || Date.now() - state.at > 60_000) {
       if (!inflight) inflight = refresh().finally(() => (inflight = null));
       const job = inflight;
@@ -216,7 +286,9 @@ export async function GET(request: NextRequest) {
     }
     const current = state!;
 
-    const all = [...current.trades.values()].filter((t) => includeTeam || !EXCLUDED.has(t.wallet)).sort((a, b) => Number(b.block - a.block));
+    const all = [...current.trades.values()]
+      .filter((t) => includeTeam || !EXCLUDED.has(t.wallet))
+      .sort((a, b) => Number(b.block - a.block) || b.logIndex - a.logIndex);
     const perStock = new Map<string, { symbol: string; trades: number; volumeUsd: number }>();
     const daily = new Map<string, { date: string; trades: number; volumeUsd: number; wallets: Set<string> }>();
     for (const t of all) {
@@ -234,14 +306,14 @@ export async function GET(request: NextRequest) {
     // Buys of published indexes, recognised by their shape (same wallet, the index's stocks and weights)
     const indexBuys = await (async () => {
       const total = await indexCount();
-      const ids = Array.from({ length: Math.min(total, 60) }, (_, i) => total - 1 - i);
+      const ids = Array.from({ length: total }, (_, i) => total - 1 - i);
       return matchIndexBuys(all, await readIndexes(ids));
     })().catch(() => []);
     const body = {
       ok: true,
       builderCode: BUILDER_CODE,
       since: new Date(current.since * 1000).toISOString(),
-      updatedAt: new Date().toISOString(),
+      updatedAt: new Date(current.at).toISOString(),
       excludesTeamTestWallet: !includeTeam,
       totals: {
         trades: all.length,
@@ -261,6 +333,7 @@ export async function GET(request: NextRequest) {
         symbol: t.symbol,
         usd: t.usd,
         hash: t.hash,
+        logIndex: t.logIndex,
         attributed: t.attributed,
       })),
     };

@@ -40,14 +40,14 @@ async function chainlinkHistory(feed: `0x${string}`, sinceSec: number, maxRounds
       allowFailure: true,
       contracts: ids.map((id) => ({ address: feed, abi: FEED_ABI, functionName: "getRoundData" as const, args: [id] })),
     });
+  const phaseBase = (latestId >> 64n) << 64n;
   const idsFrom = (start: bigint, count: number) => {
     const ids: bigint[] = [];
-    for (let i = 0n; i < BigInt(count) && start - i > 0n; i++) ids.push(start - i);
+    for (let i = 0n; i < BigInt(count) && start - i > phaseBase; i++) ids.push(start - i);
     return ids;
   };
 
-  // Newest 50 rounds first (usually enough for 24H); the rest in ONE parallel multicall instead of
-  // sequential 50-round pages (30D went from ~8 round trips / 3s to 2 round trips).
+  // Newest 50 rounds first (usually enough for 24H); the rest in batches, stopping once older than sinceSec.
   const FIRST = 50;
   const results = [...(await read(idsFrom(latestId, Math.min(FIRST, maxRounds))))];
   const needMore = () => {
@@ -57,7 +57,10 @@ async function chainlinkHistory(feed: `0x${string}`, sinceSec: number, maxRounds
   if (maxRounds > FIRST && results.length === FIRST && needMore()) {
     const restIds = idsFrom(latestId - BigInt(FIRST), maxRounds - FIRST);
     for (let i = 0; i < restIds.length; i += 200) {
-      results.push(...(await read(restIds.slice(i, i + 200))));
+      const batch = await read(restIds.slice(i, i + 200));
+      results.push(...batch);
+      const last = batch[batch.length - 1];
+      if (!last || last.status !== "success" || Number((last.result as readonly bigint[])[3]) < sinceSec) break;
     }
   }
 
@@ -75,6 +78,7 @@ async function dexHistory(token: string, geckoPath: string) {
   const poolsRes = await fetch(`${GECKO}/tokens/${token}/pools?page=1`, {
     headers: { Accept: "application/json" },
     next: { revalidate: 3600 },
+    signal: AbortSignal.timeout(8000),
   });
   if (!poolsRes.ok) return { pool: null as string | null, points: [] as [number, number][], failed: true };
   const pools: { attributes: { address: string; reserve_in_usd: string } }[] = (await poolsRes.json())?.data ?? [];
@@ -90,6 +94,7 @@ async function dexHistory(token: string, geckoPath: string) {
     const ohlcRes = await fetch(`${GECKO}/pools/${pool}/ohlcv/${geckoPath}${sep}currency=usd&token=${token}`, {
       headers: { Accept: "application/json" },
       next: { revalidate: 300 },
+      signal: AbortSignal.timeout(8000),
     });
     if (!ohlcRes.ok) return { pool, points: [] as [number, number][], failed: true };
     const list: number[][] = (await ohlcRes.json())?.data?.attributes?.ohlcv_list ?? [];
@@ -130,6 +135,7 @@ export async function GET(request: NextRequest) {
         navOnly ? Promise.resolve({ pool: null, points: [] as [number, number][], failed: false }) : dexHistory(stock.b20Address, TF[tf].gecko),
       ]);
 
+      const navFailed = !dexOnly && navRes.status === "rejected";
       const dexFailed = !navOnly && (dexRes.status === "rejected" || dexRes.value.failed);
       const body = {
         ok: true,
@@ -144,7 +150,7 @@ export async function GET(request: NextRequest) {
         },
         fetchedAt: new Date().toISOString(),
       };
-      const filled = (body.nav.length > 0 || body.dex.length > 0) && !dexFailed;
+      const filled = (body.nav.length > 0 || body.dex.length > 0) && !navFailed && !dexFailed;
       if (filled) cache.set(key, { at: Date.now(), body });
       return { body, cacheable: filled };
     })().finally(() => inflightHistory.delete(key));

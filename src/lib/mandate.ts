@@ -223,7 +223,7 @@ export function parseMandate(input: string): ParsedMandate {
   for (const c of clauses) {
     let cleaned = ` ${c} `;
     for (const w of negatedWords) cleaned = cleaned.replace(new RegExp(`(^|[^a-z0-9])${esc(w)}(?=$|[^a-z0-9])`, "g"), "$1 ");
-    positive = positive.split(c).join(cleaned);
+    positive = positive.replace(new RegExp(`(^|[^a-z0-9])${esc(c)}(?=$|[^a-z0-9])`, "g"), (_, pre) => `${pre}${cleaned}`);
   }
 
   // 2) What was asked for
@@ -240,7 +240,9 @@ export function parseMandate(input: string): ParsedMandate {
   // 2b) Asked for, but not among the 10 supported stocks. "no netflix" is not a request: every negated
   // phrase (up to the next comma) is dropped first, including ones the exclusion pass above skipped
   let wanted = text;
-  for (const c of negatedText) wanted = wanted.split(c).join(" ");
+  for (const c of negatedText) {
+    wanted = wanted.replace(new RegExp(`(^|[^a-z0-9])${esc(c)}(?=$|[^a-z0-9])`, "g"), "$1 ");
+  }
   wanted = wanted.replace(new RegExp(`(^|[^a-z0-9])(?:${NEGATORS.map(esc).join("|")})\\s+[^,.;!?]*`, "g"), "$1 ");
   const unavailable: ParsedMandate["unavailable"] = [];
   for (const u of NOT_AVAILABLE) {

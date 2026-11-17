@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { timingSafeEqual } from "node:crypto";
+import { createHash, timingSafeEqual } from "node:crypto";
 import { createPublicClient, parseAbi } from "viem";
 import { base } from "viem/chains";
 import { baseTransport } from "@/lib/rpc";
@@ -34,11 +34,15 @@ async function navPrices(): Promise<Record<string, number>> {
     contracts: BASE_TOKENIZED_STOCKS.map((s) => ({ address: s.chainlinkFeed, abi: ABI, functionName: "latestRoundData" as const })),
   });
   const out: Record<string, number> = {};
+  const maxAgeSec = 4 * 86_400; // allow weekends + long holidays without false skips
+  const nowSec = Math.floor(Date.now() / 1000);
   BASE_TOKENIZED_STOCKS.forEach((s, i) => {
     const r = res[i];
     if (r.status === "success") {
-      const answer = (r.result as readonly [bigint, bigint, bigint, bigint, bigint])[1];
-      if (answer > 0n) out[s.symbol] = Number(answer) / 1e8;
+      const [roundId, answer, , updatedAt, answeredInRound] = r.result as readonly [bigint, bigint, bigint, bigint, bigint];
+      if (answer > 0n && updatedAt > 0n && answeredInRound >= roundId && nowSec - Number(updatedAt) <= maxAgeSec) {
+        out[s.symbol] = Number(answer) / 1e8;
+      }
     }
   });
   return out;
@@ -73,33 +77,32 @@ function message(w: DriftWatch, drift: NonNullable<ReturnType<typeof computeDrif
   };
 }
 
-/** Sends one notification to every client app the user enabled; drops tokens the host reports as invalid */
+/** Sends one notification to every client app the user enabled; drops dead URLs and invalid tokens */
 async function notify(fid: number, today: string, title: string, body: string): Promise<boolean> {
   const targets = await getNotifies(fid);
-  let delivered = false;
-  for (const n of targets) {
-    try {
+  if (!targets.length) return false;
+  const results = await Promise.allSettled(
+    targets.map(async (n) => {
       const res = await fetch(n.url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ notificationId: `drift-${fid}-${today}`, title: title.slice(0, 32), body: body.slice(0, 128), targetUrl: `${SITE}/?tab=portfolio`, tokens: [n.token] }),
-        signal: AbortSignal.timeout(8000),
+        signal: AbortSignal.timeout(4000),
       });
-      const data = (await res.json().catch(() => ({}))) as { result?: { successfulTokens?: string[]; invalidTokens?: string[] } };
-      if (data.result?.invalidTokens?.includes(n.token)) await deleteNotify(fid, n.url);
-      if (res.ok && data.result?.successfulTokens?.includes(n.token)) delivered = true;
-    } catch {
-      // this client failed; the others still get it
-    }
-  }
-  return delivered;
+      const data = (await res.json().catch(() => null)) as { result?: { successfulTokens?: string[]; invalidTokens?: string[] } } | null;
+      if (res.status === 404 || res.status === 410 || data?.result?.invalidTokens?.includes(n.token)) {
+        await deleteNotify(fid, n.url);
+      }
+      return Boolean(res.ok && data?.result?.successfulTokens?.includes(n.token));
+    })
+  );
+  return results.some((r) => r.status === "fulfilled" && r.value);
 }
 
 function secretsEqual(a: string, b: string): boolean {
-  const ba = Buffer.from(a, "utf8");
-  const bb = Buffer.from(b, "utf8");
-  if (ba.length !== bb.length) return false;
-  return timingSafeEqual(ba, bb);
+  const ha = createHash("sha256").update(a, "utf8").digest();
+  const hb = createHash("sha256").update(b, "utf8").digest();
+  return timingSafeEqual(ha, hb);
 }
 
 export async function GET(req: NextRequest) {
@@ -109,7 +112,7 @@ export async function GET(req: NextRequest) {
   const auth = req.headers.get("authorization") || "";
   if (!secretsEqual(auth, `Bearer ${secret}`)) return NextResponse.json({ ok: false }, { status: 401 });
   if (!kvEnabled()) return NextResponse.json({ ok: true, skipped: "storage not configured" });
-  const lock = await kv<string | null>("SET", "cron:drift:lock", "1", "NX", "EX", 55).catch(() => "OK");
+  const lock = await kv<string | null>("SET", "cron:drift:lock", "1", "NX", "EX", 55).catch(() => null);
   if (lock !== "OK") return NextResponse.json({ ok: true, skipped: "already running" }, { headers: { "Cache-Control": "no-store" } });
 
   const started = Date.now();
@@ -120,14 +123,18 @@ export async function GET(req: NextRequest) {
     if (!all.length) return NextResponse.json({ ok: true, ...counts });
     const nav = await navPrices();
     const today = new Date().toISOString().slice(0, 10);
-    // Start at a different place each day, so if the time budget runs out it is never the same users who wait
-    const shift = Math.floor(Date.now() / 86_400_000) % all.length;
+    // Continue from the last saved cursor so every wallet gets checked fairly across runs
+    const rawCursor = Number((await kv<string | null>("GET", "cron:drift:cursor").catch(() => null)) || 0);
+    const shift = Number.isFinite(rawCursor) && rawCursor >= 0 ? rawCursor % all.length : 0;
     const fids = [...all.slice(shift), ...all.slice(0, shift)];
 
     const checkOne = async (fid: number) => {
       try {
         const w = await getWatch(fid);
-        if (!w) return;
+        if (!w) {
+          await kv("SREM", "watch:fids", fid).catch(() => {});
+          return;
+        }
         const held = await holdings(w.address, nav);
         if (!held || held.some((h) => h.missingPrice)) {
           counts.skipped++;
@@ -139,8 +146,10 @@ export async function GET(req: NextRequest) {
         const next: DriftWatch = { ...w, lastCheckAt: new Date().toISOString(), lastState: isOff ? "off" : "ok" };
         if (isOff && drift) {
           counts.off++;
-          const since = w.lastAlertAt ? Date.now() - Date.parse(w.lastAlertAt) : Infinity;
-          const due = w.lastState !== "off" || since > REMIND_DAYS * 86_400_000;
+          const parsedAlertAt = w.lastAlertAt ? Date.parse(w.lastAlertAt) : NaN;
+          const since = Number.isFinite(parsedAlertAt) ? Date.now() - parsedAlertAt : Infinity;
+          // 1h jitter buffer so cron schedule drift doesn't push a 3-day reminder to day 4
+          const due = w.lastState !== "off" || since > REMIND_DAYS * 86_400_000 - 3_600_000;
           if (due) {
             const { title, body } = message(w, drift);
             if (await notify(fid, today, title, body)) {
@@ -152,14 +161,23 @@ export async function GET(req: NextRequest) {
             }
           }
         }
-        // Re-check existence before writing so a concurrent DELETE /api/watch is never resurrected
-        if (await getWatch(fid)) await putWatch(next);
+        // Re-check existence and target/address equality before writing so concurrent updates aren't clobbered
+        const latest = await getWatch(fid);
+        if (latest && latest.address === w.address && JSON.stringify(latest.target) === JSON.stringify(w.target)) {
+          await putWatch(next);
+        }
       } catch {
         counts.failed++;
       }
     };
     // Five wallets at a time keeps RPC and storage load modest while finishing well inside the budget
-    for (let i = 0; i < fids.length && Date.now() - started < BUDGET_MS; i += 5) await Promise.all(fids.slice(i, i + 5).map(checkOne));
+    let processed = 0;
+    for (let i = 0; i < fids.length && Date.now() - started < BUDGET_MS; i += 5) {
+      const batch = fids.slice(i, i + 5);
+      await Promise.all(batch.map(checkOne));
+      processed += batch.length;
+    }
+    await kv("SET", "cron:drift:cursor", String((shift + processed) % all.length)).catch(() => {});
     return NextResponse.json({ ok: true, ...counts }, { headers: { "Cache-Control": "no-store" } });
   } catch {
     return NextResponse.json({ ok: false, ...counts }, { status: 502 });

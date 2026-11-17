@@ -194,8 +194,8 @@ async function getMarket(): Promise<LiveTokenizedStock[]> {
   if (!marketInflight) {
     marketInflight = buildMarket()
       .then((stocks) => {
-        // Don't pin a fully-fallback snapshot for 15s: retry on the next request
-        if (stocks.some((s) => s.source !== "fallback-snapshot")) marketCache = { at: Date.now(), stocks };
+        // Don't pin any fallback snapshot in memory: retry on the next request
+        if (stocks.every((s) => s.source !== "fallback-snapshot")) marketCache = { at: Date.now(), stocks };
         return stocks;
       })
       .finally(() => {
@@ -205,18 +205,24 @@ async function getMarket(): Promise<LiveTokenizedStock[]> {
   return marketInflight;
 }
 
-// Chainlink ETH / USD on Base, for paying with ETH (cached 30s)
+// Chainlink ETH / USD on Base, for paying with ETH (cached 30s, max fallback age 5m)
 const ETH_USD_FEED = "0x71041dddad3595F9CEd3DcCFBe3D1F4b0a16Bb70" as const;
 let ethUsdCache: { at: number; v: number | null } | null = null;
 async function getEthUsd(): Promise<number | null> {
   if (ethUsdCache && Date.now() - ethUsdCache.at < 30_000) return ethUsdCache.v;
   try {
-    const [, answer] = await publicClient.readContract({ address: ETH_USD_FEED, abi: B20_AND_CHAINLINK_ABI, functionName: "latestRoundData" });
-    const v = Number(answer) > 0 ? Number(answer) / 1e8 : null;
-    ethUsdCache = { at: Date.now(), v };
+    const [roundId, answer, , updatedAt, answeredInRound] = await publicClient.readContract({
+      address: ETH_USD_FEED,
+      abi: B20_AND_CHAINLINK_ABI,
+      functionName: "latestRoundData",
+    });
+    const nowSec = Math.floor(Date.now() / 1000);
+    const valid = Number(answer) > 0 && Number(updatedAt) > 0 && answeredInRound >= roundId && nowSec - Number(updatedAt) <= 3600;
+    const v = valid ? Number(answer) / 1e8 : null;
+    if (v !== null) ethUsdCache = { at: Date.now(), v };
     return v;
   } catch {
-    return ethUsdCache?.v ?? null;
+    return ethUsdCache && Date.now() - ethUsdCache.at < 300_000 ? ethUsdCache.v : null;
   }
 }
 
@@ -229,153 +235,127 @@ async function buildMarket(): Promise<LiveTokenizedStock[]> {
     fetchCoinbaseTokenizedStocksViaDoH(),
   ]);
 
-  // 2. Read live Chainlink Total-Return Feeds + B20 Precompile Total Supply & UI Multiplier on Base Mainnet
-  const liveStocks: LiveTokenizedStock[] = await Promise.all(
-    BASE_TOKENIZED_STOCKS.map(async (meta) => {
-      const fb = FALLBACK_PRICES[meta.symbol] || {
-        price: 200,
-        supply: 1000,
-        mult: 1.0,
-        change24h: 1.5,
-        dexSpreadPct: -0.1,
+  // 2. Read live Chainlink Total-Return Feeds + B20 Precompile Total Supply & UI Multiplier in ONE multicall
+  const marketContracts = BASE_TOKENIZED_STOCKS.flatMap((meta) => [
+    { address: meta.chainlinkFeed, abi: B20_AND_CHAINLINK_ABI, functionName: "latestRoundData" as const },
+    { address: meta.b20Address, abi: B20_AND_CHAINLINK_ABI, functionName: "totalSupply" as const },
+    { address: meta.b20Address, abi: B20_AND_CHAINLINK_ABI, functionName: "uiMultiplier" as const },
+    { address: meta.b20Address, abi: B20_AND_CHAINLINK_ABI, functionName: "policyId" as const },
+  ]);
+  const marketMulticall = await publicClient.multicall({ allowFailure: true, contracts: marketContracts }).catch(() => null);
+
+  const liveStocks: LiveTokenizedStock[] = BASE_TOKENIZED_STOCKS.map((meta, idx) => {
+    const fb = FALLBACK_PRICES[meta.symbol] || {
+      price: 200,
+      supply: 1000,
+      mult: 1.0,
+      change24h: 1.5,
+      dexSpreadPct: -0.1,
+    };
+    const liveDexPool = dexPoolsByAddr[meta.b20Address.toLowerCase()];
+    const safeDexUrl = liveDexPool?.url && /^https:\/\//i.test(liveDexPool.url) ? liveDexPool.url : undefined;
+    const base = idx * 4;
+    const roundRes = marketMulticall?.[base];
+    const supplyRes = marketMulticall?.[base + 1];
+    const multRes = marketMulticall?.[base + 2];
+    const policyRes = marketMulticall?.[base + 3];
+
+    if (roundRes?.status === "success" && supplyRes?.status === "success") {
+      const [roundId, answer, , updatedAt, answeredInRound] = roundRes.result as readonly [bigint, bigint, bigint, bigint, bigint];
+      const rawSupplyHex = supplyRes.result as bigint;
+      const rawMultiplier = multRes?.status === "success" ? (multRes.result as bigint) : 0n;
+      const rawPolicy = policyRes?.status === "success" ? Number(policyRes.result as bigint) : null;
+
+      const isRoundValid = Number(answer) > 0 && Number(updatedAt) > 0 && answeredInRound >= roundId;
+      const navPrice = isRoundValid ? Number(answer) / 1e8 : fb.price;
+      const updatedAtNum = isRoundValid ? Number(updatedAt) : 0;
+      const oracleAgeMinutes = isRoundValid ? Math.max(0, Math.round((nowSec - updatedAtNum) / 60)) : -1;
+      const isOracleStale = !isRoundValid || nowSec - updatedAtNum > 26 * 3600;
+      const totalSupplyTokens = Number(rawSupplyHex) / Math.pow(10, meta.decimals);
+      const uiMultiplier =
+        coinbaseApiMap[meta.symbol]?.multiplier ??
+        (Number(rawMultiplier) > 0 ? Number(rawMultiplier) / 1e18 : meta.defaultMultiplier);
+      const totalSupplySharesUI = totalSupplyTokens * uiMultiplier;
+      // Chainlink total-return NAV is the per-token value (already multiplier-adjusted)
+      const onchainMarketCapUsd = totalSupplyTokens * navPrice;
+
+      // Compute REAL 24/7 DEX price vs 24/5 Chainlink NAV gap from Aerodrome on Base
+      const rawLiveDex = liveDexPool?.priceUsd ? Number(liveDexPool.priceUsd) : 0;
+      const hasLiveDex = Number.isFinite(rawLiveDex) && rawLiveDex > 0;
+      const dexPrice24_7 = hasLiveDex ? Number(rawLiveDex.toFixed(2)) : Number(navPrice.toFixed(2));
+      const weekendGapPct = hasLiveDex && navPrice > 0 ? Number((((rawLiveDex - navPrice) / navPrice) * 100).toFixed(2)) : 0;
+      const weekendSignal: "BUY_DEX_DISCOUNT" | "SHORT_DEX_PREMIUM" | "FAIR_PARITY" =
+        weekendGapPct <= -0.15 ? "BUY_DEX_DISCOUNT" : weekendGapPct >= 0.15 ? "SHORT_DEX_PREMIUM" : "FAIR_PARITY";
+      const change24hPct = liveDexPool?.priceChange?.h24 !== undefined ? Number(liveDexPool.priceChange.h24) : 0;
+      const dexTxns24h = (liveDexPool?.txns?.h24?.buys ?? 0) + (liveDexPool?.txns?.h24?.sells ?? 0);
+
+      return {
+        ...meta,
+        navPrice,
+        dexPrice24_7,
+        weekendGapPct,
+        weekendSignal,
+        dexPairAddress: liveDexPool?.pairAddress,
+        dexId: liveDexPool?.dexId === "aero" ? "Aerodrome Finance" : liveDexPool?.dexId,
+        dexLiquidityUsd: liveDexPool?.liquidity?.usd,
+        dexVolume24hUsd: liveDexPool?.volume?.h24,
+        dexTxns24h: dexTxns24h > 0 ? dexTxns24h : undefined,
+        dexUrl: safeDexUrl,
+        dexPriceSource: hasLiveDex ? "aerodrome-base-live" : "onchain-nav-model",
+        navPriceUpdatedAt: isRoundValid ? new Date(updatedAtNum * 1000).toISOString() : new Date(0).toISOString(),
+        navPriceTimestamp: updatedAtNum,
+        oracleAgeMinutes,
+        isOracleStale,
+        totalSupplyTokens,
+        totalSupplySharesUI,
+        uiMultiplier,
+        b20PolicyId: rawPolicy,
+        onchainMarketCapUsd,
+        change24hPct,
+        source: !isRoundValid
+          ? "fallback-snapshot"
+          : hasLiveDex
+          ? "base-mainnet+aerodrome-dex"
+          : Object.keys(coinbaseApiMap).length > 0
+          ? "coinbase-api+onchain"
+          : "base-mainnet-onchain",
       };
-      const liveDexPool = dexPoolsByAddr[meta.b20Address.toLowerCase()];
+    }
 
-      try {
-        const [roundData, rawSupplyHex, rawMultiplier, rawPolicy] = await Promise.all([
-          publicClient.readContract({
-            address: meta.chainlinkFeed,
-            abi: B20_AND_CHAINLINK_ABI,
-            functionName: "latestRoundData",
-          }),
-          publicClient.readContract({
-            address: meta.b20Address,
-            abi: B20_AND_CHAINLINK_ABI,
-            functionName: "totalSupply",
-          }),
-          publicClient
-            .readContract({
-              address: meta.b20Address,
-              abi: B20_AND_CHAINLINK_ABI,
-              functionName: "uiMultiplier",
-            })
-            .catch(() => 1000000000000000000n),
-          // B20 transfer policy set by the issuer (0 = none); null when it can't be read
-          publicClient
-            .readContract({ address: meta.b20Address, abi: B20_AND_CHAINLINK_ABI, functionName: "policyId" })
-            .then((v) => Number(v))
-            .catch(() => null),
-        ]);
+    const totalSupplyTokens = fb.supply;
+    const uiMultiplier = fb.mult;
+    const totalSupplySharesUI = totalSupplyTokens * uiMultiplier;
+    const hasLiveDex = Boolean(liveDexPool?.priceUsd && Number(liveDexPool.priceUsd) > 0);
+    const dexPrice24_7 = hasLiveDex ? Number(Number(liveDexPool!.priceUsd).toFixed(2)) : fb.price;
+    const weekendGapPct = Number((((dexPrice24_7 - fb.price) / fb.price) * 100).toFixed(2));
+    const weekendSignal: "BUY_DEX_DISCOUNT" | "SHORT_DEX_PREMIUM" | "FAIR_PARITY" =
+      weekendGapPct <= -0.15 ? "BUY_DEX_DISCOUNT" : weekendGapPct >= 0.15 ? "SHORT_DEX_PREMIUM" : "FAIR_PARITY";
 
-        const [roundId, answer, , updatedAt, answeredInRound] = roundData;
-        const isRoundValid = Number(answer) > 0 && Number(updatedAt) > 0 && answeredInRound >= roundId;
-        const navPrice = isRoundValid ? Number(answer) / 1e8 : fb.price;
-        const updatedAtNum = Number(updatedAt);
-        const oracleAgeMinutes = Math.max(0, Math.round((nowSec - updatedAtNum) / 60));
-        const isOracleStale = !isRoundValid || nowSec - updatedAtNum > 26 * 3600;
-        const totalSupplyTokens = Number(rawSupplyHex) / Math.pow(10, meta.decimals);
-        const uiMultiplier =
-          coinbaseApiMap[meta.symbol]?.multiplier ??
-          (Number(rawMultiplier) > 0 ? Number(rawMultiplier) / 1e18 : meta.defaultMultiplier);
-        const totalSupplySharesUI = totalSupplyTokens * uiMultiplier;
-        // Chainlink total-return NAV is the per-token value (already multiplier-adjusted)
-        const onchainMarketCapUsd = totalSupplyTokens * navPrice;
-
-        // Compute REAL 24/7 DEX price vs 24/5 Chainlink NAV gap from Aerodrome on Base
-        const rawLiveDex = liveDexPool?.priceUsd ? Number(liveDexPool.priceUsd) : 0;
-        const hasLiveDex = Number.isFinite(rawLiveDex) && rawLiveDex > 0;
-        // No live DEX quote => no gap claimed (never synthesize a spread)
-        const dexPrice24_7 = hasLiveDex
-          ? Number(rawLiveDex.toFixed(2))
-          : Number(navPrice.toFixed(2));
-
-        const weekendGapPct = hasLiveDex
-          ? Number((((rawLiveDex - navPrice) / navPrice) * 100).toFixed(2))
-          : 0;
-        const weekendSignal: "BUY_DEX_DISCOUNT" | "SHORT_DEX_PREMIUM" | "FAIR_PARITY" =
-          weekendGapPct <= -0.15
-            ? "BUY_DEX_DISCOUNT"
-            : weekendGapPct >= 0.15
-            ? "SHORT_DEX_PREMIUM"
-            : "FAIR_PARITY";
-
-        const change24hPct =
-          liveDexPool?.priceChange?.h24 !== undefined ? Number(liveDexPool.priceChange.h24) : 0;
-        const dexTxns24h =
-          (liveDexPool?.txns?.h24?.buys ?? 0) + (liveDexPool?.txns?.h24?.sells ?? 0);
-
-        return {
-          ...meta,
-          navPrice,
-          dexPrice24_7,
-          weekendGapPct,
-          weekendSignal,
-          dexPairAddress: liveDexPool?.pairAddress,
-          dexId: liveDexPool?.dexId === "aero" ? "Aerodrome Finance" : liveDexPool?.dexId,
-          dexLiquidityUsd: liveDexPool?.liquidity?.usd,
-          dexVolume24hUsd: liveDexPool?.volume?.h24,
-          dexTxns24h: dexTxns24h > 0 ? dexTxns24h : undefined,
-          dexUrl: liveDexPool?.url,
-          dexPriceSource: hasLiveDex ? "aerodrome-base-live" : "onchain-nav-model",
-          navPriceUpdatedAt: new Date(updatedAtNum * 1000).toISOString(),
-          navPriceTimestamp: updatedAtNum,
-          oracleAgeMinutes,
-          isOracleStale,
-          totalSupplyTokens,
-          totalSupplySharesUI,
-          uiMultiplier,
-          b20PolicyId: rawPolicy,
-          onchainMarketCapUsd,
-          change24hPct,
-          source: hasLiveDex
-            ? "base-mainnet+aerodrome-dex"
-            : Object.keys(coinbaseApiMap).length > 0
-            ? "coinbase-api+onchain"
-            : "base-mainnet-onchain",
-        };
-      } catch {
-        const totalSupplyTokens = fb.supply;
-        const uiMultiplier = fb.mult;
-        const totalSupplySharesUI = totalSupplyTokens * uiMultiplier;
-        const hasLiveDex = Boolean(liveDexPool?.priceUsd && Number(liveDexPool.priceUsd) > 0);
-        const dexPrice24_7 = hasLiveDex
-          ? Number(Number(liveDexPool!.priceUsd).toFixed(2))
-          : fb.price;
-        const weekendGapPct = Number((((dexPrice24_7 - fb.price) / fb.price) * 100).toFixed(2));
-        const weekendSignal: "BUY_DEX_DISCOUNT" | "SHORT_DEX_PREMIUM" | "FAIR_PARITY" =
-          weekendGapPct <= -0.15
-            ? "BUY_DEX_DISCOUNT"
-            : weekendGapPct >= 0.15
-            ? "SHORT_DEX_PREMIUM"
-            : "FAIR_PARITY";
-
-        return {
-          ...meta,
-          navPrice: fb.price,
-          dexPrice24_7,
-          weekendGapPct,
-          weekendSignal,
-          dexPairAddress: liveDexPool?.pairAddress,
-          dexId: liveDexPool?.dexId === "aero" ? "Aerodrome Finance" : liveDexPool?.dexId,
-          dexLiquidityUsd: liveDexPool?.liquidity?.usd,
-          dexVolume24hUsd: liveDexPool?.volume?.h24,
-          dexUrl: liveDexPool?.url,
-          dexPriceSource: hasLiveDex ? "aerodrome-base-live" : "onchain-nav-model",
-          // RPC unreachable: static snapshot, explicitly flagged as stale fallback (not live)
-          navPriceUpdatedAt: new Date(0).toISOString(),
-          navPriceTimestamp: 0,
-          oracleAgeMinutes: -1,
-          isOracleStale: true,
-          totalSupplyTokens,
-          totalSupplySharesUI,
-          uiMultiplier,
-          onchainMarketCapUsd: totalSupplyTokens * fb.price,
-          change24hPct: liveDexPool?.priceChange?.h24 ?? 0,
-          source: "fallback-snapshot",
-        };
-      }
-    })
-  );
+    return {
+      ...meta,
+      navPrice: fb.price,
+      dexPrice24_7,
+      weekendGapPct,
+      weekendSignal,
+      dexPairAddress: liveDexPool?.pairAddress,
+      dexId: liveDexPool?.dexId === "aero" ? "Aerodrome Finance" : liveDexPool?.dexId,
+      dexLiquidityUsd: liveDexPool?.liquidity?.usd,
+      dexVolume24hUsd: liveDexPool?.volume?.h24,
+      dexUrl: safeDexUrl,
+      dexPriceSource: hasLiveDex ? "aerodrome-base-live" : "onchain-nav-model",
+      // RPC unreachable: static snapshot, explicitly flagged as stale fallback (not live)
+      navPriceUpdatedAt: new Date(0).toISOString(),
+      navPriceTimestamp: 0,
+      oracleAgeMinutes: -1,
+      isOracleStale: true,
+      totalSupplyTokens,
+      totalSupplySharesUI,
+      uiMultiplier,
+      onchainMarketCapUsd: totalSupplyTokens * fb.price,
+      change24hPct: liveDexPool?.priceChange?.h24 ?? 0,
+      source: "fallback-snapshot",
+    };
+  });
   return liveStocks;
 }
 
@@ -394,7 +374,9 @@ export async function GET(request: NextRequest) {
   let walletEth: number | undefined;
   let walletError: string | undefined;
 
-  if (walletParam && /^0x[a-fA-F0-9]{40}$/.test(walletParam)) {
+  if (walletParam && !/^0x[a-fA-F0-9]{40}$/.test(walletParam)) {
+    walletError = "Invalid wallet address.";
+  } else if (walletParam && /^0x[a-fA-F0-9]{40}$/.test(walletParam)) {
     const walletAddr = walletParam as `0x${string}`;
     try {
       // Every balance in ONE multicall (was ~30 separate RPC calls)
@@ -473,10 +455,10 @@ export async function GET(request: NextRequest) {
     ethUsd,
     walletError,
   }, {
-    // Market only (no wallet): the CDN answers for 15 s and keeps the last answer up to a minute while refreshing,
-    // so the Market tab's one-minute refresh costs almost no function runs. Anything with a wallet is never cached.
-    headers: walletParam
-      ? { "Cache-Control": "private, no-store" }
-      : { "Cache-Control": "public, s-maxage=15, stale-while-revalidate=60" },
+    // Market only (no wallet, no fallback): CDN answers for 15 s; fallback or wallet responses are never cached.
+    headers:
+      walletParam || liveStocks.some((s) => s.source === "fallback-snapshot")
+        ? { "Cache-Control": "private, no-store" }
+        : { "Cache-Control": "public, s-maxage=15, stale-while-revalidate=60" },
   });
 }
