@@ -180,6 +180,20 @@ async function basePublicRpc(method: string, params: unknown[]): Promise<unknown
   throw lastErr ?? new Error("Base RPC unavailable");
 }
 
+async function readAllowancePublic(token: string, owner: string, spender: string): Promise<bigint | null> {
+  try {
+    const data = encodeFunctionData({
+      abi: ERC20_ABI,
+      functionName: "allowance",
+      args: [owner as `0x${string}`, spender as `0x${string}`],
+    });
+    const raw = (await basePublicRpc("eth_call", [{ to: token, data }, "latest"])) as `0x${string}`;
+    return decodeFunctionResult({ abi: ERC20_ABI, functionName: "allowance", data: raw }) as bigint;
+  } catch {
+    return null;
+  }
+}
+
 async function readErc20Public(token: string, owner: string): Promise<bigint | null> {
   try {
     const data = encodeFunctionData({ abi: ERC20_ABI, functionName: "balanceOf", args: [owner as `0x${string}`] });
@@ -611,11 +625,35 @@ function preferSequentialWallet(eth: EthProvider): boolean {
   for (let i = 0; i < approveCalls.length; i++) {
     const c = approveCalls[i];
     onStatus(`Approve (${i + 1}/${calls.length})…`);
-    const rawHash = await eth.request({ method: "eth_sendTransaction", params: [{ from: sender, to: c.to, data: c.data, value: c.value }] });
-    const hash = extractBatchId(rawHash) || String(rawHash || "");
-    txHashes.push(hash);
-    onStatus(`Confirming approval onchain (${i + 1}/${calls.length})…`);
-    await waitForReceipt(eth, hash);
+    // Extract (spender, amount) from approve(address,uint256) calldata so we can detect onchain confirmation
+    // even if a mobile wallet WebView drops the eth_sendTransaction Promise callback after the user confirms.
+    const cleanHex = c.data.replace(/^0x/i, "");
+    const spender = cleanHex.length >= 136 ? `0x${cleanHex.slice(32, 72)}` : "";
+    const targetAmt = cleanHex.length >= 136 ? BigInt(`0x${cleanHex.slice(72, 136)}`) : 0n;
+    let settled = false;
+    const sendPromise = eth
+      .request({ method: "eth_sendTransaction", params: [{ from: sender, to: c.to, data: c.data, value: c.value }] })
+      .then((raw) => ({ kind: "hash" as const, hash: extractBatchId(raw) || String(raw || "") }));
+    const watchAllowance = (async () => {
+      await sleep(4000);
+      while (!settled && spender && targetAmt > 0n) {
+        const current = await readAllowancePublic(c.to, sender, spender);
+        if (current !== null && current >= targetAmt) return { kind: "onchain" as const };
+        await sleep(2000);
+      }
+      return new Promise<never>(() => {});
+    })();
+    try {
+      const outcome = await Promise.race([sendPromise, watchAllowance]);
+      settled = true;
+      if (outcome.kind === "hash") {
+        txHashes.push(outcome.hash);
+        onStatus(`Confirming approval onchain (${i + 1}/${calls.length})…`);
+        await waitForReceipt(eth, outcome.hash);
+      }
+    } finally {
+      settled = true;
+    }
   }
   if (approveCalls.length > 0) {
     // Brief pause after approval mines so mobile wallet DApp browsers finish closing the sheet & sync allowance
@@ -644,15 +682,46 @@ function preferSequentialWallet(eth: EthProvider): boolean {
     }
     onStatus(`${labels[j]} (${approveCalls.length + j + 1}/${calls.length})…`);
     let hash: string | undefined;
+    let swapSettled = false;
+    const targetReceive = uniqueReceive[j] || uniqueReceive[0];
+    const senderTopic = "0x" + sender.toLowerCase().replace(/^0x/, "").padStart(64, "0");
+    const sendSwapPromise = eth
+      .request({ method: "eth_sendTransaction", params: [{ from: sender, to: c.to, data: c.data, value: c.value }] })
+      .then((raw) => ({ kind: "hash" as const, hash: extractBatchId(raw) || String(raw || "") }));
+    const watchSwapOnchain = (async () => {
+      await sleep(5000);
+      while (!swapSettled && startBlock !== null && targetReceive) {
+        try {
+          const logs = (await basePublicRpc("eth_getLogs", [
+            {
+              address: targetReceive,
+              fromBlock: toHex(startBlock),
+              toBlock: "latest",
+              topics: [TRANSFER_TOPIC, null, senderTopic],
+            },
+          ])) as { transactionHash?: string }[] | null;
+          const hit = (logs || []).find(
+            (l) => /^0x[0-9a-fA-F]{64}$/.test(l?.transactionHash || "") && !txHashes.includes(l.transactionHash!)
+          );
+          if (hit?.transactionHash) return { kind: "onchain" as const, hash: hit.transactionHash };
+        } catch {}
+        await sleep(2500);
+      }
+      return new Promise<never>(() => {});
+    })();
     try {
-      const rawHash = await eth.request({ method: "eth_sendTransaction", params: [{ from: sender, to: c.to, data: c.data, value: c.value }] });
-      hash = extractBatchId(rawHash) || String(rawHash || "");
+      const outcome = await Promise.race([sendSwapPromise, watchSwapOnchain]);
+      swapSettled = true;
+      hash = outcome.hash;
       txHashes.push(hash);
-      onStatus(`Waiting for ${labels[j]} confirmation…`);
-      await waitForReceipt(eth, hash);
+      if (outcome.kind === "hash") {
+        onStatus(`Waiting for ${labels[j]} confirmation…`);
+        await waitForReceipt(eth, hash);
+      }
       spentSoFar.set(token.toLowerCase(), (spentSoFar.get(token.toLowerCase()) ?? 0n) + amount);
       swapped++;
     } catch (err) {
+      swapSettled = true;
       if (isUserRejection(err)) {
         // The user stopped: report this leg and the remaining ones as cancelled
         for (let k = j; k < swapCalls.length; k++) failed.push({ label: labels[k], error: "Cancelled in wallet" });
