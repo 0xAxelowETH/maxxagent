@@ -280,6 +280,12 @@ function PortfolioDonutChart({
   );
 }
 
+const errMsg = (err: unknown, fallback: string) => {
+  if (err instanceof Error && err.message) return err.message;
+  const m = (err as { message?: unknown; shortMessage?: unknown })?.shortMessage ?? (err as { message?: unknown })?.message;
+  return typeof m === "string" && m.trim() ? m : fallback;
+};
+
 // Oracle age for compact cells: 12m / 17h / 2d
 const fmtAge = (m: number) =>
   !Number.isFinite(m) || m < 0 ? "stale" : m < 60 ? `${Math.round(m)}m ago` : m < 48 * 60 ? `${Math.round(m / 60)}h ago` : `${Math.round(m / 1440)}d ago`;
@@ -663,7 +669,7 @@ export default function StockMaxxingDashboard() {
         setChainIdHex("0x2105");
         setReview({ order, label, legs: { buy: validLegs } });
       } catch (err: unknown) {
-        setBasketError(err instanceof Error ? err.message : "Could not prepare the order");
+        setBasketError(errMsg(err, "Could not prepare the order"));
       } finally {
         orderLockRef.current = false;
         setBasketStatus("");
@@ -704,7 +710,7 @@ export default function StockMaxxingDashboard() {
         setChainIdHex("0x2105");
         setReview({ order, label, legs: { sell: validLegs } });
       } catch (err: unknown) {
-        setBasketError(err instanceof Error ? err.message : "Could not prepare the sale");
+        setBasketError(errMsg(err, "Could not prepare the sale"));
       } finally {
         orderLockRef.current = false;
         setBasketStatus("");
@@ -762,7 +768,7 @@ export default function StockMaxxingDashboard() {
       recordResult(result, label);
     } catch (err: unknown) {
       setBasketError(
-        err instanceof Error ? err.message : order.side === "buy" ? "Purchase cancelled or failed" : "Sale cancelled or failed"
+        errMsg(err, order.side === "buy" ? "Purchase cancelled or failed" : "Sale cancelled or failed")
       );
     } finally {
       orderLockRef.current = false;
