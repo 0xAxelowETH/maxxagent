@@ -257,10 +257,16 @@ async function readErc20(eth: EthProvider, token: string, fn: "balanceOf" | "all
 }
 
 async function waitForReceipt(eth: EthProvider, hash: string, timeoutMs = 120_000) {
+  if (!/^0x[0-9a-fA-F]{64}$/.test(hash)) throw new Error(`Invalid transaction hash from wallet: ${hash}`);
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
     try {
-      const receipt = (await rpcRead(eth, "eth_getTransactionReceipt", [hash])) as { status?: string } | null;
+      // Query wallet provider and public Base RPC in parallel so a hanging mobile provider never adds 4s per poll
+      const [walletRec, publicRec] = await Promise.all([
+        withTimeout(eth.request({ method: "eth_getTransactionReceipt", params: [hash] }), 2500).catch(() => null),
+        basePublicRpc("eth_getTransactionReceipt", [hash]).catch(() => null),
+      ]);
+      const receipt = (publicRec || walletRec) as { status?: string } | null;
       if (receipt) {
         if (receipt.status && receipt.status !== "0x1") throw new Error(`Transaction ${hash} reverted`);
         return;
@@ -268,7 +274,7 @@ async function waitForReceipt(eth: EthProvider, hash: string, timeoutMs = 120_00
     } catch (e) {
       if (e instanceof Error && /reverted/i.test(e.message)) throw e;
     }
-    await sleep(2000);
+    await sleep(1500);
   }
   throw new Error(`Timed out waiting for ${hash}`);
 }
@@ -601,9 +607,16 @@ function preferSequentialWallet(eth: EthProvider): boolean {
   for (let i = 0; i < approveCalls.length; i++) {
     const c = approveCalls[i];
     onStatus(`Approve (${i + 1}/${calls.length})…`);
-    const hash = (await eth.request({ method: "eth_sendTransaction", params: [{ from: sender, to: c.to, data: c.data, value: c.value }] })) as string;
+    const rawHash = await eth.request({ method: "eth_sendTransaction", params: [{ from: sender, to: c.to, data: c.data, value: c.value }] });
+    const hash = extractBatchId(rawHash) || String(rawHash || "");
     txHashes.push(hash);
+    onStatus(`Confirming approval onchain (${i + 1}/${calls.length})…`);
     await waitForReceipt(eth, hash);
+  }
+  if (approveCalls.length > 0) {
+    // Brief pause after approval mines so mobile wallet DApp browsers finish closing the sheet & sync allowance
+    onStatus("Approval confirmed — opening swap in wallet…");
+    await sleep(900);
   }
   // Swaps are independent: one failing must not hide the others that succeeded
   const failed: FailedLeg[] = [];
