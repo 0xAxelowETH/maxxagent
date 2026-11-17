@@ -462,15 +462,21 @@ async function sendCalls(
   // the UserOp callData. Base's documented fix: the optional `dataSuffix` capability, appended by the wallet.
   const base = { version: "2.0.0", chainId: BASE_CHAIN_HEX, from: sender, atomicRequired: false, calls };
 /**
- * Mobile wallets like Bitget Wallet (BitKeep) can return a stub batchId from `wallet_sendCalls` without
- * opening the native signing sheet, leaving the UI stuck on "Waiting for confirmation onchain…".
+ * Mobile/multi-chain wallets like Bitget Wallet (BitKeep) and OKX Wallet can either return a stub batchId
+ * or reject `wallet_sendCalls` with 4001 ("Transaksi dibatalkan") instead of -32601.
  * Skip EIP-5792 batching on those providers and go straight to `eth_sendTransaction` (which prompts immediately).
  */
 function preferSequentialWallet(eth: EthProvider): boolean {
-  const p = eth as { isBitKeep?: boolean; isBitgetWallet?: boolean; providerInfo?: { name?: string; rdns?: string } };
-  if (p?.isBitKeep || p?.isBitgetWallet) return true;
-  if (/bitkeep|bitget/i.test(`${p?.providerInfo?.name || ""} ${p?.providerInfo?.rdns || ""}`)) return true;
-  if (typeof navigator !== "undefined" && /bitkeep|bitget/i.test(navigator.userAgent || "")) return true;
+  const p = eth as {
+    isBitKeep?: boolean;
+    isBitgetWallet?: boolean;
+    isOkxWallet?: boolean;
+    isOKExWallet?: boolean;
+    providerInfo?: { name?: string; rdns?: string };
+  };
+  if (p?.isBitKeep || p?.isBitgetWallet || p?.isOkxWallet || p?.isOKExWallet) return true;
+  if (/bitkeep|bitget|okx|okex|okapp/i.test(`${p?.providerInfo?.name || ""} ${p?.providerInfo?.rdns || ""}`)) return true;
+  if (typeof navigator !== "undefined" && /bitkeep|bitget|okx|okex|okapp/i.test(navigator.userAgent || "")) return true;
   return false;
 }
 
