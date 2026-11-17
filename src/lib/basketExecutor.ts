@@ -159,21 +159,35 @@ const PUBLIC_BASE_RPCS = ["https://base-rpc.publicnode.com", "https://mainnet.ba
 async function basePublicRpc(method: string, params: unknown[]): Promise<unknown> {
   let lastErr: unknown;
   for (const url of PUBLIC_BASE_RPCS) {
+    const ctrl = typeof AbortController !== "undefined" ? new AbortController() : null;
+    const timer = ctrl ? setTimeout(() => ctrl.abort(), 6000) : null;
     try {
       const res = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
-        signal: AbortSignal.timeout(6000),
+        ...(ctrl ? { signal: ctrl.signal } : {}),
       });
       const json = (await res.json()) as { result?: unknown; error?: { message?: string } };
       if (json.error) throw new Error(json.error.message || "RPC error");
       return json.result;
     } catch (e) {
       lastErr = e;
+    } finally {
+      if (timer) clearTimeout(timer);
     }
   }
   throw lastErr ?? new Error("Base RPC unavailable");
+}
+
+async function readErc20Public(token: string, owner: string): Promise<bigint | null> {
+  try {
+    const data = encodeFunctionData({ abi: ERC20_ABI, functionName: "balanceOf", args: [owner as `0x${string}`] });
+    const raw = (await basePublicRpc("eth_call", [{ to: token, data }, "latest"])) as `0x${string}`;
+    return decodeFunctionResult({ abi: ERC20_ABI, functionName: "balanceOf", data: raw }) as bigint;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -200,7 +214,7 @@ function extractBatchId(sendRes: unknown): string | undefined {
   return undefined;
 }
 
-type CallsStatusReceipt = { transactionHash?: string; hash?: string; status?: string | number };
+type CallsStatusReceipt = { transactionHash?: string; hash?: string; txHash?: string; status?: string | number };
 type CallsStatusResponse = { status?: number | string; receipts?: CallsStatusReceipt[] };
 
 function parseCallsStatus(status: CallsStatusResponse | undefined) {
@@ -210,7 +224,7 @@ function parseCallsStatus(status: CallsStatusResponse | undefined) {
   const txHashes = [
     ...new Set(
       receipts
-        .map((r) => r?.transactionHash || r?.hash || "")
+        .map((r) => r?.transactionHash || r?.hash || r?.txHash || "")
         .filter((h): h is string => /^0x[0-9a-fA-F]{64}$/.test(h))
     ),
   ];
@@ -412,9 +426,11 @@ async function sendCalls(
   // Nonce = number of txs this address has sent: covers ETH-paid orders (no token balance to compare)
   const nonceOf = () =>
     (rpcRead(eth, "eth_getTransactionCount", [sender, "latest"]) as Promise<string>).then((n) => BigInt(n)).catch(() => null);
-  const [nonceBefore, startBlockHex] = await Promise.all([
+  const uniqueReceive = [...new Set(receiveTokens.map((t) => t.toLowerCase()))];
+  const [nonceBefore, startBlockHex, receiveBefore] = await Promise.all([
     nonceOf(),
-    (rpcRead(eth, "eth_blockNumber", []).catch(() => null)) as Promise<string | null>,
+    (basePublicRpc("eth_blockNumber", []).catch(() => null)) as Promise<string | null>,
+    Promise.all(uniqueReceive.map((t) => readErc20Public(t, sender))),
   ]);
   const startBlock = startBlockHex ? BigInt(startBlockHex) : null;
   onStatus(`Confirm ${calls.length} action${calls.length > 1 ? "s" : ""} in one wallet prompt…`);
@@ -456,9 +472,9 @@ async function sendCalls(
     onStatus("Waiting for confirmation onchain…");
     const start = Date.now();
     const senderTopic = "0x" + sender.toLowerCase().replace(/^0x/, "").padStart(64, "0");
-    const uniqueReceive = [...new Set(receiveTokens.map((t) => t.toLowerCase()))];
     let misses = 0;
     let firstTransferSeenAt = 0;
+    let firstDoneWithoutHashesAt = 0;
     while (Date.now() - start < 180_000) {
       let status: CallsStatusResponse | undefined;
       try {
@@ -476,44 +492,76 @@ async function sendCalls(
         return { mode: "batch", txHashes: parsed.txHashes, failed: [] };
       }
 
-      // Fallback 1: Some EIP-7702 / EOA wallets return the 32-byte L2 transaction hash directly as batchId
+      // Fallback 1: Some EIP-7702 / EOA / mobile wallets return the 32-byte L2 transaction hash directly as batchId
       if (/^0x[0-9a-fA-F]{64}$/.test(batchId)) {
-        const directReceipt = (await rpcRead(eth, "eth_getTransactionReceipt", [batchId]).catch(() => null)) as { status?: string } | null;
+        const directReceipt = (await basePublicRpc("eth_getTransactionReceipt", [batchId]).catch(() => null)) as { status?: string } | null;
         if (directReceipt) {
           if (directReceipt.status === "0x0") throw new Error("Batch failed onchain. Nothing was swapped in the failed calls.");
           if (directReceipt.status === "0x1") return { mode: "batch", txHashes: [batchId], failed: [] };
         }
       }
 
-      // Fallback 2: Direct Base Mainnet Transfer(to = sender) log check so a hanging/lagging wallet bridge never freezes UI
-      if (startBlock !== null && uniqueReceive.length > 0 && (Date.now() - start >= 3000 || misses > 0 || parsed.isDone)) {
+      // Fallback 2: Direct Base Mainnet Transfer(to = sender) log + balanceOf check
+      let foundHashes: string[] = [];
+      if (uniqueReceive.length > 0 && (Date.now() - start >= 2000 || misses > 0 || parsed.isDone)) {
         try {
-          const logs = (await basePublicRpc("eth_getLogs", [
-            {
-              address: uniqueReceive,
-              fromBlock: toHex(startBlock),
-              toBlock: "latest",
-              topics: [TRANSFER_TOPIC, null, senderTopic],
-            },
-          ])) as { address?: string; transactionHash?: string }[] | null;
-          if (Array.isArray(logs) && logs.length > 0) {
-            const foundHashes = [
-              ...new Set(logs.map((l) => l?.transactionHash || "").filter((h): h is string => /^0x[0-9a-fA-F]{64}$/.test(h))),
-            ];
-            const foundTokens = new Set(logs.map((l) => (l?.address || "").toLowerCase()).filter(Boolean));
-            if (foundHashes.length > 0) {
-              if (!firstTransferSeenAt) firstTransferSeenAt = Date.now();
-              if (foundTokens.size >= uniqueReceive.length || parsed.isDone || Date.now() - firstTransferSeenAt >= 5000) {
-                return { mode: "batch", txHashes: foundHashes, failed: [] };
+          const latestHex = (await basePublicRpc("eth_blockNumber", []).catch(() => null)) as string | null;
+          const latest = latestHex ? BigInt(latestHex) : null;
+          const scanFrom =
+            startBlock !== null
+              ? latest !== null && latest - startBlock > 1500n
+                ? latest - 1500n
+                : startBlock
+              : latest !== null
+              ? latest > 300n
+                ? latest - 300n
+                : 0n
+              : null;
+          if (scanFrom !== null) {
+            const logs = (await basePublicRpc("eth_getLogs", [
+              {
+                address: uniqueReceive,
+                fromBlock: toHex(scanFrom),
+                toBlock: "latest",
+                topics: [TRANSFER_TOPIC, null, senderTopic],
+              },
+            ])) as { address?: string; transactionHash?: string }[] | null;
+            if (Array.isArray(logs) && logs.length > 0) {
+              foundHashes = [
+                ...new Set(logs.map((l) => l?.transactionHash || "").filter((h): h is string => /^0x[0-9a-fA-F]{64}$/.test(h))),
+              ];
+              const foundTokens = new Set(logs.map((l) => (l?.address || "").toLowerCase()).filter(Boolean));
+              if (foundHashes.length > 0) {
+                if (!firstTransferSeenAt) firstTransferSeenAt = Date.now();
+                if (foundTokens.size >= uniqueReceive.length || parsed.isDone || Date.now() - firstTransferSeenAt >= 4000) {
+                  return { mode: "batch", txHashes: foundHashes, failed: [] };
+                }
               }
             }
           }
         } catch {
-          // Ignore transient log query errors and continue polling
+          // Ignore transient log query errors and check balanceOf below
+        }
+
+        // Balance-delta check in case eth_getLogs is throttled on public RPC
+        const receiveNow = await Promise.all(uniqueReceive.map((t) => readErc20Public(t, sender)));
+        const receivedMore = receiveNow.some((now, i) => now !== null && receiveBefore[i] !== null && now > receiveBefore[i]!);
+        if (receivedMore) {
+          if (!firstTransferSeenAt) firstTransferSeenAt = Date.now();
+          if (foundHashes.length > 0 || parsed.isDone || Date.now() - firstTransferSeenAt >= 4000) {
+            return { mode: "batch", txHashes: foundHashes, failed: [] };
+          }
         }
       }
 
-      if (misses > 15 && (startBlock === null || Date.now() - start > 60_000)) {
+      if (parsed.isDone) {
+        if (!firstDoneWithoutHashesAt) firstDoneWithoutHashesAt = Date.now();
+        if (Date.now() - firstDoneWithoutHashesAt >= 5000) {
+          return { mode: "batch", txHashes: foundHashes, failed: [] };
+        }
+      }
+
+      if (misses > 15 && Date.now() - start > 60_000) {
         throw new Error("Batch was sent but its status is unavailable. Check your wallet activity before retrying.");
       }
       await sleep(2000);
@@ -595,7 +643,7 @@ export async function sendContractCall(params: {
     (rpcRead(eth, "eth_getTransactionCount", [sender, "latest"]) as Promise<string>).then((n) => BigInt(n)).catch(() => null);
   const [nonceBefore, startBlockHex] = await Promise.all([
     nonceOf(),
-    (rpcRead(eth, "eth_blockNumber", []).catch(() => null)) as Promise<string | null>,
+    (basePublicRpc("eth_blockNumber", []).catch(() => null)) as Promise<string | null>,
   ]);
   const startBlock = startBlockHex ? BigInt(startBlockHex) : null;
   onStatus("Confirm in your wallet…");
