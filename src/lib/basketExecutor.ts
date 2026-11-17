@@ -437,34 +437,51 @@ async function sendCalls(
   // Smart wallets (ERC-4337) wrap calls in executeBatch, so the per-call suffix is not at the end of
   // the UserOp callData. Base's documented fix: the optional `dataSuffix` capability, appended by the wallet.
   const base = { version: "2.0.0", chainId: BASE_CHAIN_HEX, from: sender, atomicRequired: false, calls };
+/**
+ * Mobile wallets like Bitget Wallet (BitKeep) can return a stub batchId from `wallet_sendCalls` without
+ * opening the native signing sheet, leaving the UI stuck on "Waiting for confirmation onchain…".
+ * Skip EIP-5792 batching on those providers and go straight to `eth_sendTransaction` (which prompts immediately).
+ */
+function preferSequentialWallet(eth: EthProvider): boolean {
+  const p = eth as { isBitKeep?: boolean; isBitgetWallet?: boolean; providerInfo?: { name?: string; rdns?: string } };
+  if (p?.isBitKeep || p?.isBitgetWallet) return true;
+  if (/bitkeep|bitget/i.test(`${p?.providerInfo?.name || ""} ${p?.providerInfo?.rdns || ""}`)) return true;
+  if (typeof navigator !== "undefined" && /bitkeep|bitget/i.test(navigator.userAgent || "")) return true;
+  return false;
+}
+
   let batchId: string | undefined;
-  try {
-    let sendRes: unknown;
+  if (preferSequentialWallet(eth)) {
+    onStatus("Confirming each step in your wallet…");
+  } else {
     try {
-      sendRes = await eth.request({
-        method: "wallet_sendCalls",
-        params: [{ ...base, capabilities: { dataSuffix: { value: builderSuffix(builderCode), optional: true } } }],
-      });
-    } catch (capErr) {
-      // Non-compliant wallets may reject the optional capability: retry once without it.
-      const e = capErr as { code?: number; message?: string };
-      if (e?.code !== 5700 && !/capabilit/i.test(e?.message || "")) throw capErr;
-      sendRes = await eth.request({ method: "wallet_sendCalls", params: [base] });
-    }
-    batchId = extractBatchId(sendRes);
-  } catch (err) {
-    if (isUserRejection(err)) throw err;
-    if (!isUnsupportedMethod(err)) {
-      // Unknown error (wallets word "no batching" in many ways). Before sending one by one, make sure the
-      // batch did not go through anyway: if any spent balance dropped, never resend (no double trade).
-      await sleep(5000);
-      const [after, nonceAfter] = await Promise.all([balancesOf(), nonceOf()]);
-      const nonceMoved = nonceBefore !== null && nonceAfter !== null && nonceAfter > nonceBefore;
-      if (nonceMoved || after.some((a, i) => a !== null && before[i] !== null && a < before[i]!)) {
-        throw new Error("Your wallet reported an error, but funds have moved. Check your wallet activity before retrying.");
+      let sendRes: unknown;
+      try {
+        sendRes = await eth.request({
+          method: "wallet_sendCalls",
+          params: [{ ...base, capabilities: { dataSuffix: { value: builderSuffix(builderCode), optional: true } } }],
+        });
+      } catch (capErr) {
+        // Non-compliant wallets may reject the optional capability: retry once without it.
+        const e = capErr as { code?: number; message?: string };
+        if (e?.code !== 5700 && !/capabilit/i.test(e?.message || "")) throw capErr;
+        sendRes = await eth.request({ method: "wallet_sendCalls", params: [base] });
       }
+      batchId = extractBatchId(sendRes);
+    } catch (err) {
+      if (isUserRejection(err)) throw err;
+      if (!isUnsupportedMethod(err)) {
+        // Unknown error (wallets word "no batching" in many ways). Before sending one by one, make sure the
+        // batch did not go through anyway: if any spent balance dropped, never resend (no double trade).
+        await sleep(5000);
+        const [after, nonceAfter] = await Promise.all([balancesOf(), nonceOf()]);
+        const nonceMoved = nonceBefore !== null && nonceAfter !== null && nonceAfter > nonceBefore;
+        if (nonceMoved || after.some((a, i) => a !== null && before[i] !== null && a < before[i]!)) {
+          throw new Error("Your wallet reported an error, but funds have moved. Check your wallet activity before retrying.");
+        }
+      }
+      onStatus("Your wallet doesn't support one-prompt batches: confirming each step…");
     }
-    onStatus("Your wallet doesn't support one-prompt batches: confirming each step…");
   }
 
   if (batchId) {
@@ -483,8 +500,16 @@ async function sendCalls(
           4500,
           "wallet_getCallsStatus timeout"
         )) as CallsStatusResponse | undefined;
-      } catch {
+      } catch (statusErr) {
         misses++;
+        if (isUnsupportedMethod(statusErr)) {
+          const nonceAfter = await nonceOf();
+          const nonceMoved = nonceBefore !== null && nonceAfter !== null && nonceAfter > nonceBefore;
+          if (!nonceMoved) {
+            onStatus("Your wallet doesn't support batch status: confirming each step…");
+            break;
+          }
+        }
       }
       const parsed = parseCallsStatus(status);
       if (parsed.isFailed) throw new Error("Batch failed onchain. Nothing was swapped in the failed calls.");
@@ -566,7 +591,9 @@ async function sendCalls(
       }
       await sleep(2000);
     }
-    throw new Error("Timed out waiting for batch confirmation. Check your wallet activity before retrying.");
+    if (Date.now() - start >= 180_000) {
+      throw new Error("Timed out waiting for batch confirmation. Check your wallet activity before retrying.");
+    }
   }
 
   // One by one. Approvals first (a failed approval stops everything: nothing has been swapped yet).
@@ -687,8 +714,16 @@ export async function sendContractCall(params: {
           4500,
           "wallet_getCallsStatus timeout"
         )) as CallsStatusResponse | undefined;
-      } catch {
+      } catch (statusErr) {
         misses++;
+        if (isUnsupportedMethod(statusErr)) {
+          const nonceAfter = await nonceOf();
+          const nonceMoved = nonceBefore !== null && nonceAfter !== null && nonceAfter > nonceBefore;
+          if (!nonceMoved) {
+            onStatus("Your wallet doesn't support batch status: confirming each step…");
+            break;
+          }
+        }
       }
       const parsed = parseCallsStatus(status);
       if (parsed.isFailed || parsed.anyRevertedReceipt) {
