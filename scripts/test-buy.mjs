@@ -32,6 +32,7 @@ const opt = (name, def) => args.find((a) => a.startsWith(`--${name}=`))?.split("
 const EXECUTE = args.includes("--execute");
 const STOCK = opt("stock", "NVDAc");
 const USD = Number(opt("usd", "1"));
+const PAY = opt("pay", "usdc").toLowerCase();
 const APP = opt("url", "http://localhost:3000").replace(/\/$/, "");
 const BUILDER_CODE = process.env.NEXT_PUBLIC_BASE_BUILDER_CODE || "bc_ewm6gcvz";
 const USDC = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
@@ -70,7 +71,7 @@ const wallet = createWalletClient({ account, chain: base, transport: http(rpc, {
 const stockAddr = STOCKS[STOCK];
 const suffix = Attribution.toDataSuffix({ codes: [BUILDER_CODE] });
 
-console.log(`${EXECUTE ? "🔴 EXECUTE" : "🟢 DRY RUN"} — buy $${USD} of ${STOCK} from ${account.address}`);
+console.log(`${EXECUTE ? "🔴 EXECUTE" : "🟢 DRY RUN"} — buy $${USD} of ${STOCK} (${PAY.toUpperCase()}) from ${account.address}`);
 
 const [eth, usdc, stockBefore] = await Promise.all([
   pub.getBalance({ address: account.address }),
@@ -79,8 +80,8 @@ const [eth, usdc, stockBefore] = await Promise.all([
 ]);
 console.log(`  balances: ${Number(formatEther(eth)).toFixed(6)} ETH | ${formatUnits(usdc, 6)} USDC | ${formatUnits(stockBefore, 8)} ${STOCK}`);
 const need = BigInt(Math.floor(USD * 1e6));
-if (usdc < need) {
-  console.error(`❌ Not enough USDC: need ${USD}, have ${formatUnits(usdc, 6)}. Send USDC on Base to ${account.address}`);
+if (PAY !== "eth" && usdc < need) {
+  console.error(`❌ Not enough USDC: need ${USD}, have ${formatUnits(usdc, 6)}. Send USDC on Base to ${account.address} or pass --pay=eth`);
   process.exit(1);
 }
 if (eth === 0n) {
@@ -92,7 +93,7 @@ if (eth === 0n) {
 const res = await fetch(`${APP}/api/swap`, {
   method: "POST",
   headers: { "content-type": "application/json" },
-  body: JSON.stringify({ stockAddress: stockAddr, amountUsd: USD, sender: account.address }),
+  body: JSON.stringify({ stockAddress: stockAddr, amountUsd: USD, payWith: PAY === "eth" ? "eth" : "usdc", sender: account.address }),
 });
 const q = await res.json().catch(() => ({}));
 if (!q.ok) {
@@ -102,9 +103,18 @@ if (!q.ok) {
 console.log(`  quote: ~${q.amountOutShares} ${STOCK} (≈ $${q.amountOutUsd.toFixed(2)}) | cost ${q.costPct.toFixed(2)}% | via ${q.venues.join("+")}`);
 console.log(`  router ${q.routerAddress} | Builder Code ${q.builderCode} attached: ${q.tx.data.endsWith("80218021802180218021802180218021")}`);
 
-const allowance = await pub.readContract({ address: USDC, abi: ERC20, functionName: "allowance", args: [account.address, q.routerAddress] });
-const needsApprove = allowance < BigInt(q.amountInRaw);
-console.log(`  approval needed: ${needsApprove ? `yes (exact ${USD} USDC)` : "no"}`);
+let needsApprove = false;
+if (PAY !== "eth") {
+  const allowance = await pub.readContract({ address: USDC, abi: ERC20, functionName: "allowance", args: [account.address, q.routerAddress] });
+  needsApprove = allowance < BigInt(q.amountInRaw);
+  console.log(`  approval needed: ${needsApprove ? `yes (exact ${USD} USDC)` : "no"}`);
+} else {
+  console.log(`  approval needed: no (paying ${q.amountInEth?.toFixed(6)} ETH natively)`);
+  if (eth < BigInt(q.amountInRaw)) {
+    console.error(`❌ Not enough ETH: need ${q.amountInEth?.toFixed(6)}, have ${Number(formatEther(eth)).toFixed(6)}`);
+    process.exit(1);
+  }
+}
 
 if (!EXECUTE) {
   // Simulate the swap with a state override for the allowance so it works even before approving
