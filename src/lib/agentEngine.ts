@@ -362,15 +362,16 @@ export function runAutonomousStockAgent(params: {
     if (!rest.length) {
       // roundWeightsBps without a cap always returns weights summing to 10,000
       weights = roundWeightsBps(selected.map((x) => fixedOfStocks(x.stock.symbol)))!;
-      fixedLimits.push(
-        Math.abs(fixedSum - 100) > 0.5
-          ? {
-              label: "Your weights",
-              status: "adjusted",
-              detail: `${setText} add up to ${fixedSum.toFixed(0)}% of the invested money, so they were scaled to 100% in the same proportions${fixedSum < 100 ? " (the rest was too small to spread over more stocks)" : ""}.`,
-            }
-          : { label: "Your weights", status: overLimit ? "adjusted" : "kept", detail: `${setText}, as you set them.` }
-      );
+      // Talk in the user's own numbers (share of their money), not the internal share of the invested part
+      const userSum = fixedSyms.reduce((a, s) => a + mandate.weightsPct[s], 0);
+      if (Math.abs(userSum - 100) > 0.5)
+        fixedLimits.push({
+          label: "Your weights",
+          status: "adjusted",
+          detail: `${setText} add up to ${userSum.toFixed(0)}% of your money, so they were scaled to 100% in the same proportions${userSum < 100 ? " (the rest was too small to spread over more stocks)" : ""}.`,
+        });
+      // When the per-stock limit is what changed them, "Your weights vs your limit" below says so; no second card
+      else if (!overLimit) fixedLimits.push({ label: "Your weights", status: "kept", detail: `${setText}, as you set them.` });
     } else {
       const floor = Math.min(...rest.map((x) => x.rawScore)) - 20;
       const restShares = scoresToWeightsBps(rest.map((x) => x.rawScore - floor + 45));
