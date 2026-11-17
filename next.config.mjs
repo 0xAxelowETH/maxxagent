@@ -24,6 +24,14 @@ const nextConfig = {
   async headers() {
     return [{ source: "/:path*", headers: securityHeaders }];
   },
+  // Short links to each tab of the app (for posts and reviewers): /agent opens the Agent tab, etc.
+  async redirects() {
+    return ["market", "agent", "indexes", "news", "portfolio"].map((tab) => ({
+      source: `/${tab}`,
+      destination: tab === "market" ? "/" : `/?tab=${tab}`,
+      permanent: false,
+    }));
+  },
 };
 
 export default nextConfig;

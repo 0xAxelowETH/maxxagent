@@ -85,6 +85,9 @@ import {
 } from "@/lib/walletConnectors";
 
 type ActiveTab = "terminal" | "agent" | "indexes" | "news" | "traction" | "public";
+// Tab <-> URL (?tab=…): shareable links, and the browser's Back button goes to the previous tab
+const SLUG_BY_TAB: Partial<Record<ActiveTab, string>> = { agent: "agent", indexes: "indexes", news: "news", traction: "portfolio" };
+const TAB_BY_SLUG: Record<string, ActiveTab> = { market: "terminal", agent: "agent", indexes: "indexes", news: "news", portfolio: "traction" };
 
 interface EthereumProvider {
   request: (args: { method: string; params?: unknown[] }) => Promise<unknown>;
@@ -285,6 +288,25 @@ const PUBLIC_SITE_URL = (process.env.NEXT_PUBLIC_SITE_URL || "").replace(/\/$/, 
 
 export default function StockMaxxingDashboard() {
   const [activeTab, setActiveTab] = useState<ActiveTab>("terminal");
+  // Keep ?tab= in the address bar in step with the open tab (a new history entry per switch), and follow Back/Forward
+  const tabUrlReady = useRef(false);
+  useEffect(() => {
+    if (!tabUrlReady.current) {
+      tabUrlReady.current = true; // first render: the URL decides the tab, not the other way round
+      return;
+    }
+    const url = new URL(window.location.href);
+    const slug = SLUG_BY_TAB[activeTab] ?? "";
+    if ((url.searchParams.get("tab") ?? "") === slug) return;
+    if (slug) url.searchParams.set("tab", slug);
+    else url.searchParams.delete("tab");
+    window.history.pushState(null, "", url.pathname + url.search + url.hash);
+  }, [activeTab]);
+  useEffect(() => {
+    const onPop = () => setActiveTab(TAB_BY_SLUG[new URLSearchParams(window.location.search).get("tab") ?? ""] ?? "terminal");
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, []);
 
   // Hidden team studio (build-in-public tools): open with ?studio in the URL
   const [studioMode, setStudioMode] = useState<boolean>(false);
@@ -1258,7 +1280,8 @@ export default function StockMaxxingDashboard() {
   useEffect(() => {
     // /?stock=NVDAc (from a stock detail page): select it and jump to the Swap panel
     // /?tab=portfolio (drift alert notifications): open the portfolio, where the saved target and its plan are
-    if (new URLSearchParams(window.location.search).get("tab") === "portfolio") setActiveTab("traction");
+    const fromUrl = TAB_BY_SLUG[new URLSearchParams(window.location.search).get("tab") || ""];
+    if (fromUrl) setActiveTab(fromUrl);
     const wanted = new URLSearchParams(window.location.search).get("stock");
     const match = BASE_TOKENIZED_STOCKS.find((s) => s.symbol.toLowerCase() === (wanted || "").toLowerCase());
     if (match) {
