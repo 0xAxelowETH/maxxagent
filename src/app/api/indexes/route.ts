@@ -22,8 +22,9 @@ export async function GET() {
     const indexes = await readIndexes(ids);
     return NextResponse.json({ ok: true, deployed: true, registry: REGISTRY, total, indexes }, { headers: CACHE });
   } catch (e) {
+    console.error("indexes route error", redactSecrets(e instanceof Error ? e.message : String(e)));
     return NextResponse.json(
-      { ok: false, deployed: true, registry: REGISTRY, error: redactSecrets(e instanceof Error ? ((e as { shortMessage?: string }).shortMessage || e.message) : "Read failed") },
+      { ok: false, deployed: true, registry: REGISTRY, error: "Could not read onchain indexes. Please retry." },
       { status: 502 }
     );
   }

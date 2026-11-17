@@ -55,6 +55,7 @@ function initWalletConnect(): Promise<WalletConnectProvider> {
       .then(({ EthereumProvider }) =>
         EthereumProvider.init({
           projectId: process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID || "",
+          chains: [BASE_CHAIN_ID],
           optionalChains: [BASE_CHAIN_ID],
           showQrModal: true,
           optionalMethods: [
@@ -115,6 +116,7 @@ export async function restoreExternalWallet(kind: ExternalWalletKind): Promise<E
     walletConnectProvider = provider as unknown as Eip1193Provider;
     return walletConnectProvider;
   } catch {
+    if (kind === "coinbase") coinbaseProvider = null;
     return null;
   }
 }
@@ -129,4 +131,5 @@ export async function disconnectExternalWallets() {
   } catch {}
   walletConnectProvider = null;
   coinbaseProvider = null;
+  wcInit = null;
 }

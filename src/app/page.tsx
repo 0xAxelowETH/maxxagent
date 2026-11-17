@@ -27,6 +27,7 @@ export async function generateMetadata({ searchParams }: { searchParams: Search 
   return {
     title: `${title} — MAXXAGENT`,
     description,
+    robots: { index: false },
     openGraph: { type: "website", siteName: "MAXXAGENT", title, description, images: [{ url: image, width: 1200, height: 630, alt: `${name}: ${legs}` }] },
     twitter: { card: "summary_large_image", title, description, images: [image] },
     other: miniappEmbedTags({

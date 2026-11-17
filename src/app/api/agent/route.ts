@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse, after } from "next/server";
 import { runAutonomousStockAgent } from "@/lib/agentEngine";
-import { BASE_TOKENIZED_STOCKS, LiveTokenizedStock } from "@/lib/tokenizedStocks";
+import { BASE_TOKENIZED_STOCKS, LiveTokenizedStock, MIN_BUY_USD } from "@/lib/tokenizedStocks";
 import { GET as getStocks } from "../stocks/route";
 import { getSecFundamentals, secFundamentalsPending } from "@/lib/secFundamentals";
 import { getRiskStats, riskStatsPending } from "@/lib/riskStats";
@@ -79,7 +79,7 @@ export async function POST(request: NextRequest) {
     const riskProfile = RISK.includes(body.riskProfile as (typeof RISK)[number])
       ? (body.riskProfile as (typeof RISK)[number])
       : "Balanced";
-    const capitalUsd = inRange(Number(body.capitalUsd), 1, 100_000) ? Number(body.capitalUsd) : 20;
+    const capitalUsd = inRange(Number(body.capitalUsd), MIN_BUY_USD, 100_000) ? Number(body.capitalUsd) : 20;
 
     let stocksToAnalyze = sanitizeStocks(body.stocks);
     if (stocksToAnalyze.length < 5) {

@@ -108,7 +108,7 @@ const FAQ: { q: string; a: React.ReactNode }[] = [
       <>
         In the Agent tab, once you hold stocks, MAXXAGENT compares your portfolio with the agent&apos;s basket weights. Step 1
         sells what is overweight; step 2 buys what is underweight with the USDC that came back (you can add extra USDC).
-        Moves under 2% are skipped to save fees, and if your portfolio is too small for every stock to reach the $1
+        Moves under 2% are skipped to save fees, and if your portfolio is too small for every stock to reach the $0.50
         minimum, it tells you how much to add instead of selling. Each step goes through the normal review screen.
       </>
     ),

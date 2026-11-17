@@ -17,7 +17,8 @@ export function basketToQuery(weightsBps: Record<string, number>, amountUsd?: nu
 export function parseBasketParam(raw: string | null | undefined): Record<string, number> | null {
   if (!raw) return null;
   const pct = new Map<string, number>();
-  for (const part of raw.split(",").slice(0, 10)) {
+  for (const part of raw.split(",")) {
+    if (pct.size >= 10) break;
     const [sym, val] = part.split("-");
     const n = Number(val);
     if (SHARE_SYMBOLS.has(sym) && Number.isFinite(n) && n > 0 && n <= 100 && !pct.has(sym)) pct.set(sym, n);
@@ -25,7 +26,7 @@ export function parseBasketParam(raw: string | null | undefined): Record<string,
   if (pct.size === 0) return null;
   const total = [...pct.values()].reduce((a, b) => a + b, 0);
   const weightsBps: Record<string, number> = {};
-  for (const [sym, n] of pct) weightsBps[sym] = Math.round((n / total) * 10000);
+  for (const [sym, n] of pct) weightsBps[sym] = Math.max(1, Math.round((n / total) * 10000));
   // rounding remainder goes to the largest weight so the basket is exactly 100%
   const diff = 10000 - Object.values(weightsBps).reduce((a, b) => a + b, 0);
   const largest = Object.entries(weightsBps).sort((a, b) => b[1] - a[1])[0][0];
@@ -39,7 +40,7 @@ export function parseSharedBasket(search: string): { weightsBps: Record<string, 
   const weightsBps = parseBasketParam(q.get("basket"));
   if (!weightsBps) return null;
   const amount = Number(q.get("amount"));
-  return { weightsBps, amountUsd: Number.isFinite(amount) && amount >= MIN_BUY_USD && amount <= 10000 ? Math.round(amount * 100) / 100 : undefined };
+  return { weightsBps, amountUsd: Number.isFinite(amount) && amount >= MIN_BUY_USD && amount <= 100_000 ? Math.round(amount * 100) / 100 : undefined };
 }
 
 /** A user-given index name, safe to show: no control or direction-override characters, at most `max` chars */

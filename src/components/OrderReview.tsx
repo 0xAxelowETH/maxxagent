@@ -43,16 +43,20 @@ export function OrderReview({
 }) {
   const [now, setNow] = useState(() => Date.now());
   const confirmRef = useRef<HTMLButtonElement>(null);
+  const onCancelRef = useRef(onCancel);
+  onCancelRef.current = onCancel;
+  useEffect(() => {
+    confirmRef.current?.focus();
+  }, []);
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(t);
   }, []);
   useEffect(() => {
-    confirmRef.current?.focus();
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && !busy && onCancel();
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && !busy && onCancelRef.current();
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [busy, onCancel]);
+  }, [busy]);
 
   const isBuy = order.side === "buy";
   const secondsLeft = Math.max(0, Math.ceil((order.preparedAt + ttlMs - now) / 1000));
@@ -230,7 +234,7 @@ export function OrderReview({
           >
             {busy ? (
               <>
-                <RefreshCw className="h-4 w-4 animate-spin" /> Refreshing…
+                <RefreshCw className="h-4 w-4 animate-spin" /> {expired ? "Refreshing…" : "Confirm in wallet…"}
               </>
             ) : expired ? (
               <>

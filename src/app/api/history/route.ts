@@ -55,7 +55,10 @@ async function chainlinkHistory(feed: `0x${string}`, sinceSec: number, maxRounds
     return last?.status === "success" && Number((last.result as readonly bigint[])[3]) >= sinceSec;
   };
   if (maxRounds > FIRST && results.length === FIRST && needMore()) {
-    results.push(...(await read(idsFrom(latestId - BigInt(FIRST), maxRounds - FIRST))));
+    const restIds = idsFrom(latestId - BigInt(FIRST), maxRounds - FIRST);
+    for (let i = 0; i < restIds.length; i += 200) {
+      results.push(...(await read(restIds.slice(i, i + 200))));
+    }
   }
 
   for (const r of results) {
@@ -73,7 +76,7 @@ async function dexHistory(token: string, geckoPath: string) {
     headers: { Accept: "application/json" },
     next: { revalidate: 3600 },
   });
-  if (!poolsRes.ok) return { pool: null as string | null, points: [] as [number, number][] };
+  if (!poolsRes.ok) return { pool: null as string | null, points: [] as [number, number][], failed: true };
   const pools: { attributes: { address: string; reserve_in_usd: string } }[] = (await poolsRes.json())?.data ?? [];
   const ranked = [...pools]
     .sort((a, b) => Number(b.attributes.reserve_in_usd) - Number(a.attributes.reserve_in_usd))
@@ -88,14 +91,16 @@ async function dexHistory(token: string, geckoPath: string) {
       headers: { Accept: "application/json" },
       next: { revalidate: 300 },
     });
-    if (!ohlcRes.ok) return { pool, points: [] as [number, number][] };
+    if (!ohlcRes.ok) return { pool, points: [] as [number, number][], failed: true };
     const list: number[][] = (await ohlcRes.json())?.data?.attributes?.ohlcv_list ?? [];
     // [timestamp, open, high, low, close, volume] — newest first
     const points = list.map((c) => [c[0], c[4]] as [number, number]).filter(([, p]) => p > 0).reverse();
-    if (points.length > 0) return { pool, points };
+    if (points.length > 0) return { pool, points, failed: false };
   }
-  return { pool: ranked[0]?.attributes.address ?? null, points: [] as [number, number][] };
+  return { pool: ranked[0]?.attributes.address ?? null, points: [] as [number, number][], failed: false };
 }
+
+const inflightHistory = new Map<string, Promise<{ body: Record<string, unknown>; cacheable: boolean }>>();
 
 export async function GET(request: NextRequest) {
   const symbol = request.nextUrl.searchParams.get("symbol") || "";
@@ -116,27 +121,36 @@ export async function GET(request: NextRequest) {
   const CDN = { "Cache-Control": "public, s-maxage=120, stale-while-revalidate=900" };
   if (hit && Date.now() - hit.at < TTL_MS) return NextResponse.json(hit.body, { headers: CDN });
 
-  const since = Math.floor(Date.now() / 1000) - TF[tf].seconds;
-  const [navRes, dexRes] = await Promise.allSettled([
-    dexOnly ? Promise.resolve([] as [number, number][]) : chainlinkHistory(stock.chainlinkFeed, since, TF[tf].maxRounds),
-    navOnly ? Promise.resolve({ pool: null, points: [] as [number, number][] }) : dexHistory(stock.b20Address, TF[tf].gecko),
-  ]);
+  let job = inflightHistory.get(key);
+  if (!job) {
+    const since = Math.floor(Date.now() / 1000) - TF[tf].seconds;
+    job = (async () => {
+      const [navRes, dexRes] = await Promise.allSettled([
+        dexOnly ? Promise.resolve([] as [number, number][]) : chainlinkHistory(stock.chainlinkFeed, since, TF[tf].maxRounds),
+        navOnly ? Promise.resolve({ pool: null, points: [] as [number, number][], failed: false }) : dexHistory(stock.b20Address, TF[tf].gecko),
+      ]);
 
-  const body = {
-    ok: true,
-    symbol,
-    tf,
-    nav: navRes.status === "fulfilled" ? navRes.value : [],
-    dex: dexRes.status === "fulfilled" ? dexRes.value.points : [],
-    dexPool: dexRes.status === "fulfilled" ? dexRes.value.pool : null,
-    sources: {
-      nav: `Chainlink feed ${stock.chainlinkFeed} (onchain rounds)`,
-      dex: "GeckoTerminal OHLCV (deepest pool)",
-    },
-    fetchedAt: new Date().toISOString(),
-  };
-  const filled = body.nav.length > 0 || body.dex.length > 0;
-  if (filled) cache.set(key, { at: Date.now(), body });
-  // An empty answer (a source failed) is not kept by the CDN, so the next request tries again
-  return NextResponse.json(body, { headers: filled ? CDN : { "Cache-Control": "no-store" } });
+      const dexFailed = !navOnly && (dexRes.status === "rejected" || dexRes.value.failed);
+      const body = {
+        ok: true,
+        symbol,
+        tf,
+        nav: navRes.status === "fulfilled" ? navRes.value : [],
+        dex: dexRes.status === "fulfilled" ? dexRes.value.points : [],
+        dexPool: dexRes.status === "fulfilled" ? dexRes.value.pool : null,
+        sources: {
+          nav: `Chainlink feed ${stock.chainlinkFeed} (onchain rounds)`,
+          dex: "GeckoTerminal OHLCV (deepest pool)",
+        },
+        fetchedAt: new Date().toISOString(),
+      };
+      const filled = (body.nav.length > 0 || body.dex.length > 0) && !dexFailed;
+      if (filled) cache.set(key, { at: Date.now(), body });
+      return { body, cacheable: filled };
+    })().finally(() => inflightHistory.delete(key));
+    inflightHistory.set(key, job);
+  }
+  const { body, cacheable } = await job;
+  // An empty or rate-limited answer is not kept by the CDN, so the next request tries again
+  return NextResponse.json(body, { headers: cacheable ? CDN : { "Cache-Control": "no-store" } });
 }

@@ -73,7 +73,8 @@ async function dailyCloses(feed: `0x${string}`, sinceSec: number): Promise<[stri
 export const navDailyCloses = unstable_cache(
   async (feed: `0x${string}`): Promise<[number, number][]> => {
     const closes = await dailyCloses(feed, Math.floor(Date.now() / 1000) - 35 * 86_400);
-    // Stamp each close at the 16:00 New York close of its day (20:00 or 21:00 UTC); Chainlink stock feeds use 8 decimals
+    if (closes.length === 0) throw new Error("Empty oracle closes");
+    // Stamp each close at the New York close of its day; Chainlink stock feeds use 8 decimals
     return closes.map(([day, v]) => [nyCloseUnix(day), v / 1e8]);
   },
   ["nav-daily-closes-v2"],

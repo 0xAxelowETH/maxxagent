@@ -140,8 +140,8 @@ export default function VerifyPage() {
           ) : (
             <p>
               The contract <code className={code}>StockMaxxIndexRegistry</code> (names and weights only: no deposits, no
-              payable functions, no token transfers, no fees) is in the repository with its test suite; it is not
-              deployed yet, so indexes are shared as links for now.
+              payable functions, no token transfers, no fees) is in the repository with its test suite. Set{" "}
+              <code className={code}>NEXT_PUBLIC_INDEX_REGISTRY_ADDRESS</code> to read from a specific deployment.
             </p>
           )}
         </Section>
@@ -174,8 +174,8 @@ export default function VerifyPage() {
         </Section>
 
         <p className="text-xs text-slate-500">
-          Not affiliated with, endorsed or sponsored by Coinbase, Base, Chainlink, KyberSwap or any Stocks Maxxing
-          partner. See the{" "}
+          Not affiliated with, endorsed or sponsored by Coinbase, Base, Chainlink, KyberSwap, any Stocks Maxxing
+          partner, or any company whose stock is referenced. Not financial advice. See the{" "}
           <Link href="/faq" className="underline hover:text-slate-300">
             FAQ
           </Link>{" "}

@@ -33,14 +33,21 @@ export function computeDrift(
   targets: { symbol: string; weightBps: number }[],
   maxWeightPct?: number
 ): Drift | null {
-  const held = holdings.filter((h) => h.usd > 0);
-  const totalUsd = held.reduce((a, h) => a + h.usd, 0);
-  const totalBps = targets.reduce((a, t) => a + Math.max(0, t.weightBps), 0);
-  if (!(totalUsd > 0) || !(totalBps > 0)) return null;
-  const symbols = [...new Set([...targets.map((t) => t.symbol), ...held.map((h) => h.symbol)])];
+  const heldMap = new Map<string, number>();
+  for (const h of holdings) {
+    if (Number.isFinite(h.usd) && h.usd > 0) heldMap.set(h.symbol, (heldMap.get(h.symbol) ?? 0) + h.usd);
+  }
+  const targetMap = new Map<string, number>();
+  for (const t of targets) {
+    if (Number.isFinite(t.weightBps) && t.weightBps > 0) targetMap.set(t.symbol, (targetMap.get(t.symbol) ?? 0) + t.weightBps);
+  }
+  const totalUsd = [...heldMap.values()].reduce((a, b) => a + b, 0);
+  const totalBps = [...targetMap.values()].reduce((a, b) => a + b, 0);
+  if (!Number.isFinite(totalUsd) || !(totalUsd > 0) || !Number.isFinite(totalBps) || !(totalBps > 0)) return null;
+  const symbols = [...new Set([...targetMap.keys(), ...heldMap.keys()])];
   const rows = symbols.map((symbol) => {
-    const currentPct = ((held.find((h) => h.symbol === symbol)?.usd ?? 0) / totalUsd) * 100;
-    const targetPct = (Math.max(0, targets.find((t) => t.symbol === symbol)?.weightBps ?? 0) / totalBps) * 100;
+    const currentPct = ((heldMap.get(symbol) ?? 0) / totalUsd) * 100;
+    const targetPct = ((targetMap.get(symbol) ?? 0) / totalBps) * 100;
     return { symbol, currentPct, targetPct, diffPct: currentPct - targetPct };
   });
   const driftPct = rows.reduce((a, r) => a + Math.abs(r.diffPct), 0) / 2;
@@ -87,7 +94,8 @@ export function parseSavedTarget(raw: unknown, knownSymbols: string[]): SavedTar
   const maxWeightPct = Number.isFinite(cap) && cap > 0 && cap < 100 ? Math.round(cap * 100) / 100 : undefined;
   // A limit the weights themselves break would flag the wallet forever: drop it
   if (maxWeightPct && weights.some((w) => w.weightBps / 100 > maxWeightPct + 0.5)) return null;
-  const savedAt = typeof r.savedAt === "string" && !Number.isNaN(Date.parse(r.savedAt)) ? r.savedAt : new Date(0).toISOString();
+  const rawSavedAt = typeof r.savedAt === "string" ? r.savedAt.slice(0, 40) : "";
+  const savedAt = rawSavedAt && !Number.isNaN(Date.parse(rawSavedAt)) ? rawSavedAt : new Date(0).toISOString();
   return {
     label: r.label.replace(/[\u0000-\u001f\u007f-\u009f]/g, "").slice(0, 64) || "My target",
     mandate: typeof r.mandate === "string" ? r.mandate.replace(/[\u0000-\u001f\u007f-\u009f]/g, " ").slice(0, 300) : undefined,

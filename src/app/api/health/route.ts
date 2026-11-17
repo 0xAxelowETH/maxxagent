@@ -18,6 +18,7 @@ const NVDA = "0xb20000000000000000000078ee7ce2fE4908108C";
 const USDC = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
 
 let cached: { at: number; body: unknown; status: number } | null = null;
+let inflight: Promise<{ body: unknown; status: number }> | null = null;
 
 async function timed<T>(fn: () => Promise<T>): Promise<{ ok: boolean; ms: number; detail?: string; value?: T }> {
   const t = Date.now();
@@ -42,43 +43,55 @@ async function fetchOk(url: string, init?: RequestInit) {
 }
 
 export async function GET() {
-  if (cached && Date.now() - cached.at < 60_000) return NextResponse.json(cached.body, { status: cached.status });
+  if (cached && cached.status === 200 && Date.now() - cached.at < 60_000) {
+    return NextResponse.json(cached.body, { status: 200, headers: { "Cache-Control": "no-store" } });
+  }
+  if (!inflight) {
+    inflight = (async () => {
+      const [rpc, chainlink, dexscreener, kyber, gecko] = await Promise.all([
+        timed(() => client.getBlockNumber()),
+        timed(async () => {
+          const r = await client.readContract({
+            address: NVDA_FEED,
+            abi: parseAbi(["function latestRoundData() view returns (uint80,int256,uint256,uint256,uint80)"]),
+            functionName: "latestRoundData",
+          });
+          if (r[1] <= 0n || r[4] < r[0]) throw new Error("Invalid Chainlink round");
+          const ageMinutes = Math.round((Date.now() / 1000 - Number(r[3])) / 60);
+          if (ageMinutes < -5 || ageMinutes > 26 * 60) throw new Error(`Stale Chainlink oracle (${ageMinutes}m)`);
+          return ageMinutes;
+        }),
+        timed(() => fetchOk(`https://api.dexscreener.com/tokens/v1/base/${NVDA}`)),
+        timed(() =>
+          fetchOk(`https://aggregator-api.kyberswap.com/base/api/v1/routes?tokenIn=${USDC}&tokenOut=${NVDA}&amountIn=1000000`, {
+            headers: { "x-client-id": "maxxagent" },
+          })
+        ),
+        timed(() => fetchOk(`https://api.geckoterminal.com/api/v2/networks/base/tokens/${NVDA}`)),
+      ]);
 
-  const [rpc, chainlink, dexscreener, kyber, gecko] = await Promise.all([
-    timed(() => client.getBlockNumber()),
-    timed(async () => {
-      const r = await client.readContract({
-        address: NVDA_FEED,
-        abi: parseAbi(["function latestRoundData() view returns (uint80,int256,uint256,uint256,uint80)"]),
-        functionName: "latestRoundData",
-      });
-      return Math.round((Date.now() / 1000 - Number(r[3])) / 60);
-    }),
-    timed(() => fetchOk(`https://api.dexscreener.com/tokens/v1/base/${NVDA}`)),
-    timed(() =>
-      fetchOk(`https://aggregator-api.kyberswap.com/base/api/v1/routes?tokenIn=${USDC}&tokenOut=${NVDA}&amountIn=1000000`, {
-        headers: { "x-client-id": "maxxagent" },
-      })
-    ),
-    timed(() => fetchOk(`https://api.geckoterminal.com/api/v2/networks/base/tokens/${NVDA}`)),
-  ]);
-
-  const checks = {
-    baseRpc: { ok: rpc.ok, ms: rpc.ms, block: rpc.value?.toString(), detail: rpc.detail, critical: true },
-    chainlink: {
-      ok: chainlink.ok,
-      ms: chainlink.ms,
-      oracleAgeMinutes: chainlink.value,
-      detail: chainlink.detail,
-      critical: true,
-    },
-    dexscreener: { ok: dexscreener.ok, ms: dexscreener.ms, detail: dexscreener.detail, critical: false },
-    kyberswap: { ok: kyber.ok, ms: kyber.ms, detail: kyber.detail, critical: true },
-    geckoterminal: { ok: gecko.ok, ms: gecko.ms, detail: gecko.detail, critical: false },
-  };
-  const healthy = Object.values(checks).every((c) => c.ok || !c.critical);
-  const body = { ok: healthy, checkedAt: new Date().toISOString(), checks };
-  const status = healthy ? 200 : 503;
-  cached = { at: Date.now(), body, status };
-  return NextResponse.json(body, { status });
+      const checks = {
+        baseRpc: { ok: rpc.ok, ms: rpc.ms, block: rpc.value?.toString(), detail: rpc.detail, critical: true },
+        chainlink: {
+          ok: chainlink.ok,
+          ms: chainlink.ms,
+          oracleAgeMinutes: chainlink.value,
+          detail: chainlink.detail,
+          critical: true,
+        },
+        dexscreener: { ok: dexscreener.ok, ms: dexscreener.ms, detail: dexscreener.detail, critical: false },
+        kyberswap: { ok: kyber.ok, ms: kyber.ms, detail: kyber.detail, critical: true },
+        geckoterminal: { ok: gecko.ok, ms: gecko.ms, detail: gecko.detail, critical: false },
+      };
+      const healthy = Object.values(checks).every((c) => c.ok || !c.critical);
+      const body = { ok: healthy, checkedAt: new Date().toISOString(), checks };
+      const status = healthy ? 200 : 503;
+      if (healthy) cached = { at: Date.now(), body, status };
+      return { body, status };
+    })().finally(() => {
+      inflight = null;
+    });
+  }
+  const { body, status } = await inflight;
+  return NextResponse.json(body, { status, headers: { "Cache-Control": "no-store" } });
 }

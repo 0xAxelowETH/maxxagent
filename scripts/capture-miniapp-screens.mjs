@@ -30,7 +30,7 @@ const scrollTo = (sel) =>
 await page.goto(BASE + "/", { waitUntil: "networkidle2", timeout: 120000 });
 await sleep(3500);
 await page.evaluate(() => {
-  const h = [...document.querySelectorAll("h2")].find((x) => /Build your own stock index/.test(x.textContent));
+  const h = [...document.querySelectorAll("h2")].find((x) => /Build your own (?:stock )?index/.test(x.textContent));
   if (h) window.scrollTo(0, h.closest(".glass-panel").getBoundingClientRect().top + window.scrollY - 70);
 });
 await sleep(800);
@@ -46,9 +46,9 @@ await page.evaluate(() => {
   ta.dispatchEvent(new Event("input", { bubbles: true }));
 });
 await page.evaluate(() => [...document.querySelectorAll("button")].find((b) => /^Run agent/.test(b.textContent.trim()))?.click());
-await page.waitForSelector('[data-testid="agent-interpretation"]', { timeout: 60000 });
+await page.waitForSelector('[data-testid="agent-limits"]', { timeout: 60000 });
 await sleep(1500);
-await scrollTo('[data-testid="agent-interpretation"]');
+await scrollTo('[data-testid="agent-limits"]');
 await page.evaluate(() => window.scrollBy(0, -120));
 await sleep(800);
 await page.screenshot({ path: path.join(out, "screen-2.png") });

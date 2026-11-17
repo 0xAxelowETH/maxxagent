@@ -84,10 +84,13 @@ export function DriftAlerts({ address, target, alertPct }: { address: string; ta
       return;
     }
     if (synced.current === sig) return;
+    const prevSig = synced.current;
     synced.current = sig;
     call(sdk, "POST", { address, target, alertPct })
       .then((st) => setStatus((p) => ({ ...p, ...st, address })))
-      .catch(() => {});
+      .catch(() => {
+        if (synced.current === sig) synced.current = prevSig;
+      });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sig, sdk, watchingThis]);
 

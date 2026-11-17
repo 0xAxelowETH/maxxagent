@@ -106,6 +106,131 @@ type Call = { to: string; data: string; value: string };
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+function withTimeout<T>(promise: Promise<T>, ms: number, label = "RPC request timed out"): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(label)), ms);
+    promise.then(
+      (v) => {
+        clearTimeout(timer);
+        resolve(v);
+      },
+      (e) => {
+        clearTimeout(timer);
+        reject(e);
+      }
+    );
+  });
+}
+
+/**
+ * Normalizes any wallet chainId representation (number 8453, decimal "8453", CAIP-2 "eip155:8453",
+ * padded "0x02105", or uppercase "0X2105") to canonical lowercase hex ("0x2105").
+ */
+export function normalizeChainHex(raw: unknown): string {
+  if (typeof raw === "number" && Number.isFinite(raw) && raw > 0) {
+    return "0x" + Math.trunc(raw).toString(16);
+  }
+  const s = String(raw ?? "").trim().toLowerCase();
+  if (!s) return "";
+  const cleaned = s.startsWith("eip155:") ? s.slice(7) : s;
+  if (/^0x[0-9a-f]+$/.test(cleaned)) {
+    try {
+      return "0x" + BigInt(cleaned).toString(16);
+    } catch {
+      return cleaned;
+    }
+  }
+  if (/^\d+$/.test(cleaned)) {
+    try {
+      return "0x" + BigInt(cleaned).toString(16);
+    } catch {
+      return cleaned;
+    }
+  }
+  return cleaned;
+}
+
+export function isBaseMainnetChain(raw: unknown): boolean {
+  return normalizeChainHex(raw) === BASE_CHAIN_HEX;
+}
+
+const PUBLIC_BASE_RPCS = ["https://base-rpc.publicnode.com", "https://mainnet.base.org"];
+
+async function basePublicRpc(method: string, params: unknown[]): Promise<unknown> {
+  let lastErr: unknown;
+  for (const url of PUBLIC_BASE_RPCS) {
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+        signal: AbortSignal.timeout(6000),
+      });
+      const json = (await res.json()) as { result?: unknown; error?: { message?: string } };
+      if (json.error) throw new Error(json.error.message || "RPC error");
+      return json.result;
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+  throw lastErr ?? new Error("Base RPC unavailable");
+}
+
+/**
+ * Read-only JSON-RPC call: tries the connected wallet provider first (with a 4s timeout so a backgrounded
+ * mobile/extension bridge never hangs), and falls back to public Base Mainnet RPC on timeout, error, or null receipt.
+ */
+async function rpcRead(eth: EthProvider, method: string, params: unknown[]): Promise<unknown> {
+  try {
+    const res = await withTimeout(eth.request({ method, params }), 4000);
+    if (res !== null && res !== undefined) return res;
+  } catch {
+    // Fall through to public Base Mainnet RPC
+  }
+  return basePublicRpc(method, params);
+}
+
+function extractBatchId(sendRes: unknown): string | undefined {
+  if (typeof sendRes === "string" && sendRes.trim()) return sendRes.trim();
+  if (typeof sendRes === "object" && sendRes !== null) {
+    const o = sendRes as Record<string, unknown>;
+    const candidate = o.id ?? o.batchId ?? o.bundleId ?? o.hash ?? o.result;
+    if (typeof candidate === "string" && candidate.trim()) return candidate.trim();
+  }
+  return undefined;
+}
+
+type CallsStatusReceipt = { transactionHash?: string; hash?: string; status?: string | number };
+type CallsStatusResponse = { status?: number | string; receipts?: CallsStatusReceipt[] };
+
+function parseCallsStatus(status: CallsStatusResponse | undefined) {
+  const rawStatus = status?.status;
+  const statusStr = String(rawStatus ?? "").trim().toLowerCase();
+  const receipts = Array.isArray(status?.receipts) ? status!.receipts! : [];
+  const txHashes = [
+    ...new Set(
+      receipts
+        .map((r) => r?.transactionHash || r?.hash || "")
+        .filter((h): h is string => /^0x[0-9a-fA-F]{64}$/.test(h))
+    ),
+  ];
+  const anyRevertedReceipt = receipts.some((r) => r?.status === "0x0" || r?.status === 0 || r?.status === "reverted");
+  const allReceiptsReverted = receipts.length > 0 && receipts.every((r) => r?.status === "0x0" || r?.status === 0 || r?.status === "reverted");
+  const isPending =
+    rawStatus === 100 || /^(100|pending|queued|submitted|processing|bundling|in_progress|broadcasted)$/.test(statusStr);
+  const isFailed =
+    (typeof rawStatus === "number" && rawStatus >= 400 && rawStatus !== 600) ||
+    /^(400|500|fail|failed|failure|revert|reverted|rejected|dropped|cancelled|canceled)$/.test(statusStr) ||
+    allReceiptsReverted;
+  const isDone =
+    !isFailed &&
+    (rawStatus === 200 ||
+      rawStatus === 600 ||
+      /^(200|600|confirmed|success|succeeded|completed|complete|mined|included)$/.test(statusStr) ||
+      (!isPending && txHashes.length > 0));
+  return { isPending, isFailed, isDone, anyRevertedReceipt, txHashes };
+}
+
 // ---------------------------------------------------------------- helpers
 
 async function readErc20(eth: EthProvider, token: string, fn: "balanceOf" | "allowance", args: readonly `0x${string}`[]) {
@@ -113,17 +238,21 @@ async function readErc20(eth: EthProvider, token: string, fn: "balanceOf" | "all
     fn === "balanceOf"
       ? encodeFunctionData({ abi: ERC20_ABI, functionName: "balanceOf", args: [args[0]] })
       : encodeFunctionData({ abi: ERC20_ABI, functionName: "allowance", args: [args[0], args[1]] });
-  const raw = (await eth.request({ method: "eth_call", params: [{ to: token, data }, "latest"] })) as `0x${string}`;
+  const raw = (await rpcRead(eth, "eth_call", [{ to: token, data }, "latest"])) as `0x${string}`;
   return decodeFunctionResult({ abi: ERC20_ABI, functionName: fn, data: raw }) as bigint;
 }
 
 async function waitForReceipt(eth: EthProvider, hash: string, timeoutMs = 120_000) {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
-    const receipt = (await eth.request({ method: "eth_getTransactionReceipt", params: [hash] })) as { status?: string } | null;
-    if (receipt) {
-      if (receipt.status && receipt.status !== "0x1") throw new Error(`Transaction ${hash} reverted`);
-      return;
+    try {
+      const receipt = (await rpcRead(eth, "eth_getTransactionReceipt", [hash])) as { status?: string } | null;
+      if (receipt) {
+        if (receipt.status && receipt.status !== "0x1") throw new Error(`Transaction ${hash} reverted`);
+        return;
+      }
+    } catch (e) {
+      if (e instanceof Error && /reverted/i.test(e.message)) throw e;
     }
     await sleep(2000);
   }
@@ -135,18 +264,45 @@ function isUnsupportedMethod(err: unknown) {
   return (
     e?.code === 4200 ||
     e?.code === -32601 ||
-    e?.code === -32602 ||
-    /not supported|unsupported|does not exist|not found|unknown method/i.test(e?.message || "")
+    /not supported|unsupported|does not exist|unknown method/i.test(e?.message || "")
   );
 }
 
 async function ensureBase(eth: EthProvider, onStatus: StatusFn) {
-  const chain = ((await eth.request({ method: "eth_chainId" })) as string)?.toLowerCase();
-  if (chain !== BASE_CHAIN_HEX) {
+  const rawChain = await withTimeout(eth.request({ method: "eth_chainId" }), 4000).catch(() => "");
+  const chain = normalizeChainHex(rawChain);
+  if (chain && chain !== BASE_CHAIN_HEX) {
     onStatus("Switching wallet to Base Mainnet…");
-    await eth.request({ method: "wallet_switchEthereumChain", params: [{ chainId: BASE_CHAIN_HEX }] });
+    try {
+      await eth.request({ method: "wallet_switchEthereumChain", params: [{ chainId: BASE_CHAIN_HEX }] });
+    } catch (err) {
+      const code = (err as { code?: number })?.code;
+      if (code === 4902) {
+        await eth.request({
+          method: "wallet_addEthereumChain",
+          params: [
+            {
+              chainId: BASE_CHAIN_HEX,
+              chainName: "Base Mainnet",
+              nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
+              rpcUrls: ["https://mainnet.base.org"],
+              blockExplorerUrls: ["https://basescan.org"],
+            },
+          ],
+        });
+      } else {
+        throw err;
+      }
+    }
   }
 }
+
+type RpcReceipt = {
+  status?: string;
+  gasUsed?: string;
+  blockNumber?: string;
+  logs?: { address: string; topics: string[]; data: string }[];
+};
 
 /** Reads receipts and sums Transfer(to = sender) events for the given tokens. */
 async function trackReceipts(
@@ -161,12 +317,11 @@ async function trackReceipts(
   const txs: TrackedTx[] = [];
   for (const hash of txHashes) {
     try {
-      const r = (await eth.request({ method: "eth_getTransactionReceipt", params: [hash] })) as {
-        status?: string;
-        gasUsed?: string;
-        blockNumber?: string;
-        logs?: { address: string; topics: string[]; data: string }[];
-      } | null;
+      let r: RpcReceipt | null = null;
+      for (let attempt = 0; attempt < 3 && !r; attempt++) {
+        if (attempt > 0) await sleep(1000);
+        r = (await rpcRead(eth, "eth_getTransactionReceipt", [hash]).catch(() => null)) as RpcReceipt | null;
+      }
       if (!r) {
         txs.push({ hash, status: "unknown" });
         continue;
@@ -247,34 +402,40 @@ async function sendCalls(
   builderCode: string,
   spend: string[],
   /** token and amount each swap call spends (same order as swapCalls) */
-  swapSpend: { token: string; amount: bigint }[]
+  swapSpend: { token: string; amount: bigint }[],
+  /** tokens expected to Transfer(to = sender) onchain, used as direct Base RPC fallback if wallet_getCallsStatus hangs */
+  receiveTokens: string[] = []
 ): Promise<{ mode: "batch" | "sequential"; txHashes: string[]; failed: FailedLeg[] }> {
   const calls = [...approveCalls, ...swapCalls];
   const balancesOf = () => Promise.all(spend.map((t) => readErc20(eth, t, "balanceOf", [sender as `0x${string}`]).catch(() => null)));
   const before = await balancesOf();
   // Nonce = number of txs this address has sent: covers ETH-paid orders (no token balance to compare)
   const nonceOf = () =>
-    (eth.request({ method: "eth_getTransactionCount", params: [sender, "latest"] }) as Promise<string>).then((n) => BigInt(n)).catch(() => null);
-  const nonceBefore = await nonceOf();
+    (rpcRead(eth, "eth_getTransactionCount", [sender, "latest"]) as Promise<string>).then((n) => BigInt(n)).catch(() => null);
+  const [nonceBefore, startBlockHex] = await Promise.all([
+    nonceOf(),
+    (rpcRead(eth, "eth_blockNumber", []).catch(() => null)) as Promise<string | null>,
+  ]);
+  const startBlock = startBlockHex ? BigInt(startBlockHex) : null;
   onStatus(`Confirm ${calls.length} action${calls.length > 1 ? "s" : ""} in one wallet prompt…`);
   // Smart wallets (ERC-4337) wrap calls in executeBatch, so the per-call suffix is not at the end of
   // the UserOp callData. Base's documented fix: the optional `dataSuffix` capability, appended by the wallet.
   const base = { version: "2.0.0", chainId: BASE_CHAIN_HEX, from: sender, atomicRequired: false, calls };
   let batchId: string | undefined;
   try {
-    let sendRes: string | { id: string };
+    let sendRes: unknown;
     try {
-      sendRes = (await eth.request({
+      sendRes = await eth.request({
         method: "wallet_sendCalls",
         params: [{ ...base, capabilities: { dataSuffix: { value: builderSuffix(builderCode), optional: true } } }],
-      })) as string | { id: string };
+      });
     } catch (capErr) {
       // Non-compliant wallets may reject the optional capability: retry once without it.
       const e = capErr as { code?: number; message?: string };
       if (e?.code !== 5700 && !/capabilit/i.test(e?.message || "")) throw capErr;
-      sendRes = (await eth.request({ method: "wallet_sendCalls", params: [base] })) as string | { id: string };
+      sendRes = await eth.request({ method: "wallet_sendCalls", params: [base] });
     }
-    batchId = typeof sendRes === "string" ? sendRes : sendRes?.id;
+    batchId = extractBatchId(sendRes);
   } catch (err) {
     if (isUserRejection(err)) throw err;
     if (!isUnsupportedMethod(err)) {
@@ -294,19 +455,67 @@ async function sendCalls(
     // The batch was submitted: from here on, never resend the calls (that would double the trade).
     onStatus("Waiting for confirmation onchain…");
     const start = Date.now();
+    const senderTopic = "0x" + sender.toLowerCase().replace(/^0x/, "").padStart(64, "0");
+    const uniqueReceive = [...new Set(receiveTokens.map((t) => t.toLowerCase()))];
     let misses = 0;
+    let firstTransferSeenAt = 0;
     while (Date.now() - start < 180_000) {
-      let status: { status?: number | string; receipts?: { transactionHash: string; status?: string }[] } | undefined;
+      let status: CallsStatusResponse | undefined;
       try {
-        status = (await eth.request({ method: "wallet_getCallsStatus", params: [batchId] })) as typeof status;
+        status = (await withTimeout(
+          eth.request({ method: "wallet_getCallsStatus", params: [batchId] }),
+          4500,
+          "wallet_getCallsStatus timeout"
+        )) as CallsStatusResponse | undefined;
       } catch {
-        // Some wallets briefly report an unknown id right after submission
-        if (++misses > 10) throw new Error("Batch was sent but its status is unavailable. Check your wallet activity before retrying.");
+        misses++;
       }
-      const done = status?.status === 200 || status?.status === "CONFIRMED" || status?.status === "success";
-      const failed = (typeof status?.status === "number" && status.status >= 400) || status?.status === "failure";
-      if (failed) throw new Error("Batch failed onchain. Nothing was swapped in the failed calls.");
-      if (done) return { mode: "batch", txHashes: [...new Set((status!.receipts || []).map((r) => r.transactionHash))], failed: [] };
+      const parsed = parseCallsStatus(status);
+      if (parsed.isFailed) throw new Error("Batch failed onchain. Nothing was swapped in the failed calls.");
+      if (parsed.isDone && parsed.txHashes.length > 0) {
+        return { mode: "batch", txHashes: parsed.txHashes, failed: [] };
+      }
+
+      // Fallback 1: Some EIP-7702 / EOA wallets return the 32-byte L2 transaction hash directly as batchId
+      if (/^0x[0-9a-fA-F]{64}$/.test(batchId)) {
+        const directReceipt = (await rpcRead(eth, "eth_getTransactionReceipt", [batchId]).catch(() => null)) as { status?: string } | null;
+        if (directReceipt) {
+          if (directReceipt.status === "0x0") throw new Error("Batch failed onchain. Nothing was swapped in the failed calls.");
+          if (directReceipt.status === "0x1") return { mode: "batch", txHashes: [batchId], failed: [] };
+        }
+      }
+
+      // Fallback 2: Direct Base Mainnet Transfer(to = sender) log check so a hanging/lagging wallet bridge never freezes UI
+      if (startBlock !== null && uniqueReceive.length > 0 && (Date.now() - start >= 3000 || misses > 0 || parsed.isDone)) {
+        try {
+          const logs = (await basePublicRpc("eth_getLogs", [
+            {
+              address: uniqueReceive,
+              fromBlock: toHex(startBlock),
+              toBlock: "latest",
+              topics: [TRANSFER_TOPIC, null, senderTopic],
+            },
+          ])) as { address?: string; transactionHash?: string }[] | null;
+          if (Array.isArray(logs) && logs.length > 0) {
+            const foundHashes = [
+              ...new Set(logs.map((l) => l?.transactionHash || "").filter((h): h is string => /^0x[0-9a-fA-F]{64}$/.test(h))),
+            ];
+            const foundTokens = new Set(logs.map((l) => (l?.address || "").toLowerCase()).filter(Boolean));
+            if (foundHashes.length > 0) {
+              if (!firstTransferSeenAt) firstTransferSeenAt = Date.now();
+              if (foundTokens.size >= uniqueReceive.length || parsed.isDone || Date.now() - firstTransferSeenAt >= 5000) {
+                return { mode: "batch", txHashes: foundHashes, failed: [] };
+              }
+            }
+          }
+        } catch {
+          // Ignore transient log query errors and continue polling
+        }
+      }
+
+      if (misses > 15 && (startBlock === null || Date.now() - start > 60_000)) {
+        throw new Error("Batch was sent but its status is unavailable. Check your wallet activity before retrying.");
+      }
       await sleep(2000);
     }
     throw new Error("Timed out waiting for batch confirmation. Check your wallet activity before retrying.");
@@ -346,10 +555,8 @@ async function sendCalls(
     try {
       hash = (await eth.request({ method: "eth_sendTransaction", params: [{ from: sender, to: c.to, data: c.data, value: c.value }] })) as string;
       txHashes.push(hash);
-      // Counted as spent as soon as it is sent: a reverted swap returns the funds, so the guard then only
-      // under-estimates the balance (never stops wrongly in the dangerous direction)
-      spentSoFar.set(token.toLowerCase(), (spentSoFar.get(token.toLowerCase()) ?? 0n) + amount);
       await waitForReceipt(eth, hash);
+      spentSoFar.set(token.toLowerCase(), (spentSoFar.get(token.toLowerCase()) ?? 0n) + amount);
       swapped++;
     } catch (err) {
       if (isUserRejection(err)) {
@@ -385,24 +592,28 @@ export async function sendContractCall(params: {
   const suffix = builderSuffix(builderCode);
   const call = { to, data: alignedWithSuffix(params.data, suffix), value: "0x0" };
   const nonceOf = () =>
-    (eth.request({ method: "eth_getTransactionCount", params: [sender, "latest"] }) as Promise<string>).then((n) => BigInt(n)).catch(() => null);
-  const nonceBefore = await nonceOf();
+    (rpcRead(eth, "eth_getTransactionCount", [sender, "latest"]) as Promise<string>).then((n) => BigInt(n)).catch(() => null);
+  const [nonceBefore, startBlockHex] = await Promise.all([
+    nonceOf(),
+    (rpcRead(eth, "eth_blockNumber", []).catch(() => null)) as Promise<string | null>,
+  ]);
+  const startBlock = startBlockHex ? BigInt(startBlockHex) : null;
   onStatus("Confirm in your wallet…");
   const base = { version: "2.0.0", chainId: BASE_CHAIN_HEX, from: sender, atomicRequired: false, calls: [call] };
   let batchId: string | undefined;
   try {
-    let res: string | { id: string };
+    let res: unknown;
     try {
-      res = (await eth.request({
+      res = await eth.request({
         method: "wallet_sendCalls",
         params: [{ ...base, capabilities: { dataSuffix: { value: suffix, optional: true } } }],
-      })) as string | { id: string };
+      });
     } catch (capErr) {
       const e = capErr as { code?: number; message?: string };
       if (e?.code !== 5700 && !/capabilit/i.test(e?.message || "")) throw capErr;
-      res = (await eth.request({ method: "wallet_sendCalls", params: [base] })) as string | { id: string };
+      res = await eth.request({ method: "wallet_sendCalls", params: [base] });
     }
-    batchId = typeof res === "string" ? res : res?.id;
+    batchId = extractBatchId(res);
   } catch (err) {
     if (isUserRejection(err)) throw new Error("Cancelled in wallet.");
     if (!isUnsupportedMethod(err)) {
@@ -418,21 +629,55 @@ export async function sendContractCall(params: {
   if (batchId) {
     onStatus("Waiting for confirmation onchain…");
     const start = Date.now();
+    const senderTopic = "0x" + sender.toLowerCase().replace(/^0x/, "").padStart(64, "0");
     let misses = 0;
     while (Date.now() - start < 180_000) {
-      let status: { status?: number | string; receipts?: { transactionHash: string; status?: string }[] } | undefined;
+      let status: CallsStatusResponse | undefined;
       try {
-        status = (await eth.request({ method: "wallet_getCallsStatus", params: [batchId] })) as typeof status;
+        status = (await withTimeout(
+          eth.request({ method: "wallet_getCallsStatus", params: [batchId] }),
+          4500,
+          "wallet_getCallsStatus timeout"
+        )) as CallsStatusResponse | undefined;
       } catch {
-        if (++misses > 10) throw new Error("Sent, but the status is unavailable. Check your wallet activity before retrying.");
+        misses++;
       }
-      const failed = (typeof status?.status === "number" && status.status >= 400) || status?.status === "failure";
-      if (failed || status?.receipts?.some((r) => r.status === "0x0")) throw new Error("The transaction failed onchain (only gas was spent).");
-      const done = status?.status === 200 || status?.status === "CONFIRMED" || status?.status === "success";
-      if (done) {
-        const hash = status!.receipts?.[0]?.transactionHash;
-        if (!hash) throw new Error("Confirmed, but the wallet returned no transaction hash. Check your wallet activity.");
-        return hash;
+      const parsed = parseCallsStatus(status);
+      if (parsed.isFailed || parsed.anyRevertedReceipt) {
+        throw new Error("The transaction failed onchain (only gas was spent).");
+      }
+      if (parsed.isDone && parsed.txHashes[0]) {
+        return parsed.txHashes[0];
+      }
+
+      if (/^0x[0-9a-fA-F]{64}$/.test(batchId)) {
+        const directReceipt = (await rpcRead(eth, "eth_getTransactionReceipt", [batchId]).catch(() => null)) as { status?: string } | null;
+        if (directReceipt) {
+          if (directReceipt.status === "0x0") throw new Error("The transaction failed onchain (only gas was spent).");
+          if (directReceipt.status === "0x1") return batchId;
+        }
+      }
+
+      if (startBlock !== null && (Date.now() - start >= 3000 || misses > 0 || parsed.isDone)) {
+        try {
+          const logs = (await basePublicRpc("eth_getLogs", [
+            {
+              address: to,
+              fromBlock: toHex(startBlock),
+              toBlock: "latest",
+            },
+          ])) as { topics?: string[]; transactionHash?: string }[] | null;
+          const mine = (logs || []).find(
+            (l) =>
+              /^0x[0-9a-fA-F]{64}$/.test(l?.transactionHash || "") &&
+              (l.topics || []).some((t) => t.toLowerCase() === senderTopic)
+          );
+          if (mine?.transactionHash) return mine.transactionHash;
+        } catch {}
+      }
+
+      if (misses > 15 && (startBlock === null || Date.now() - start > 60_000)) {
+        throw new Error("Sent, but the status is unavailable. Check your wallet activity before retrying.");
       }
       await sleep(2000);
     }
@@ -673,6 +918,7 @@ export async function submitOrder(params: {
   // Native ETH is excluded from the double-trade guard: gas also lowers it, which would stop valid orders
   const spend = [...new Set(legs.map((q) => q.tokenIn!).filter((t) => !isNative(t)))];
   const swapSpend = legs.map((q) => ({ token: q.tokenIn!, amount: BigInt(q.amountInRaw!) }));
+  const receiveTokens = side === "buy" ? legs.map((q) => q.b20Address!) : [USDC_BASE];
   const { mode, txHashes, failed } = await sendCalls(
     eth,
     sender,
@@ -682,7 +928,8 @@ export async function submitOrder(params: {
     onStatus,
     builderCode,
     spend,
-    swapSpend
+    swapSpend,
+    receiveTokens
   );
   onStatus("Reading what you received onchain…");
   const watch =

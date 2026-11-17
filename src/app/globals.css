@@ -198,4 +198,5 @@ img.logo-wordmark {
 @media (prefers-reduced-motion: reduce) {
   .maxx-draw { animation: none; stroke-dashoffset: 0; }
   .maxx-node { animation: none; }
+  .animate-ticker, .animate-fade-up { animation: none !important; }
 }

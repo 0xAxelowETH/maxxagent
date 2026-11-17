@@ -20,7 +20,7 @@ const jetbrainsMono = localFont({
   display: "swap",
 });
 
-const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000";
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || "https://maxxagent.xyz";
 const DESCRIPTION =
   "Build your own index of Coinbase tokenized stocks on Base, or let an agent propose one, and buy it in one click from your own wallet. Live Chainlink NAV vs DEX prices, non-custodial. Not financial advice.";
 
@@ -48,6 +48,7 @@ export const metadata: Metadata = {
 
 export const viewport = {
   themeColor: "#03060e",
+  viewportFit: "cover" as const,
 };
 
 export default function RootLayout({

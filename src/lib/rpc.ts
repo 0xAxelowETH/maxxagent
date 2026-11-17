@@ -29,6 +29,6 @@ export function redactSecrets(message: string): string {
   const custom = customRpc();
   if (custom) out = out.split(custom).join("<private-rpc>");
   return out
-    .replace(/https?:\/\/[^\s"']*(?:rpc|alchemy|infura|quiknode|quicknode|developer\.coinbase)[^\s"']*/gi, "<private-rpc>")
-    .replace(/apikey=[^&\s"']+/gi, "apikey=<redacted>");
+    .replace(/https?:\/\/[^\s"']*(?:rpc|alchemy|infura|quiknode|quicknode|ankr|drpc|chainstack|blastapi|llamarpc|developer\.coinbase)[^\s"']*/gi, "<private-rpc>")
+    .replace(/(?:api_key|apikey|key|token)=[^&\s"']+/gi, (m) => `${m.split("=")[0]}=<redacted>`);
 }

@@ -17,10 +17,14 @@ export function generateStaticParams() {
 export async function generateMetadata({ params }: { params: Promise<{ symbol: string }> }): Promise<Metadata> {
   const s = find((await params).symbol);
   if (!s) return { title: "Stock not found — MAXXAGENT" };
+  const title = `${s.symbol} (${s.companyName}) tokenized stock on Base — MAXXAGENT`;
+  const description = `Live Chainlink NAV, Base DEX price and liquidity for ${s.symbol}, Coinbase's tokenized ${s.companyName} stock on Base. Buy or sell from your own wallet. Not financial advice.`;
   return {
-    title: `${s.symbol} (${s.companyName}) tokenized stock on Base — MAXXAGENT`,
-    description: `Live Chainlink NAV, Base DEX price and liquidity for ${s.symbol}, Coinbase's tokenized ${s.companyName} stock on Base. Buy or sell from your own wallet.`,
+    title,
+    description,
     alternates: { canonical: `/stock/${s.symbol}` },
+    openGraph: { type: "website", siteName: "MAXXAGENT", title, description, images: [{ url: "/brand/maxxagent-og.png", width: 1200, height: 630, alt: title }] },
+    twitter: { card: "summary_large_image", title, description, images: ["/brand/maxxagent-og.png"] },
     // Shared in Farcaster, the card launches the mini app straight on this stock
     other: miniappEmbedTags({
       siteUrl: process.env.NEXT_PUBLIC_SITE_URL || "https://maxxagent.xyz",

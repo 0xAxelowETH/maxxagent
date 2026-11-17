@@ -95,8 +95,9 @@ export default function TermsPage() {
 
         <Section title="7. Third-party services">
           <p>
-            MAXXAGENT relies on third parties, including Base, Coinbase, Chainlink, KyberSwap, DexScreener and
-            GeckoTerminal. Their services are governed by their own terms, and we are not responsible for them.
+            MAXXAGENT relies on third parties, including Base, Coinbase, Chainlink, KyberSwap, DexScreener,
+            GeckoTerminal, SEC EDGAR, Upstash Redis (for optional Farcaster Drift Alerts), Farcaster, and newsroom RSS
+            feeds. Their services are governed by their own terms, and we are not responsible for them.
           </p>
         </Section>
 
@@ -104,7 +105,9 @@ export default function TermsPage() {
           <p>
             We do not ask for your name, email or identity documents, and we do not use tracking cookies. We count page views with Vercel Web Analytics, which is cookieless and anonymous (pages visited, referrer, country and device type; no wallet address or personal data).
             Your wallet address and transactions are public on the blockchain. Your acceptance of these terms and your
-            local activity log are stored only in your browser.
+            local activity log are stored only in your browser. If you explicitly enable Farcaster Drift Alerts, your
+            Farcaster FID, connected wallet address, saved target weights, and mini-app notification token are stored in
+            Upstash Redis so the daily read-only check can notify you; you can delete them anytime by turning alerts off.
           </p>
           <p>
             To show balances, profit and loss, and swap quotes, your connected wallet address is sent to the MAXXAGENT

@@ -33,8 +33,19 @@ function signed(body: { header: string; payload: string; signature: string }): {
 }
 
 export async function POST(req: NextRequest) {
-  const body = (await req.json().catch(() => null)) as { header?: string; payload?: string; signature?: string } | null;
-  if (!body?.header || !body.payload || !body.signature) return NextResponse.json({ ok: false }, { status: 400 });
+  const len = Number(req.headers.get("content-length") || "0");
+  if (Number.isFinite(len) && len > 16_384) return NextResponse.json({ ok: false }, { status: 413 });
+  const raw = await req.text().catch(() => "");
+  if (!raw || raw.length > 16_384) return NextResponse.json({ ok: false }, { status: raw.length > 16_384 ? 413 : 400 });
+  let body: { header?: unknown; payload?: unknown; signature?: unknown } | null = null;
+  try {
+    body = JSON.parse(raw) as { header?: unknown; payload?: unknown; signature?: unknown };
+  } catch {
+    body = null;
+  }
+  if (!body || typeof body.header !== "string" || typeof body.payload !== "string" || typeof body.signature !== "string") {
+    return NextResponse.json({ ok: false }, { status: 400 });
+  }
   const v = signed({ header: body.header, payload: body.payload, signature: body.signature });
   if (!v) return NextResponse.json({ ok: false }, { status: 401 });
   if (!kvEnabled()) return NextResponse.json({ ok: true, stored: false });
@@ -43,8 +54,9 @@ export async function POST(req: NextRequest) {
   const details = validNotifyDetails(v.payload.notificationDetails);
   if (!details) return NextResponse.json({ ok: true });
   try {
-    if (!(await getWatch(v.fid))) return NextResponse.json({ ok: true, stored: false }); // no drift alert on: nothing to keep
+    // Verify Farcaster key ownership BEFORE checking getWatch(fid) so unauthenticated callers cannot enumerate FIDs
     if (!(await isAppKeyOf(v.fid, v.key))) return NextResponse.json({ ok: false }, { status: 401 });
+    if (!(await getWatch(v.fid))) return NextResponse.json({ ok: true, stored: false }); // no drift alert on: nothing to keep
     await setNotify(v.fid, details);
     return NextResponse.json({ ok: true });
   } catch {

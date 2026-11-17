@@ -37,7 +37,8 @@ export function RebalancePanel({
   /** per-stock limit (share of the stocks): a stock above it is always trimmed */
   maxWeightPct?: number;
 }) {
-  const [addUsd, setAddUsd] = useState<number>(0);
+  const [addUsdText, setAddUsdText] = useState<string>("");
+  const addUsd = Math.max(0, Number(addUsdText) || 0);
   // USDC balance right before step 1: after the sales, the increase is the proceeds that step 2 reinvests
   const [usdcBaseline, setUsdcBaseline] = useState<number | null>(null);
   const holdings = stocks
@@ -80,10 +81,10 @@ export function RebalancePanel({
           <input
             type="number"
             min={0}
-            step="1"
-            value={addUsd || ""}
+            step="any"
+            value={addUsdText}
             placeholder="0"
-            onChange={(e) => setAddUsd(Math.max(0, Number(e.target.value) || 0))}
+            onChange={(e) => setAddUsdText(e.target.value)}
             className="w-20 rounded-lg border border-slate-700 bg-[#040814] px-2 py-1 font-mono text-xs text-white outline-none focus:border-cyan-400"
             aria-label="Extra USDC to invest while rebalancing"
           />

@@ -115,9 +115,11 @@ async function fetchCoinbaseTokenizedStocksViaDoH(): Promise<
     if (Array.isArray(records)) {
       for (const r of records) {
         if (r?.symbol) {
+          const mult = Number(r.multiplier);
+          const nav = Number(r.nav_price);
           result[r.symbol] = {
-            multiplier: r.multiplier ? Number(r.multiplier) : undefined,
-            navPrice: r.nav_price ? Number(r.nav_price) : undefined,
+            multiplier: Number.isFinite(mult) && mult > 0 ? mult : undefined,
+            navPrice: Number.isFinite(nav) && nav > 0 ? nav : undefined,
           };
         }
       }
@@ -280,13 +282,16 @@ async function buildMarket(): Promise<LiveTokenizedStock[]> {
         const onchainMarketCapUsd = totalSupplyTokens * navPrice;
 
         // Compute REAL 24/7 DEX price vs 24/5 Chainlink NAV gap from Aerodrome on Base
-        const hasLiveDex = Boolean(liveDexPool?.priceUsd && Number(liveDexPool.priceUsd) > 0);
+        const rawLiveDex = liveDexPool?.priceUsd ? Number(liveDexPool.priceUsd) : 0;
+        const hasLiveDex = Number.isFinite(rawLiveDex) && rawLiveDex > 0;
         // No live DEX quote => no gap claimed (never synthesize a spread)
         const dexPrice24_7 = hasLiveDex
-          ? Number(Number(liveDexPool!.priceUsd).toFixed(2))
+          ? Number(rawLiveDex.toFixed(2))
           : Number(navPrice.toFixed(2));
 
-        const weekendGapPct = Number((((dexPrice24_7 - navPrice) / navPrice) * 100).toFixed(2));
+        const weekendGapPct = hasLiveDex
+          ? Number((((rawLiveDex - navPrice) / navPrice) * 100).toFixed(2))
+          : 0;
         const weekendSignal: "BUY_DEX_DISCOUNT" | "SHORT_DEX_PREMIUM" | "FAIR_PARITY" =
           weekendGapPct <= -0.15
             ? "BUY_DEX_DISCOUNT"
@@ -295,7 +300,7 @@ async function buildMarket(): Promise<LiveTokenizedStock[]> {
             : "FAIR_PARITY";
 
         const change24hPct =
-          liveDexPool?.priceChange?.h24 !== undefined ? Number(liveDexPool.priceChange.h24) : fb.change24h;
+          liveDexPool?.priceChange?.h24 !== undefined ? Number(liveDexPool.priceChange.h24) : 0;
         const dexTxns24h =
           (liveDexPool?.txns?.h24?.buys ?? 0) + (liveDexPool?.txns?.h24?.sells ?? 0);
 

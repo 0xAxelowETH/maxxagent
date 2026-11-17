@@ -50,7 +50,7 @@ async function openPage(browser, { width, height, mobile, acceptTerms = true }) 
   if (acceptTerms) {
     await page.evaluateOnNewDocument(() => {
       try {
-        localStorage.setItem("maxxagent_terms_v1", JSON.stringify({ acceptedAt: "screenshot" }));
+        localStorage.setItem("maxxagent_terms_v1", JSON.stringify({ version: "1", acceptedAt: "screenshot" }));
       } catch {}
     });
   }
@@ -120,7 +120,7 @@ try {
   await shotOf(d, "Chainlink NAV (", ".glass-panel", "02-price-chart-desktop.png", 900);
   await clickTab(d, "Agent");
   await sleep(2500);
-  await shotOf(d, "Buy this basket with USDC", "div.space-y-6", "03-agent-basket-desktop.png");
+  await shotOf(d, "Buy this basket", "div.space-y-6", "03-agent-basket-desktop.png");
   const d2 = await openPage(browser, { width: 1440, height: 810, mobile: false });
   await clickTab(d2, "Portfolio");
   await d2.screenshot({ path: path.join(dir, "04-portfolio-desktop.png") });

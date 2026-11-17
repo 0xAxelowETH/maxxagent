@@ -18,15 +18,25 @@ export function IndexBuys({ id }: { id: number }) {
   const [row, setRow] = useState<Row | null | undefined>(undefined);
   useEffect(() => {
     let cancelled = false;
-    fetch("/api/stats")
-      .then((r) => r.json())
-      .then((d) => {
-        if (cancelled || !d?.ok || !Array.isArray(d.indexBuys)) return;
-        setRow((d.indexBuys as Row[]).find((x) => x.id === id) ?? null);
-      })
-      .catch(() => {});
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const load = (attempt = 0) => {
+      fetch("/api/stats")
+        .then(async (r) => ({ status: r.status, data: await r.json().catch(() => null) }))
+        .then(({ status, data: d }) => {
+          if (cancelled) return;
+          if ((status === 202 || d?.loading) && attempt < 6) {
+            timer = setTimeout(() => load(attempt + 1), 10_000);
+            return;
+          }
+          if (!d?.ok || !Array.isArray(d.indexBuys)) return;
+          setRow((d.indexBuys as Row[]).find((x) => x.id === id) ?? null);
+        })
+        .catch(() => {});
+    };
+    load();
     return () => {
       cancelled = true;
+      if (timer) clearTimeout(timer);
     };
   }, [id]);
 

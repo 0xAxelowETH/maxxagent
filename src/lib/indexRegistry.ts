@@ -39,6 +39,7 @@ type Raw = readonly [string, string, string, bigint, bigint, number, readonly st
 function toIndex(id: number, raw: Raw): PublishedIndex | null {
   const [name, ticker, creator, createdAt, updatedAt, version, tokens, weightsBps] = raw;
   if (HIDDEN.has(id)) return null;
+  if (tokens.length === 0 || tokens.length !== weightsBps.length) return null;
   if (!tokens.every((t) => KNOWN.has(t.toLowerCase()))) return null;
   const safeName = cleanText(name);
   const safeTicker = cleanText(ticker);

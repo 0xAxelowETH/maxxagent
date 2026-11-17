@@ -12,7 +12,13 @@ import { deleteWatch, getNotifies, getWatch, putWatch, setNotify, validNotifyDet
 export const dynamic = "force-dynamic";
 
 const SITE = (process.env.NEXT_PUBLIC_SITE_URL || "https://maxxagent.xyz").replace(/\/$/, "");
-const DOMAIN = new URL(SITE).host;
+const DOMAIN = (() => {
+  try {
+    return new URL(SITE).host;
+  } catch {
+    return "maxxagent.xyz";
+  }
+})();
 const quickAuth = createClient();
 
 async function fidFrom(req: NextRequest): Promise<number | null> {
@@ -58,7 +64,16 @@ export async function POST(req: NextRequest) {
   if (!kvEnabled()) return off();
   const fid = await fidFrom(req);
   if (!fid) return unauthorized();
-  const body = (await req.json().catch(() => null)) as Record<string, unknown> | null;
+  const len = Number(req.headers.get("content-length") || "0");
+  if (Number.isFinite(len) && len > 16_384) return NextResponse.json({ ok: false, error: "Request body too large." }, { status: 413 });
+  const raw = await req.text().catch(() => "");
+  if (!raw || raw.length > 16_384) return NextResponse.json({ ok: false, error: "Invalid request body." }, { status: raw.length > 16_384 ? 413 : 400 });
+  let body: Record<string, unknown> | null = null;
+  try {
+    body = JSON.parse(raw) as Record<string, unknown>;
+  } catch {
+    body = null;
+  }
   const address = typeof body?.address === "string" && /^0x[a-fA-F0-9]{40}$/.test(body.address) ? (body.address as `0x${string}`) : null;
   const parsed = parseSavedTarget(body?.target, BASE_TOKENIZED_STOCKS.map((s) => s.symbol));
   if (!address || !parsed) return NextResponse.json({ ok: false, error: "A wallet and a saved target are needed." }, { status: 400 });

@@ -12,21 +12,28 @@ const BLOCKED_COUNTRIES = new Set(["US", "PR", "GU", "VI", "AS", "MP", "UM"]);
 const STOCK_SYMBOLS = ["NVDAc", "AAPLc", "TSLAc", "MSFTc", "METAc", "GOOGLc", "AMZNc", "MSTRc", "SNDKc", "SPCXc"];
 // Server-to-server endpoints (Vercel Cron and Farcaster's webhook run in the US) also stay reachable: no trading there
 // "/preview" is the read-only, no-trading page for reviewers anywhere (informational only, rendered on the server)
-const PUBLIC_EVERYWHERE = ["/preview", "/agent-registration.json", "/.well-known/", "/api/cron/", "/api/miniapp/webhook", "/brand/", "/robots.txt", "/sitemap.xml", "/icon.svg", "/apple-icon.png", "/favicon.ico"];
+const PUBLIC_EVERYWHERE = ["/preview", "/agent-registration.json", "/.well-known/", "/api/og", "/api/cron/", "/api/miniapp/webhook", "/brand/", "/robots.txt", "/sitemap.xml", "/icon.svg", "/apple-icon.png", "/favicon.ico"];
 const SITE = (process.env.NEXT_PUBLIC_SITE_URL || "https://maxxagent.xyz").replace(/\/$/, "");
 const esc = (v: string) => v.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
 const PREVIEW_DESC = "Build your own index of Coinbase tokenized stocks on Base, or let an agent propose one, and buy it in one click from your own wallet. Not financial advice.";
 // Same embed as the real pages (stock pages launch on that stock), because preview crawlers run in the US
-const previewTags = (path: string) => {
+const previewTags = (path: string, searchParams?: URLSearchParams) => {
   // Only the 10 listed symbols: never reflect arbitrary URL text into the preview
   const asked = path.match(/^\/stock\/([A-Za-z]{2,8}c)$/)?.[1]?.toLowerCase();
   const stock = STOCK_SYMBOLS.find((s) => s.toLowerCase() === asked);
   const indexId = path.match(/^\/index\/(\d{1,9})$/)?.[1];
+  const basket = searchParams?.get("basket") || "";
+  const rawName = (searchParams?.get("name") || "").replace(/[^\w\s-]/g, "").trim().slice(0, 40);
   const title = stock
     ? `${stock} tokenized stock on Base — MAXXAGENT`
     : indexId
     ? `Onchain stock index #${indexId} — MAXXAGENT`
+    : basket && rawName
+    ? `${rawName} — Custom stock index on Base | MAXXAGENT`
     : "MAXXAGENT — Tokenized stock indexes on Base";
+  const ogImage = basket
+    ? `${SITE}/api/og?basket=${encodeURIComponent(basket)}${rawName ? `&name=${encodeURIComponent(rawName)}` : ""}`
+    : `${SITE}/brand/maxxagent-og.png`;
   const embed = stock
     ? { siteUrl: SITE, path: `/stock/${stock}`, buttonTitle: `Trade ${stock}` }
     : indexId
@@ -38,16 +45,19 @@ const previewTags = (path: string) => {
     ["og:site_name", "MAXXAGENT"],
     ["og:title", title],
     ["og:description", PREVIEW_DESC],
-    ["og:image", `${SITE}/brand/maxxagent-og.png`],
+    ["og:image", ogImage],
     ["twitter:card", "summary_large_image"],
     ["twitter:title", title],
     ["twitter:description", PREVIEW_DESC],
-    ["twitter:image", `${SITE}/brand/maxxagent-og.png`],
+    ["twitter:image", ogImage],
     ...Object.entries(miniappEmbedTags(embed)),
   ];
-  return tags
-    .map(([k, v]) => (k.startsWith("og:") ? `<meta property="${k}" content="${esc(v)}">` : `<meta name="${k}" content="${esc(v)}">`))
-    .join("");
+  return (
+    `<title>${esc(title)}</title>` +
+    tags
+      .map(([k, v]) => (k.startsWith("og:") ? `<meta property="${k}" content="${esc(v)}">` : `<meta name="${k}" content="${esc(v)}">`))
+      .join("")
+  );
 };
 
 /**
@@ -55,7 +65,7 @@ const previewTags = (path: string) => {
  * Protects shared third-party quotas (KyberSwap, GeckoTerminal, public RPC) from a single client.
  */
 const LIMITS: Record<string, number> = {
-  "/api/swap": 30,
+  "/api/swap": 90,
   "/api/agent": 30,
   "/api/history": 90,
   "/api/stocks": 90,
@@ -68,6 +78,7 @@ const LIMITS: Record<string, number> = {
   "/api/cron": 5,
   "/api/replay": 30,
   "/api/miniapp/webhook": 30,
+  "/api/og": 60,
 };
 const WINDOW_MS = 60_000;
 const hits = new Map<string, { start: number; count: number }>();
@@ -110,28 +121,29 @@ export function middleware(request: NextRequest) {
     return NextResponse.redirect(url, 308);
   }
 
+  const path = request.nextUrl.pathname;
+  if (path.startsWith("/api/")) {
+    const { limited, retryAfter } = rateLimited(request);
+    if (limited) {
+      return NextResponse.json(
+        { ok: false, error: "Too many requests. Please wait a moment." },
+        { status: 429, headers: { "Retry-After": String(retryAfter) } }
+      );
+    }
+  }
+
   const country = (
-    request.headers.get("x-vercel-ip-country") ||
     request.headers.get("cf-ipcountry") ||
+    request.headers.get("x-vercel-ip-country") ||
     ""
   ).toUpperCase();
 
   if (!BLOCKED_COUNTRIES.has(country)) {
-    if (request.nextUrl.pathname.startsWith("/api/")) {
-      const { limited, retryAfter } = rateLimited(request);
-      if (limited) {
-        return NextResponse.json(
-          { ok: false, error: "Too many requests. Please wait a moment." },
-          { status: 429, headers: { "Retry-After": String(retryAfter) } }
-        );
-      }
-    }
     return NextResponse.next();
   }
 
   // Public, non-trading files stay reachable from everywhere: link-preview and mini app crawlers
   // (X, Farcaster…) run in the US and would otherwise get 451 for the manifest and images
-  const path = request.nextUrl.pathname;
   if (PUBLIC_EVERYWHERE.some((p) => path === p || path.startsWith(p))) return NextResponse.next();
 
   if (path.startsWith("/api/")) {
@@ -144,8 +156,8 @@ export function middleware(request: NextRequest) {
   // Same block page for people, but with the site's preview tags so shared links still render a card.
   // 200 because preview crawlers ignore tags on error pages; the app itself and every API stay blocked.
   return new NextResponse(
-    "<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><title>MAXXAGENT — Tokenized stock indexes on Base</title>" +
-      previewTags(path) +
+    "<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>" +
+      previewTags(path, request.nextUrl.searchParams) +
       "</head><body style='font-family:system-ui;background:#050811;color:#e2e8f0;display:grid;place-items:center;min-height:100vh;margin:0;padding:16px'>" +
       "<div style='max-width:480px'><h1 style='font-size:20px'>Not available in your jurisdiction</h1>" +
       "<p style='color:#94a3b8;font-size:14px;line-height:1.6'>Coinbase tokenized stocks on Base are only available to persons in eligible jurisdictions outside of the United States.</p>" +
@@ -155,5 +167,5 @@ export function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/((?!_next/static|_next/image|favicon.ico|logos/).*)"],
+  matcher: ["/((?!_next/static|_next/image|favicon.ico|icon\\.svg|apple-icon\\.png|logos/).*)"],
 };

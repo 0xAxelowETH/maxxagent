@@ -164,9 +164,15 @@ async function pressRelease(cik: number, accession: string, company: string): Pr
     const m = /href="([^"]+\.html?)"/i.exec(row);
     if (m) {
       // Inline-XBRL exhibits are linked through SEC's viewer ("/ix?doc=/Archives/…"): read the document itself
-      const path = m[1].replace(/^\/ix\?doc=/, "");
-      href = path.startsWith("http") ? path : `https://www.sec.gov${path}`;
-      break;
+      const rawPath = m[1].replace(/^\/ix\?doc=/, "");
+      const candidate = rawPath.startsWith("http") ? rawPath : `https://www.sec.gov${rawPath}`;
+      try {
+        const u = new URL(candidate);
+        if (u.protocol === "https:" && u.hostname === "www.sec.gov") {
+          href = u.toString();
+          break;
+        }
+      } catch {}
     }
   }
   if (!href) return null;
@@ -214,6 +220,10 @@ async function enrich8K(cik: number, accession: string, url: string, company: st
     ? { title: pr.title, summary: pr.opening ?? undefined, url: pr.url, pressRelease: true }
     : { summary: (await filingOpening(url).catch(() => null)) ?? undefined };
   enriched.set(accession, value);
+  if (enriched.size > 500) {
+    const oldest = enriched.keys().next().value;
+    if (oldest !== undefined) enriched.delete(oldest);
+  }
   return value;
 }
 
@@ -379,11 +389,10 @@ const decode = (s: string) =>
     .replace(/&nbsp;/g, " ")
     .replace(/&mdash;/g, "—")
     .replace(/&ndash;/g, "–")
+    .replace(/<[^>]+>/g, " ")
     .replace(/&lt;/g, "<")
     .replace(/&gt;/g, ">")
     .replace(/&amp;/g, "&")
-    // escaped HTML in descriptions (&lt;p&gt;…) becomes tags only after decoding
-    .replace(/<[^>]+>/g, " ")
     .replace(/\s+/g, " ")
     .trim();
 const tag = (block: string, name: string) => block.match(new RegExp(`<${name}(?:\\s[^>]*)?>([\\s\\S]*?)</${name}>`, "i"))?.[1] ?? "";
@@ -526,7 +535,15 @@ async function build(): Promise<NewsItem[]> {
  * The built feed is kept in Vercel's shared Data Cache, so one successful build serves every server instance
  * for 15 minutes (a per-instance memory cache alone meant cold instances kept rebuilding from scratch).
  */
-const sharedBuild = unstable_cache(build, ["news-feed-v10"], { revalidate: CACHE_MS / 1000 });
+const sharedBuild = unstable_cache(
+  async () => {
+    const items = await build();
+    if (items.length === 0) throw new Error("Empty news feed");
+    return items;
+  },
+  ["news-feed-v10"],
+  { revalidate: CACHE_MS / 1000 }
+);
 
 let cache: { at: number; items: NewsItem[] } | null = null;
 let inflight: Promise<NewsItem[]> | null = null;

@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
+import { timingSafeEqual } from "node:crypto";
 import { createPublicClient, parseAbi } from "viem";
 import { base } from "viem/chains";
 import { baseTransport } from "@/lib/rpc";
-import { kvEnabled } from "@/lib/kv";
+import { kv, kvEnabled } from "@/lib/kv";
 import { BASE_TOKENIZED_STOCKS } from "@/lib/tokenizedStocks";
 import { alertPctOf, computeDrift } from "@/lib/drift";
 import { deleteNotify, getNotifies, getWatch, listWatchFids, putWatch, type DriftWatch } from "@/lib/driftWatch";
@@ -94,12 +95,22 @@ async function notify(fid: number, today: string, title: string, body: string): 
   return delivered;
 }
 
+function secretsEqual(a: string, b: string): boolean {
+  const ba = Buffer.from(a, "utf8");
+  const bb = Buffer.from(b, "utf8");
+  if (ba.length !== bb.length) return false;
+  return timingSafeEqual(ba, bb);
+}
+
 export async function GET(req: NextRequest) {
   // Vercel Cron sends "Authorization: Bearer $CRON_SECRET"; without a secret nobody may start the check
   const secret = process.env.CRON_SECRET;
   if (!secret) return NextResponse.json({ ok: true, skipped: "CRON_SECRET not set" });
-  if (req.headers.get("authorization") !== `Bearer ${secret}`) return NextResponse.json({ ok: false }, { status: 401 });
+  const auth = req.headers.get("authorization") || "";
+  if (!secretsEqual(auth, `Bearer ${secret}`)) return NextResponse.json({ ok: false }, { status: 401 });
   if (!kvEnabled()) return NextResponse.json({ ok: true, skipped: "storage not configured" });
+  const lock = await kv<string | null>("SET", "cron:drift:lock", "1", "NX", "EX", 55).catch(() => "OK");
+  if (lock !== "OK") return NextResponse.json({ ok: true, skipped: "already running" }, { headers: { "Cache-Control": "no-store" } });
 
   const started = Date.now();
   const counts = { watches: 0, checked: 0, off: 0, alerted: 0, skipped: 0, failed: 0 };
@@ -141,7 +152,8 @@ export async function GET(req: NextRequest) {
             }
           }
         }
-        await putWatch(next);
+        // Re-check existence before writing so a concurrent DELETE /api/watch is never resurrected
+        if (await getWatch(fid)) await putWatch(next);
       } catch {
         counts.failed++;
       }

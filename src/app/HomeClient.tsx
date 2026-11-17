@@ -49,6 +49,7 @@ import { AgentAnalysisReport } from "@/lib/agentEngine";
 import { INDEX_REGISTRY_ABI } from "@/lib/contracts/StockMaxxIndexRegistryABI";
 import { decodeErrorResult, encodeFunctionData } from "viem";
 import {
+  normalizeChainHex,
   prepareBuy,
   prepareSell,
   sendContractCall,
@@ -72,6 +73,7 @@ import { AgentTrace } from "@/components/AgentTrace";
 import { BasketReplay } from "@/components/BasketReplay";
 import { TargetWatch, alertPctOf, driftSummary, type RebalanceLogEntry } from "@/components/TargetWatch";
 import { computeDrift, parseSavedTarget, type SavedTarget } from "@/lib/drift";
+import { roundWeightsBps } from "@/lib/weights";
 import { TermsGate, TERMS_STORAGE_KEY } from "@/components/TermsGate";
 import { UsdAmountInput } from "@/components/UsdAmountInput";
 import { NewsFeed } from "@/components/NewsFeed";
@@ -279,7 +281,8 @@ function PortfolioDonutChart({
 }
 
 // Oracle age for compact cells: 12m / 17h / 2d
-const fmtAge = (m: number) => (m < 60 ? `${Math.round(m)}m ago` : m < 48 * 60 ? `${Math.round(m / 60)}h ago` : `${Math.round(m / 1440)}d ago`);
+const fmtAge = (m: number) =>
+  !Number.isFinite(m) || m < 0 ? "stale" : m < 60 ? `${Math.round(m)}m ago` : m < 48 * 60 ? `${Math.round(m / 60)}h ago` : `${Math.round(m / 1440)}d ago`;
 
 const SLIPPAGE_OPTIONS = [30, 50, 100];
 
@@ -291,10 +294,7 @@ export default function StockMaxxingDashboard() {
   // Keep ?tab= in the address bar in step with the open tab (a new history entry per switch), and follow Back/Forward
   const tabUrlReady = useRef(false);
   useEffect(() => {
-    if (!tabUrlReady.current) {
-      tabUrlReady.current = true; // first render: the URL decides the tab, not the other way round
-      return;
-    }
+    if (!tabUrlReady.current) return;
     const url = new URL(window.location.href);
     const slug = SLUG_BY_TAB[activeTab] ?? "";
     if ((url.searchParams.get("tab") ?? "") === slug) return;
@@ -629,9 +629,11 @@ export default function StockMaxxingDashboard() {
   const targetReady = Boolean(savedTarget && walletAddress && balancesFor === walletAddress.toLowerCase());
   const targetOff = targetDrift !== null && (targetDrift.driftPct >= alertPctOf(savedTarget) || targetDrift.breaches.length > 0);
 
+  const orderLockRef = useRef(false);
   // Step 1 (buy): quote one or more B20 stocks and open the review. Nothing is sent yet.
   const buyStocks = useCallback(
     async (legs: BasketLeg[], label: string) => {
+      if (orderLockRef.current) return;
       setBasketError("");
       setBasketResult(null);
       if (!nonUsComplianceAccepted) {
@@ -652,15 +654,18 @@ export default function StockMaxxingDashboard() {
         setBasketError("No wallet detected. Install Coinbase Wallet or MetaMask to buy on Base.");
         return;
       }
+      orderLockRef.current = true;
       setBasketPending(true);
       try {
         const sender = await resolveSender(eth);
         if (sender.toLowerCase() !== walletAddress.toLowerCase()) setWalletAddress(sender);
         const order = await prepareBuy({ eth, sender, legs: validLegs, slippageBps: slippageRef.current, onStatus: setBasketStatus });
+        setChainIdHex("0x2105");
         setReview({ order, label, legs: { buy: validLegs } });
       } catch (err: unknown) {
         setBasketError(err instanceof Error ? err.message : "Could not prepare the order");
       } finally {
+        orderLockRef.current = false;
         setBasketStatus("");
         setBasketPending(false);
       }
@@ -671,6 +676,7 @@ export default function StockMaxxingDashboard() {
   // Step 1 (sell): quote the sale and open the review. Nothing is sent yet.
   const sellStocks = useCallback(
     async (legs: SellLeg[], label: string) => {
+      if (orderLockRef.current) return;
       setBasketError("");
       setBasketResult(null);
       if (!nonUsComplianceAccepted) {
@@ -684,6 +690,7 @@ export default function StockMaxxingDashboard() {
         return;
       }
       if (validLegs.length === 0) return;
+      orderLockRef.current = true;
       setBasketPending(true);
       try {
         const sender = await resolveSender(eth);
@@ -694,10 +701,12 @@ export default function StockMaxxingDashboard() {
           throw new Error("Your wallet switched to another account. Balances were refreshed: check them and try again.");
         }
         const order = await prepareSell({ eth, sender, legs: validLegs, slippageBps: slippageRef.current, onStatus: setBasketStatus });
+        setChainIdHex("0x2105");
         setReview({ order, label, legs: { sell: validLegs } });
       } catch (err: unknown) {
         setBasketError(err instanceof Error ? err.message : "Could not prepare the sale");
       } finally {
+        orderLockRef.current = false;
         setBasketStatus("");
         setBasketPending(false);
       }
@@ -724,6 +733,7 @@ export default function StockMaxxingDashboard() {
       const order = review.legs.buy
         ? await prepareBuy({ eth, sender, legs: review.legs.buy, slippageBps: slippageRef.current, onStatus: setBasketStatus })
         : await prepareSell({ eth, sender, legs: review.legs.sell || [], slippageBps: slippageRef.current, onStatus: setBasketStatus });
+      setChainIdHex("0x2105");
       setReview({ ...review, order });
     } catch (err: unknown) {
       setReview(null);
@@ -736,13 +746,14 @@ export default function StockMaxxingDashboard() {
 
   // Step 2: the user confirmed the review; only now does the wallet open
   const confirmReview = useCallback(async () => {
-    if (!review) return;
+    if (!review || orderLockRef.current) return;
     if (Date.now() - review.order.preparedAt > QUOTE_TTL_MS) {
       await refreshReview(); // show fresh numbers first, never send a stale quote silently
       return;
     }
     const eth = getEthProvider();
     if (!eth) return;
+    orderLockRef.current = true;
     const { order, label } = review;
     setReview(null);
     setBasketPending(true);
@@ -754,6 +765,7 @@ export default function StockMaxxingDashboard() {
         err instanceof Error ? err.message : order.side === "buy" ? "Purchase cancelled or failed" : "Sale cancelled or failed"
       );
     } finally {
+      orderLockRef.current = false;
       setBasketStatus("");
       setBasketPending(false);
     }
@@ -784,12 +796,19 @@ export default function StockMaxxingDashboard() {
   }, []);
 
   // Fetch live B20 Tokenized Stocks + Chainlink Oracles + Live Aerodrome DEX Pools on Base Mainnet
+  const stocksFetchCtrl = useRef<AbortController | null>(null);
+  const stocksFetchSeq = useRef(0);
   const fetchLiveStocks = useCallback(async (walletToQuery?: string, silent = false) => {
+    stocksFetchCtrl.current?.abort();
+    const ctrl = new AbortController();
+    stocksFetchCtrl.current = ctrl;
+    const seq = ++stocksFetchSeq.current;
     if (!silent) setLoadingStocks(true);
     try {
       const q = walletToQuery ? `?wallet=${encodeURIComponent(walletToQuery)}` : "";
-      const res = await fetch(`/api/stocks${q}`);
+      const res = await fetch(`/api/stocks${q}`, { signal: ctrl.signal });
       const data = await res.json();
+      if (seq !== stocksFetchSeq.current) return;
       if (data?.ok && Array.isArray(data.stocks)) {
         setStocks(data.stocks);
         setTotalTvlUsd(data.totalBaseStocksTvlUsd || 0);
@@ -800,16 +819,17 @@ export default function StockMaxxingDashboard() {
           setWalletBalances(data.walletBalances);
           if (walletToQuery) setBalancesFor(walletToQuery.toLowerCase());
         }
-        if (walletToQuery) setBalancesError(data.walletBalances ? "" : data.walletError || "Could not read your balances.");
+        if (walletToQuery) setBalancesError(data.walletError || (data.walletBalances ? "" : "Could not read your balances."));
         if (typeof data.walletUsdc === "number") setUsdcBalance(data.walletUsdc);
         if (typeof data.walletEth === "number") setEthBalance(data.walletEth);
         if (typeof data.ethUsd === "number") setEthUsd(data.ethUsd);
       }
     } catch (err) {
+      if ((err as { name?: string })?.name === "AbortError") return;
       if (walletToQuery) setBalancesError("Could not reach the server. Check your connection.");
       console.error("Failed to fetch live tokenized stocks:", err);
     } finally {
-      if (!silent) setLoadingStocks(false);
+      if (seq === stocksFetchSeq.current && !silent) setLoadingStocks(false);
     }
   }, []);
 
@@ -921,11 +941,24 @@ export default function StockMaxxingDashboard() {
   };
 
   // Shared by manual connect and silent restore: show the account, read balances, listen for changes
-  const attachWallet = (eth: EthereumProvider, account: string, chainId: string) => {
+  const attachWallet = (eth: EthereumProvider, account: string, chainId: unknown) => {
+    const normalized = normalizeChainHex(chainId);
     setWalletAddress(account);
     setInspectAddress(account);
-    setChainIdHex(chainId);
+    setChainIdHex(normalized || "0x2105");
     fetchLiveStocks(account);
+    // Some extensions report "0x1" for the first ~200ms after reload while waking up; re-read quietly once
+    if (normalized !== "0x2105") {
+      setTimeout(() => {
+        eth
+          .request({ method: "eth_chainId" })
+          .then((c) => {
+            const nextChain = normalizeChainHex(c);
+            if (nextChain) setChainIdHex(nextChain);
+          })
+          .catch(() => {});
+      }, 500);
+    }
     // One set of listeners at a time: reconnecting must not stack duplicates
     detachListenersRef.current?.();
     const onAccounts = (...args: unknown[]) => {
@@ -933,11 +966,21 @@ export default function StockMaxxingDashboard() {
       setWalletAddress(next);
       setInspectAddress(next);
       setWalletBalances({});
+      setBalancesFor("");
+      setBalancesError("");
       setUsdcBalance(null);
+      setEthBalance(null);
+      setReview(null);
+      setBasketError("");
+      setBasketResult(null);
+      setPnl({ for: "", error: "", data: null });
       if (next) fetchLiveStocks(next);
-      else saveWallet(null); // disconnected from inside the wallet: don't auto-reconnect
+      else {
+        setChainIdHex("");
+        saveWallet(null); // disconnected from inside the wallet: don't auto-reconnect
+      }
     };
-    const onChain = (...args: unknown[]) => setChainIdHex(String(args[0] || ""));
+    const onChain = (...args: unknown[]) => setChainIdHex(normalizeChainHex(args[0]) || "0x2105");
     eth.on?.("accountsChanged", onAccounts);
     eth.on?.("chainChanged", onChain);
     detachListenersRef.current = () => {
@@ -958,7 +1001,15 @@ export default function StockMaxxingDashboard() {
     setWalletAddress("");
     setInspectAddress("");
     setWalletBalances({});
+    setBalancesFor("");
+    setBalancesError("");
     setUsdcBalance(null);
+    setEthBalance(null);
+    setChainIdHex("");
+    setReview(null);
+    setBasketError("");
+    setBasketResult(null);
+    setPnl({ for: "", error: "", data: null });
     setConnectedWalletName("");
   };
 
@@ -995,9 +1046,17 @@ export default function StockMaxxingDashboard() {
       const accounts = (await eth.request({
         method: "eth_requestAccounts",
       })) as string[];
-      const chainId = (await eth.request({ method: "eth_chainId" })) as string;
+      let chainId = normalizeChainHex(await eth.request({ method: "eth_chainId" }).catch(() => ""));
       if (accounts && accounts[0]) {
-        attachWallet(eth, accounts[0], chainId);
+        if (chainId && chainId !== "0x2105") {
+          try {
+            await eth.request({ method: "wallet_switchEthereumChain", params: [{ chainId: "0x2105" }] });
+            chainId = "0x2105";
+          } catch {
+            // Keep connected even if user postpones switching until trade time
+          }
+        }
+        attachWallet(eth, accounts[0], chainId || "0x2105");
         if (external) saveWallet({ kind: external });
         else if (picked) saveWallet({ kind: "injected", rdns: picked.info.rdns, name: picked.info.name });
       }
@@ -1010,6 +1069,7 @@ export default function StockMaxxingDashboard() {
   const restoreTried = useRef(false);
   const [inMiniApp, setInMiniApp] = useState(false);
   useEffect(() => {
+    if (termsAccepted !== true) return;
     let cancelled = false;
     detectMiniApp().then(async (found) => {
       if (!found || cancelled) return;
@@ -1030,11 +1090,11 @@ export default function StockMaxxingDashboard() {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [termsAccepted]);
 
   // Silent reconnect after a refresh. Never opens a popup: eth_accounts / stored SDK sessions only.
   useEffect(() => {
-    if (restoreTried.current || walletAddress) return;
+    if (termsAccepted !== true || restoreTried.current || walletAddress) return;
     let saved: SavedWallet | null = null;
     try {
       saved = JSON.parse(localStorage.getItem(WALLET_STORAGE_KEY) || "null");
@@ -1065,7 +1125,7 @@ export default function StockMaxxingDashboard() {
       });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [walletProviders, walletAddress]);
+  }, [walletProviders, walletAddress, termsAccepted]);
 
   const switchToBaseMainnet = async (modeOverride?: "sepolia" | "mainnet") => {
     const mode = modeOverride || txTargetNetwork;
@@ -1157,8 +1217,8 @@ export default function StockMaxxingDashboard() {
       const sender = walletAddress ? await resolveSender(eth) : ((await eth.request({ method: "eth_requestAccounts" })) as string[])[0];
       if (sender.toLowerCase() !== walletAddress.toLowerCase()) setWalletAddress(sender);
       // The dry run must hit Base (on another chain the registry address has no code and would "pass")
-      const currentChain = (await eth.request({ method: "eth_chainId" })) as string;
-      if (currentChain?.toLowerCase() !== "0x2105") await switchToBaseMainnet("mainnet");
+      const currentChain = normalizeChainHex(await eth.request({ method: "eth_chainId" }).catch(() => ""));
+      if (currentChain && currentChain !== "0x2105") await switchToBaseMainnet("mainnet");
       const calldata = encodeFunctionData({
         abi: INDEX_REGISTRY_ABI,
         functionName: "createIndex",
@@ -1257,18 +1317,12 @@ export default function StockMaxxingDashboard() {
 
   const normalizeCustomWeights = () => {
     const entries = Object.entries(customWeights).filter(([, w]) => w > 0);
-    const sum = entries.reduce((acc, [, w]) => acc + w, 0);
-    if (sum === 0) return;
+    if (entries.length === 0) return;
+    const rounded = roundWeightsBps(entries.map(([, w]) => w));
+    if (!rounded) return;
     const next: Record<string, number> = {};
-    let running = 0;
-    entries.forEach(([sym, w], idx) => {
-      if (idx === entries.length - 1) {
-        next[sym] = 10000 - running;
-      } else {
-        const norm = Math.round((w / sum) * 10000);
-        next[sym] = norm;
-        running += norm;
-      }
+    entries.forEach(([sym], idx) => {
+      next[sym] = rounded[idx];
     });
     setCustomWeights(next);
   };
@@ -1301,7 +1355,18 @@ export default function StockMaxxingDashboard() {
     setActiveTab("indexes");
     setSharedBasketLoaded(true);
     setTimeout(() => document.getElementById("index-builder")?.scrollIntoView({ behavior: "smooth", block: "start" }), 400);
+    // Mark URL ready only after initial ?tab= / ?basket= parsing so we don't push a duplicate history entry
+    queueMicrotask(() => {
+      tabUrlReady.current = true;
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  useEffect(() => {
+    if (!tabUrlReady.current) {
+      queueMicrotask(() => {
+        tabUrlReady.current = true;
+      });
+    }
   }, []);
   const shareLinkFor = (weightsBps: Record<string, number>) =>
     `${typeof window !== "undefined" ? window.location.origin : PUBLIC_SITE_URL}/?${basketToQuery(weightsBps, basketUsd)}`;
@@ -1467,7 +1532,7 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
 
             {walletAddress ? (
               <div className="flex items-center gap-2">
-                {chainIdHex && chainIdHex !== "0x2105" && (
+                {chainIdHex && normalizeChainHex(chainIdHex) !== "0x2105" && (
                   <button
                     onClick={() => switchToBaseMainnet("mainnet")}
                     className="rounded-xl bg-amber-500/20 border border-amber-500/40 px-3 py-2 text-xs font-semibold text-amber-300 hover:bg-amber-500/30 transition cursor-pointer"
@@ -1586,7 +1651,11 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                         onClick={() => connectWallet(p)}
                         className="w-full flex items-center gap-2.5 rounded-xl px-2.5 py-2 text-left text-xs font-semibold text-slate-200 hover:bg-slate-800 cursor-pointer"
                       >
-                        {p.info.icon ? <img src={p.info.icon} alt="" className="h-5 w-5 rounded" /> : <Wallet className="h-4 w-4" />}
+                        {/^https:\/\//i.test(p.info.icon || "") || /^data:image\/(png|jpeg|webp|gif|svg\+xml)[,;]/i.test(p.info.icon || "") ? (
+                          <img src={p.info.icon} alt="" className="h-5 w-5 rounded" />
+                        ) : (
+                          <Wallet className="h-4 w-4" />
+                        )}
                         {p.info.name}
                       </button>
                     ))}
@@ -1859,7 +1928,7 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                   </h2>
 
                   <p className="text-xs sm:text-sm text-slate-300 leading-relaxed max-w-2xl">
-                    Own US stocks from anywhere outside the US, from about $1.50, in your own wallet. Tell the agent what you
+                    Buy tokenized US stock exposure from anywhere outside the US, from about $1.50, in your own wallet. Tell the agent what you
                     want: it researches from Chainlink, SEC filings and DEX pools, shows every step with its source, and says
                     what it won&apos;t do. No wallet needed to try.
                   </p>
@@ -2232,7 +2301,7 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                 </div>
                 <div className="flex items-center gap-2 text-xs">
                   <span className="inline-flex items-center gap-1.5 rounded-md bg-emerald-500/10 border border-emerald-500/30 px-2.5 py-1 font-mono text-emerald-300">
-                    Dividend-Adjusted Multiplier Active (NVDAc, METAc, GOOGLc &gt; 1.000x)
+                    Dividend-Adjusted Multiplier Active (AAPLc, NVDAc, METAc, GOOGLc &gt; 1.000x)
                   </span>
                 </div>
               </div>
@@ -2993,6 +3062,7 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                   {/* Rebalance the wallet's current stocks toward this basket (sell overweight, then buy underweight) */}
                   {walletAddress && balancesFor === walletAddress.toLowerCase() && (
                     <RebalancePanel
+                      key={walletAddress}
                       stocks={stocks}
                       balances={walletBalances}
                       usdcBalance={usdcBalance}

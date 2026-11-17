@@ -1,7 +1,7 @@
 import type { MetadataRoute } from "next";
 import { BASE_TOKENIZED_STOCKS } from "@/lib/tokenizedStocks";
 
-const SITE_URL = (process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000").replace(/\/$/, "");
+const SITE_URL = (process.env.NEXT_PUBLIC_SITE_URL || "https://maxxagent.xyz").replace(/\/$/, "");
 
 export default function sitemap(): MetadataRoute.Sitemap {
   const stocks = BASE_TOKENIZED_STOCKS.map((s) => `/stock/${s.symbol}`);

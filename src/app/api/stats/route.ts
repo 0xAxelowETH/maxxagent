@@ -41,6 +41,7 @@ const client = createPublicClient({ chain: base, transport: baseTransport({ time
 
 interface Trade {
   hash: string;
+  logIndex: number;
   block: bigint;
   /** unix seconds, from the block itself (block time is not constant on Base) */
   time: number;
@@ -112,31 +113,42 @@ async function isAttributed(hash: `0x${string}`, wallet: string): Promise<boolea
   return codesOf(tx.input).includes(BUILDER_CODE);
 }
 
-async function readTrade(hash: `0x${string}`, usdIn: number): Promise<Trade | null> {
+async function readTrades(hash: `0x${string}`, entries: { logIndex: number; usd: number }[]): Promise<Trade[]> {
   const r = await withRetry(() => client.getTransactionReceipt({ hash }));
-  if (r.status !== "success") return null;
-  const log = r.logs.find((l) => l.address.toLowerCase() === ROUTER.toLowerCase() && l.topics[0] === SWAPPED_TOPIC);
-  if (!log) return null;
-  const [sender, src, dst] = decodeAbiParameters(
-    ["address", "address", "address", "address", "uint256", "uint256"].map((type) => ({ type })),
-    log.data
-  ) as readonly [string, string, string, string, bigint, bigint];
-  const s = src.toLowerCase();
-  const d = dst.toLowerCase();
-  const side = STOCKS.has(d) && (s === USDC || s === NATIVE_ETH) ? "buy" : STOCKS.has(s) && d === USDC ? "sell" : null;
-  if (!side) return null; // not a stock trade
-  const wallet = sender.toLowerCase();
+  if (r.status !== "success") return [];
+  const swappedLogs = r.logs.filter((l) => l.address.toLowerCase() === ROUTER.toLowerCase() && l.topics[0] === SWAPPED_TOPIC);
+  if (swappedLogs.length === 0) return [];
   const block = await withRetry(() => client.getBlock({ blockNumber: r.blockNumber }));
-  return {
-    hash,
-    block: r.blockNumber,
-    time: Number(block.timestamp),
-    wallet,
-    side,
-    symbol: STOCKS.get(side === "buy" ? d : s)!.symbol,
-    usd: usdIn,
-    attributed: await isAttributed(hash, wallet).catch(() => false),
-  };
+  const attrCache = new Map<string, boolean>();
+  const out: Trade[] = [];
+  for (let i = 0; i < swappedLogs.length; i++) {
+    const log = swappedLogs[i];
+    const [sender, src, dst] = decodeAbiParameters(
+      ["address", "address", "address", "address", "uint256", "uint256"].map((type) => ({ type })),
+      log.data
+    ) as readonly [string, string, string, string, bigint, bigint];
+    const s = src.toLowerCase();
+    const d = dst.toLowerCase();
+    const side = STOCKS.has(d) && (s === USDC || s === NATIVE_ETH) ? "buy" : STOCKS.has(s) && d === USDC ? "sell" : null;
+    if (!side) continue;
+    const wallet = sender.toLowerCase();
+    if (!attrCache.has(wallet)) {
+      attrCache.set(wallet, await isAttributed(hash, wallet).catch(() => false));
+    }
+    const matchedEntry = entries[i] ?? entries[0];
+    out.push({
+      hash,
+      logIndex: log.logIndex ?? i,
+      block: r.blockNumber,
+      time: Number(block.timestamp),
+      wallet,
+      side,
+      symbol: STOCKS.get(side === "buy" ? d : s)!.symbol,
+      usd: matchedEntry?.usd ?? 0,
+      attributed: attrCache.get(wallet)!,
+    });
+  }
+  return out;
 }
 
 async function refresh(): Promise<StatsState> {
@@ -156,8 +168,8 @@ async function refresh(): Promise<StatsState> {
       })
     )
   );
-  const ours = new Map<string, number>();
-  for (const logs of found as unknown as { transactionHash: `0x${string}`; data: string }[][]) {
+  const ours = new Map<string, { logIndex: number; usd: number }[]>();
+  for (const logs of found as unknown as { transactionHash: `0x${string}`; logIndex?: string; data: string }[][]) {
     for (const l of logs) {
       if (!l.data.includes(SOURCE_TAG)) continue;
       let usd = 0;
@@ -166,12 +178,17 @@ async function refresh(): Promise<StatsState> {
         const json = JSON.parse(Buffer.from(bytes.slice(2), "hex").toString("utf8"));
         usd = Number(json.AmountInUSD) || 0;
       } catch {}
-      ours.set(l.transactionHash, usd);
+      const list = ours.get(l.transactionHash) ?? [];
+      list.push({ logIndex: l.logIndex ? Number(l.logIndex) : list.length, usd });
+      ours.set(l.transactionHash, list);
     }
   }
-  const fresh = [...ours.entries()].filter(([h]) => !trades.has(h));
-  const read = await pool(fresh, 4, ([h, usd]) => readTrade(h as `0x${string}`, usd).catch(() => null));
-  for (const t of read) if (t) trades.set(t.hash, t);
+  const seenHashes = new Set([...trades.values()].map((t) => t.hash));
+  const fresh = [...ours.entries()].filter(([h]) => !seenHashes.has(h));
+  const read = await pool(fresh, 4, ([h, entries]) =>
+    readTrades(h as `0x${string}`, entries.sort((a, b) => a.logIndex - b.logIndex)).catch(() => [] as Trade[])
+  );
+  for (const list of read) for (const t of list) trades.set(`${t.hash}:${t.logIndex}`, t);
   return { scannedTo: latest, trades, at: Date.now(), since };
 }
 

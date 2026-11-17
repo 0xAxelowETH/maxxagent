@@ -201,8 +201,9 @@ function loadHistory(symbol: string, tf: HistoryTf): Promise<void> {
   const p = fetch(`/api/history?symbol=${symbol}&tf=${tf}`)
     .then((r) => r.json())
     .then((d: HistoryResponse) => {
-      // keep a previous good series if a refresh fails
-      if (d?.ok || !hit) historyCache.set(key, { at: Date.now(), data: d?.ok ? d : null });
+      // keep a previous good series if a refresh fails; never pin an error/429 for 5 minutes
+      if (d?.ok) historyCache.set(key, { at: Date.now(), data: d });
+      else if (!hit) historyCache.set(key, { at: Date.now() - HISTORY_TTL_MS + 15_000, data: null });
     })
     .catch(() => {
       if (!hit) historyCache.set(key, { at: Date.now() - HISTORY_TTL_MS + 30_000, data: null }); // retry in 30s
@@ -329,10 +330,14 @@ export function InteractiveB20TradingChart({
   const cursorT = hoverT ?? tMax;
   const navAt = nearest(nav, cursorT);
   const dexAt = nearest(dex, cursorT);
-  const displayedNav = navAt ? navAt[1] : liveActive?.navPrice ?? 0;
-  const displayedDex = dexAt ? dexAt[1] : liveActive?.dexPrice24_7 ?? 0;
+  const displayedNav = hoverT !== null ? (navAt ? navAt[1] : liveActive?.navPrice ?? 0) : liveActive?.navPrice ?? (navAt ? navAt[1] : 0);
+  const displayedDex = hoverT !== null ? (dexAt ? dexAt[1] : liveActive?.dexPrice24_7 ?? 0) : liveActive?.dexPrice24_7 ?? (dexAt ? dexAt[1] : 0);
   const gapAtCursor =
-    displayedNav > 0 && displayedDex > 0 ? ((displayedDex - displayedNav) / displayedNav) * 100 : 0;
+    hoverT === null && liveActive && typeof liveActive.weekendGapPct === "number"
+      ? liveActive.weekendGapPct
+      : displayedNav > 0 && displayedDex > 0
+      ? ((displayedDex - displayedNav) / displayedNav) * 100
+      : 0;
   const change24h = liveActive?.change24hPct ?? 0;
   const uiMultiplier = liveActive ? liveActive.uiMultiplier : activeStock.defaultMultiplier;
   const liquidityUsd = liveActive?.dexLiquidityUsd;
@@ -549,10 +554,19 @@ export function InteractiveB20TradingChart({
               <div className="rounded-xl border border-slate-800/90 bg-[#081022] p-3">
                 <div className="text-[10px] text-slate-400 font-sans">DEX liquidity (all pools)</div>
                 <div className="text-sm font-extrabold text-cyan-300 mt-0.5">
-                  {liquidityUsd !== undefined ? `$${(liquidityUsd / 1e3).toFixed(0)}K` : "—"}
+                  {liquidityUsd !== undefined
+                    ? liquidityUsd >= 1_000_000
+                      ? `$${(liquidityUsd / 1e6).toFixed(2)}M`
+                      : `$${(liquidityUsd / 1e3).toFixed(0)}K`
+                    : "—"}
                 </div>
                 <div className="text-[10px] text-slate-500">
-                  24h vol: {volume24hUsd !== undefined ? `$${(volume24hUsd / 1e3).toFixed(0)}K` : "—"}
+                  24h vol:{" "}
+                  {volume24hUsd !== undefined
+                    ? volume24hUsd >= 1_000_000
+                      ? `$${(volume24hUsd / 1e6).toFixed(2)}M`
+                      : `$${(volume24hUsd / 1e3).toFixed(0)}K`
+                    : "—"}
                 </div>
               </div>
             </div>
@@ -886,15 +900,15 @@ export function B20DividendSplitSimulator({ stocks }: { stocks: LiveTokenizedSto
     ? liveActive.uiMultiplier
     : activeStock.defaultMultiplier;
 
+  // Chainlink Total-Return NAV already prices 1 raw B20 token inclusive of uiMultiplier
   const currentSharesUI = rawTokensInput * currentMultiplier;
-  const currentUsdValue = currentSharesUI * liveNavPrice;
+  const currentUsdValue = rawTokensInput * liveNavPrice;
 
-  // Simulated multiplier after dividend reinvestment & stock split
+  // Simulated multiplier after hypothetical dividend adjustment & stock split
   const simulatedNewMultiplier =
     currentMultiplier * (1 + simulatedDividendPct / 100) * simulatedSplitRatio;
   const simulatedSharesUI = rawTokensInput * simulatedNewMultiplier;
-  const postSplitSharePrice = liveNavPrice / simulatedSplitRatio;
-  const simulatedUsdValue = simulatedSharesUI * postSplitSharePrice;
+  const simulatedUsdValue = rawTokensInput * liveNavPrice * (1 + simulatedDividendPct / 100);
   const dividendGainUsd = simulatedUsdValue - currentUsdValue;
 
   return (
@@ -914,9 +928,9 @@ export function B20DividendSplitSimulator({ stocks }: { stocks: LiveTokenizedSto
               </span>
             </div>
             <p className="text-xs text-slate-400">
-              See how Coinbase&apos;s <code className="text-emerald-300">uiMultiplier()</code>{" "}
-              automatically increases your share balance during dividends & stock splits without
-              manual claiming.
+              Hypothetical illustration of Coinbase&apos;s <code className="text-emerald-300">uiMultiplier()</code>{" "}
+              adjustments. Dividends are not guaranteed and adjustments are subject to withholding taxes, fees &amp;
+              expenses. Not financial advice.
             </p>
           </div>
         </div>
@@ -948,10 +962,13 @@ export function B20DividendSplitSimulator({ stocks }: { stocks: LiveTokenizedSto
             </label>
             <input
               type="number"
-              min={0.1}
-              step={1}
+              min={0.01}
+              step="any"
               value={rawTokensInput}
-              onChange={(e) => setRawTokensInput(Math.max(0.01, Number(e.target.value) || 1))}
+              onChange={(e) => {
+                const v = Number(e.target.value);
+                if (Number.isFinite(v) && v >= 0) setRawTokensInput(v);
+              }}
               className="w-full rounded-xl border border-slate-700 bg-[#040814] px-3 py-2 font-mono text-xs text-white focus:border-[#4C6FFF] focus:outline-none"
             />
           </div>

@@ -23,7 +23,7 @@ export interface BuilderCodeAttribution {
 export function toErc8021DataSuffix(codes: string[]): BuilderCodeAttribution {
   const sanitizedCodes = codes
     .map((c) => c.trim().replace(/[^a-zA-Z0-9_-]/g, ""))
-    .filter(Boolean);
+    .filter((c) => c.length > 0 && Buffer.byteLength(c, "utf8") <= 255);
 
   const effectiveCodes = sanitizedCodes.length > 0 ? sanitizedCodes : ["bc_ewm6gcvz"];
 
@@ -68,15 +68,20 @@ export function parseErc8021Calldata(calldata: string): {
   try {
     const formatted = (calldata.startsWith("0x") ? calldata : `0x${calldata}`) as `0x${string}`;
     const parsed = Attribution.fromData(formatted);
-    if (!parsed || !parsed.codes || parsed.codes.length === 0) {
+    if (!parsed) {
       return { isValid: false, codes: [], schemaId: null, rawSuffix: null };
     }
-    const { dataSuffix } = toErc8021DataSuffix([...parsed.codes]);
+    const codes = "codes" in parsed && Array.isArray(parsed.codes) ? [...parsed.codes] : [];
+    if (codes.length === 0) {
+      return { isValid: false, codes: [], schemaId: null, rawSuffix: null };
+    }
+    const schemaId = parsed.id ?? 0;
+    const rawSuffix = schemaId === 0 ? toErc8021DataSuffix(codes).dataSuffix : null;
     return {
       isValid: true,
-      codes: [...parsed.codes],
-      schemaId: parsed.id ?? 0,
-      rawSuffix: dataSuffix,
+      codes,
+      schemaId,
+      rawSuffix,
     };
   } catch {
     return { isValid: false, codes: [], schemaId: null, rawSuffix: null };
@@ -91,8 +96,10 @@ export function parseErc8021Calldata(calldata: string): {
  * Only use on calls whose target ignores trailing calldata (e.g. the swap router).
  */
 export function alignedWithSuffix(calldata: string, suffix: string): `0x${string}` {
-  const body = calldata.replace(/^0x/, "");
-  const sfx = suffix.replace(/^0x/, "");
+  const body = calldata.replace(/^0x/i, "");
+  const sfx = suffix.replace(/^0x/i, "");
+  if (!/^[0-9a-fA-F]*$/.test(body) || body.length % 2 !== 0) throw new Error("Invalid calldata hex");
+  if (!/^[0-9a-fA-F]+$/.test(sfx) || sfx.length % 2 !== 0) throw new Error("Invalid suffix hex");
   const pad = (32 - ((body.length / 2 + sfx.length / 2) % 32)) % 32;
   return `0x${body}${"00".repeat(pad)}${sfx}`;
 }

@@ -550,7 +550,7 @@ await step("Saved target: set from the Agent tab, drift reported after a reload,
 
 await step(`No horizontal scrolling on any tab at ${WIDTH}px`, async () => {
   const bad = [];
-  for (const t of ["Market", "Agent", "Indexes", "Portfolio"]) {
+  for (const t of ["Market", "Agent", "Indexes", "News", "Portfolio"]) {
     await tab(t);
     await sleep(700);
     const w = await page.evaluate(() => document.documentElement.scrollWidth);
@@ -608,7 +608,7 @@ await step("Stats page loads with live onchain totals", async () => {
 
 await step("Disconnect, then refresh: stays disconnected", async () => {
   await page.goto(URL_BASE + "/", { waitUntil: "load", timeout: 120000 });
-  await waitText(new RegExp(shortAddr.replace(/\./g, "\.")), 20000).catch(() => {});
+  await waitText(new RegExp(shortAddr.replace(/\./g, "\\.")), 20000).catch(() => {});
   await page.evaluate(() => document.querySelector('button[aria-label="Wallet menu"]')?.click());
   await page.waitForSelector('button[title="Disconnect"]', { timeout: 5000 });
   await page.evaluate(() => document.querySelector('button[title="Disconnect"]')?.click());

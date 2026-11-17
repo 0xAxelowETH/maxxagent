@@ -194,7 +194,7 @@ export default async function PreviewPage() {
             BaseScan
           </a>
         </p>
-        <p>Not affiliated with, endorsed or sponsored by Coinbase, Base or Chainlink. Not financial advice.</p>
+        <p>Not affiliated with, endorsed or sponsored by Coinbase, Base, Chainlink, KyberSwap, Stocks Maxxing partners, or any public company whose stock is referenced. Not financial advice.</p>
       </footer>
     </main>
   );

@@ -9,13 +9,14 @@
  * Returns null only when the cap makes 10,000 impossible (n * capBps < 10,000).
  */
 export function roundWeightsBps(weights: number[], capBps = 10000): number[] | null {
-  const cap = Math.floor(capBps);
+  const cap = Number.isFinite(capBps) ? Math.floor(capBps) : 10000;
   if (weights.length === 0) return [];
-  if (weights.length * cap < 10000) return null;
+  if (cap <= 0 || weights.length * cap < 10000) return null;
   const total = weights.reduce((a, w) => a + Math.max(0, w), 0) || 1;
   const exact = weights.map((w) => (Math.max(0, w) / total) * 10000);
   for (const step of [50, 1]) {
-    const out = exact.map((w) => Math.min(cap - (cap % step), Math.floor(w / step) * step));
+    const ceiling = cap - (cap % step);
+    const out = exact.map((w) => Math.min(ceiling, Math.floor(w / step) * step));
     let rest = 10000 - out.reduce((a, b) => a + b, 0);
     // Hand out the remainder to the largest fractional parts first, never past the cap
     const order = exact.map((w, i) => ({ i, frac: w - out[i] })).sort((a, b) => b.frac - a.frac);
@@ -31,7 +32,8 @@ export function roundWeightsBps(weights: number[], capBps = 10000): number[] | n
         }
       }
     }
-    if (rest === 0) return out;
+    const droppedPositive = step === 50 && weights.some((w, i) => w > 0 && out[i] <= 0);
+    if (rest === 0 && !droppedPositive) return out;
   }
   return null;
 }

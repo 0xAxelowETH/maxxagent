@@ -11,7 +11,7 @@ export function UsdAmountInput({
   value,
   onChange,
   min,
-  max = 10000,
+  max = 100_000,
   className,
   ariaLabel,
 }: {

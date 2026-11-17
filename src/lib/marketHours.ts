@@ -57,13 +57,14 @@ export function nyDay(d: Date): { date: string; weekday: string } {
   return { date, weekday };
 }
 
-/** Unix seconds of the 16:00 New York close on a New York date (20:00 or 21:00 UTC, following daylight saving) */
+/** Unix seconds of the New York close on a New York date (13:00 ET on early close, else 16:00 ET). */
 export function nyCloseUnix(date: string): number {
-  for (const h of [20, 21]) {
+  const closeMinutes = EARLY_CLOSE.has(date) ? 13 * 60 : 16 * 60;
+  for (const h of [17, 18, 20, 21]) {
     const t = Date.parse(`${date}T${h}:00:00Z`);
-    if (nyParts(new Date(t)).minutes === 16 * 60) return t / 1000;
+    if (nyParts(new Date(t)).minutes === closeMinutes) return t / 1000;
   }
-  return Date.parse(`${date}T21:00:00Z`) / 1000;
+  return Date.parse(`${date}T${EARLY_CLOSE.has(date) ? 18 : 21}:00:00Z`) / 1000;
 }
 
 /** Unix seconds of the 9:30 New York open on a New York date (13:30 or 14:30 UTC, following daylight saving) */

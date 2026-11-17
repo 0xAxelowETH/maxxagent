@@ -36,7 +36,7 @@ const NOTIFY_HOSTS = ["farcaster.xyz", "warpcast.com", "base.app", "base.org", "
 export function validNotifyDetails(d: unknown): NotifyDetails | null {
   if (!d || typeof d !== "object") return null;
   const { url, token } = d as Record<string, unknown>;
-  if (typeof url !== "string" || typeof token !== "string" || token.length < 8 || token.length > 512) return null;
+  if (typeof url !== "string" || typeof token !== "string" || url.length > 300 || token.length < 8 || token.length > 512) return null;
   try {
     const u = new URL(url);
     if (u.protocol !== "https:") return null;
@@ -54,6 +54,7 @@ export async function putWatch(w: DriftWatch) {
 }
 export async function deleteWatch(fid: number) {
   await kv("DEL", watchKey(fid));
+  await kv("DEL", notifyKey(fid));
   await kv("SREM", SET, fid);
 }
 export const listWatchFids = async () => ((await kv<string[]>("SMEMBERS", SET)) || []).map(Number).filter((n) => n > 0);
@@ -85,7 +86,7 @@ export async function isAppKeyOf(fid: number, keyHex: string): Promise<boolean> 
     functionName: "keyDataOf",
     args: [BigInt(fid), `0x${keyHex.replace(/^0x/, "")}`],
   });
-  const ok = data.state === 1; // 1 = ADDED
+  const ok = data.state === 1 && data.keyType === 1; // 1 = ADDED, keyType 1 = Ed25519
   keyCache.set(id, { at: Date.now(), ok });
   if (keyCache.size > 2000) keyCache.clear();
   return ok;

@@ -1,10 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import { Attribution } from "ox/erc8021";
 import { createPublicClient, parseAbi } from "viem";
 import { base } from "viem/chains";
 import { BASE_TOKENIZED_STOCKS, MIN_BUY_USD } from "@/lib/tokenizedStocks";
-import { baseTransport } from "@/lib/rpc";
-import { alignedWithSuffix } from "@/lib/builderCode";
+import { baseTransport, redactSecrets } from "@/lib/rpc";
+import { alignedWithSuffix, toErc8021DataSuffix } from "@/lib/builderCode";
 
 /**
  * Swap builder between USDC and Coinbase B20 tokenized stocks (KyberSwap Aggregator on Base).
@@ -53,7 +52,7 @@ async function readNav(feed: `0x${string}`): Promise<number | null> {
   try {
     const [, answer, , updatedAt] = await client.readContract({ address: feed, abi: FEED_ABI, functionName: "latestRoundData" });
     const age = Date.now() / 1000 - Number(updatedAt);
-    return answer > 0n && age >= 0 && age < MAX_NAV_AGE_SEC ? Number(answer) / 1e8 : null;
+    return answer > 0n && age >= -60 && age < MAX_NAV_AGE_SEC ? Number(answer) / 1e8 : null;
   } catch {
     return null;
   }
@@ -82,9 +81,8 @@ export async function POST(request: NextRequest) {
     const amountTokens = Number(body?.amountTokens);
     // Buys can be paid in USDC (default) or native ETH (for wallets with no USDC on Base)
     const payWithEth = side === "buy" && body?.payWith === "eth";
-    const slippageBps = Math.min(
-      MAX_SLIPPAGE_BPS,
-      Math.max(10, Number(body?.slippageBps) || DEFAULT_SLIPPAGE_BPS)
+    const slippageBps = Math.round(
+      Math.min(MAX_SLIPPAGE_BPS, Math.max(10, Number(body?.slippageBps) || DEFAULT_SLIPPAGE_BPS))
     );
 
     const stock = BASE_TOKENIZED_STOCKS.find((s) => s.b20Address.toLowerCase() === stockAddress);
@@ -121,7 +119,7 @@ export async function POST(request: NextRequest) {
         : payWithEth
         ? // USD amount -> wei at the Chainlink ETH/USD price
           BigInt(Math.floor((amountUsd / ethUsd!) * 1e9)) * 1_000_000_000n
-        : BigInt(Math.floor(amountUsd * 1e6));
+        : BigInt(Math.round(amountUsd * 1e6));
     if (amountIn <= 0n) {
       return NextResponse.json({ ok: false, error: "Amount too small." }, { status: 400 });
     }
@@ -167,8 +165,8 @@ export async function POST(request: NextRequest) {
       routeSummary = await getQuote(excluded);
       if (!routeSummary) break;
       const exchanges = [...new Set((routeSummary.route as KyberRouteHop[][]).flat().map((h) => h.exchange))];
-      const amountInUsdR = Number(routeSummary.amountInUsd) || amountUsd;
-      const costR = amountInUsdR > 0 ? ((amountInUsdR - (Number(routeSummary.amountOutUsd) || 0)) / amountInUsdR) * 100 : 100;
+      const amountInUsdR = Number(routeSummary.amountInUsd) || (side === "buy" ? amountUsd : NaN);
+      const costR = Number.isFinite(amountInUsdR) && amountInUsdR > 0 ? ((amountInUsdR - (Number(routeSummary.amountOutUsd) || 0)) / amountInUsdR) * 100 : 100;
       if (!(costR <= MAX_COST_PCT)) break; // handled below (also catches NaN)
       build = await buildRoute(routeSummary);
       if (!build) {
@@ -185,9 +183,9 @@ export async function POST(request: NextRequest) {
       );
     }
     const venues = [...new Set((routeSummary.route as KyberRouteHop[][]).flat().map((h) => h.exchange))];
-    const amountInUsd = Number(routeSummary.amountInUsd) || amountUsd;
+    const amountInUsd = Number(routeSummary.amountInUsd) || (side === "buy" ? amountUsd : NaN);
     const amountOutUsd = Number(routeSummary.amountOutUsd) || 0;
-    const costPct = amountInUsd > 0 ? ((amountInUsd - amountOutUsd) / amountInUsd) * 100 : 100;
+    const costPct = Number.isFinite(amountInUsd) && amountInUsd > 0 ? ((amountInUsd - amountOutUsd) / amountInUsd) * 100 : 100;
 
     if (!Number.isFinite(costPct) || !Number.isFinite(amountInUsd)) {
       // No USD pricing from the aggregator = the cost guard can't run: refuse rather than skip it
@@ -230,7 +228,10 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ ok: false, symbol: stock.symbol, error: "Unexpected ETH value in swap. Swap refused for your safety." }, { status: 502 });
     }
 
-    const amountOutRaw = BigInt(build.data.amountOut || routeSummary.amountOut);
+    const amountOutRaw = BigInt(build.data.amountOut ?? routeSummary.amountOut ?? "0");
+    if (amountOutRaw <= 0n) {
+      return NextResponse.json({ ok: false, symbol: stock.symbol, error: `Swap quote returned zero output for ${stock.symbol}. Please retry.` }, { status: 502 });
+    }
 
     // NAV guard: effective price per stock token vs Chainlink NAV (per token, multiplier-adjusted)
     const nav = await readNav(stock.chainlinkFeed);
@@ -260,7 +261,7 @@ export async function POST(request: NextRequest) {
     // (EIP-7702 execute, ERC-4337 executeBatch) ABI-encode the calls, and ABI padding after our
     // suffix hid it from indexers, which read the suffix from the very end of the tx / UserOp input.
     // With 32-byte alignment there is no padding, so the outer input ends with our suffix.
-    const data = alignedWithSuffix(build.data.data, Attribution.toDataSuffix({ codes: [BUILDER_CODE] }));
+    const data = alignedWithSuffix(build.data.data, toErc8021DataSuffix([BUILDER_CODE]).dataSuffix);
     const minAmountOutRaw = (amountOutRaw * BigInt(10_000 - slippageBps)) / 10_000n;
 
     return NextResponse.json({
@@ -295,7 +296,7 @@ export async function POST(request: NextRequest) {
       builderCode: BUILDER_CODE,
     });
   } catch (error: unknown) {
-    console.error("swap route error", error instanceof Error ? error.message : error);
+    console.error("swap route error", redactSecrets(error instanceof Error ? error.message : String(error)));
     return NextResponse.json({ ok: false, error: "Swap quote failed. Please retry." }, { status: 500 });
   }
 }
