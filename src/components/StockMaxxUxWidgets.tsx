@@ -1,6 +1,7 @@
 "use client";
 
 import { MarketStatus } from "./MarketStatus";
+import { splitNavWeekendGaps } from "@/lib/marketHours";
 import React, { useEffect, useMemo, useState } from "react";
 import {
   Activity,
@@ -355,13 +356,8 @@ export function InteractiveB20TradingChart({
   const y = (v: number) => padT + plotH - ((v - vMin) / Math.max(1e-9, vMax - vMin)) * plotH;
   const toPoints = (s: [number, number][]) => s.map(([t, v]) => `${x(t).toFixed(1)},${y(v).toFixed(1)}`).join(" ");
 
-  const navPointsStr = toPoints(nav);
   const dexPointsStr = toPoints(dex);
   const peerPointsStr = toPoints(peerSeries);
-  const areaPointsStr =
-    !peerStock && nav.length >= 2
-      ? `${x(nav[0][0])},${padT + plotH} ${navPointsStr} ${x(nav[nav.length - 1][0])},${padT + plotH}`
-      : "";
 
   const cursorT = hoverT ?? tMax;
   const navAt = nearest(nav, cursorT);
@@ -396,6 +392,14 @@ export function InteractiveB20TradingChart({
     }
     return out;
   }, [peerStock, navRaw, dexRaw]);
+
+  const navSplit = useMemo(
+    () =>
+      !peerStock && timeframe !== "24H" && nav.length >= 2
+        ? splitNavWeekendGaps(nav)
+        : { segments: nav.length >= 2 ? [nav] : [], gaps: [] },
+    [peerStock, timeframe, nav]
+  );
 
   const spreadAmp = spreadBars.length > 0 ? Math.max(0.5, ...spreadBars.map((b) => Math.abs(b.pct))) : 1;
 
@@ -665,7 +669,38 @@ export function InteractiveB20TradingChart({
                       );
                     })}
 
-                    {areaPointsStr && <polygon points={areaPointsStr} fill="url(#chart-nav-fill)" />}
+                    {navSplit.gaps.map((g, idx) => {
+                      const gx0 = x(g.from[0]);
+                      const gx1 = x(g.to[0]);
+                      const gw = Math.max(4, gx1 - gx0);
+                      return (
+                        <g key={`gap-${idx}-${g.from[0]}`}>
+                          <rect x={gx0} y={padT} width={gw} height={plotH} fill="rgba(148, 163, 184, 0.1)" rx="2" />
+                          {gw >= 44 && (
+                            <text
+                              x={(gx0 + gx1) / 2}
+                              y={padT + 11}
+                              textAnchor="middle"
+                              fill="rgba(148, 163, 184, 0.8)"
+                              fontSize="8.5"
+                              fontFamily="ui-monospace, SFMono-Regular, monospace"
+                            >
+                              NY closed
+                            </text>
+                          )}
+                        </g>
+                      );
+                    })}
+                    {!peerStock &&
+                      navSplit.segments.map((seg, idx) =>
+                        seg.length >= 2 ? (
+                          <polygon
+                            key={`area-${idx}-${seg[0][0]}`}
+                            points={`${x(seg[0][0])},${padT + plotH} ${toPoints(seg)} ${x(seg[seg.length - 1][0])},${padT + plotH}`}
+                            fill="url(#chart-nav-fill)"
+                          />
+                        ) : null
+                      )}
                     {dex.length >= 2 && (
                       <polyline
                         fill="none"
@@ -685,15 +720,33 @@ export function InteractiveB20TradingChart({
                         points={peerPointsStr}
                       />
                     )}
-                    {nav.length >= 2 && (
-                      <polyline
-                        fill="none"
+                    {navSplit.gaps.map((g, idx) => (
+                      <line
+                        key={`bridge-${idx}-${g.from[0]}`}
+                        x1={x(g.from[0])}
+                        y1={y(g.from[1])}
+                        x2={x(g.to[0])}
+                        y2={y(g.to[1])}
                         stroke={activeStock.color}
-                        strokeWidth="3"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        points={navPointsStr}
+                        strokeOpacity="0.35"
+                        strokeWidth="1.5"
+                        strokeDasharray="3 4"
                       />
+                    ))}
+                    {navSplit.segments.map((seg, idx) =>
+                      seg.length >= 2 ? (
+                        <polyline
+                          key={`nav-seg-${idx}-${seg[0][0]}`}
+                          fill="none"
+                          stroke={activeStock.color}
+                          strokeWidth="3"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          points={toPoints(seg)}
+                        />
+                      ) : seg.length === 1 && navSplit.gaps.length > 0 ? (
+                        <circle key={`nav-pt-${idx}-${seg[0][0]}`} cx={x(seg[0][0])} cy={y(seg[0][1])} r="3" fill={activeStock.color} />
+                      ) : null
                     )}
                     {newsMarks.map(({ n, t }) => (
                       <line
@@ -888,6 +941,12 @@ export function InteractiveB20TradingChart({
                 <span className="inline-flex items-center gap-1.5 text-cyan-300 font-medium">
                   <span className="h-0.5 w-4 bg-cyan-400 inline-block" />
                   DEX price ({dex.length} candles, 24/7)
+                </span>
+              )}
+              {!peerStock && navSplit.gaps.length > 0 && (
+                <span className="inline-flex items-center gap-1.5 text-slate-400 font-medium">
+                  <span className="h-2.5 w-3 rounded-sm bg-slate-400/20 border border-slate-400/40 inline-block" />
+                  NY closed (NAV paused)
                 </span>
               )}
             </div>

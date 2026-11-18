@@ -88,3 +88,33 @@ export function nextOpenUnix(now = new Date()): number | null {
   }
   return null;
 }
+
+export interface NavChartGap {
+  from: [number, number];
+  to: [number, number];
+}
+
+/**
+ * Splits a Chainlink NAV time series across multi-hour market closures (weekends and exchange holidays,
+ * default gap >= 20h) so 7D/30D charts can shade closure bands instead of drawing solid flat diagonals.
+ */
+export function splitNavWeekendGaps(
+  pts: [number, number][],
+  gapSec = 20 * 3600
+): { segments: [number, number][][]; gaps: NavChartGap[] } {
+  if (pts.length === 0) return { segments: [], gaps: [] };
+  const sorted = [...pts].sort((a, b) => a[0] - b[0]);
+  const segments: [number, number][][] = [[sorted[0]]];
+  const gaps: NavChartGap[] = [];
+  for (let i = 1; i < sorted.length; i++) {
+    const prev = sorted[i - 1];
+    const curr = sorted[i];
+    if (curr[0] - prev[0] >= gapSec) {
+      gaps.push({ from: prev, to: curr });
+      segments.push([curr]);
+    } else {
+      segments[segments.length - 1].push(curr);
+    }
+  }
+  return { segments, gaps };
+}

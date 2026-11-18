@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { MarketStatus } from "./MarketStatus";
 import { BASE_TOKENIZED_STOCKS } from "@/lib/tokenizedStocks";
 import { earningsLabel, recentEarnings } from "@/lib/earnings";
-import { usMarketStatus } from "@/lib/marketHours";
+import { splitNavWeekendGaps, usMarketStatus } from "@/lib/marketHours";
 
 interface Live {
   navPrice: number;
@@ -278,67 +278,136 @@ function Chart({
           <span className="inline-flex items-center gap-1 font-sans">
             <span className="h-0.5 w-3 bg-cyan-400" /> Base DEX
           </span>
+          {tf !== "24H" && hist.nav.length > 1 && splitNavWeekendGaps(hist.nav).gaps.length > 0 && (
+            <span className="inline-flex items-center gap-1 font-sans text-slate-400">
+              <span className="h-2.5 w-2.5 rounded-sm border border-slate-400/40 bg-slate-400/20" /> NY closed
+            </span>
+          )}
         </span>
       </div>
-      <div className="relative">
-        <svg
-          viewBox={`0 0 ${W} ${H}`}
-          className="h-[190px] w-full cursor-crosshair touch-pan-y"
-          preserveAspectRatio="none"
-          role="img"
-          aria-label={`${tfLabel} price chart`}
-          onMouseMove={(e) => scrubAt(e.clientX, e.currentTarget.getBoundingClientRect())}
-          onTouchMove={(e) => e.touches[0] && scrubAt(e.touches[0].clientX, e.currentTarget.getBoundingClientRect())}
-          onTouchEnd={() => setHoverT(null)}
-          onTouchCancel={() => setHoverT(null)}
-          onMouseLeave={() => setHoverT(null)}
-        >
-          {hist.nav.length > 1 && <path d={path(hist.nav)} fill="none" stroke={color} strokeWidth="2" vectorEffect="non-scaling-stroke" />}
-          {hist.dex.length > 1 && <path d={path(hist.dex)} fill="none" stroke="#22d3ee" strokeWidth="1.5" strokeDasharray="4 3" vectorEffect="non-scaling-stroke" />}
-          {marks.map(({ n, t }) => (
-            <line key={`l${n.url}`} x1={x(t)} x2={x(t)} y1={0} y2={H} stroke={KIND_DOT[kindOf(n)] ?? "#94a3b8"} strokeOpacity="0.25" strokeDasharray="2 3" vectorEffect="non-scaling-stroke" />
-          ))}
-          {hoverT !== null && (
-            <line x1={x(hoverT)} x2={x(hoverT)} y1={0} y2={H} stroke="rgba(148, 163, 184, 0.5)" strokeDasharray="3 3" vectorEffect="non-scaling-stroke" />
-          )}
-        </svg>
-        {/* News dots: HTML on top of the SVG so they stay round; staggered to avoid collisions */}
-        {(() => {
-          const placed: number[] = [];
-          return marks.map(({ n, t }) => {
-            const left = (x(t) / W) * 100;
-            const top = Math.max(8, Math.min(92, (y(priceAt(t)) / H) * 100));
-            const closeCount = placed.filter((prevL) => Math.abs(prevL - left) < 5).length;
-            placed.push(left);
-            const dy = closeCount === 0 ? 0 : closeCount % 2 === 1 ? -11 * Math.ceil(closeCount / 2) : 11 * Math.ceil(closeCount / 2);
-            const k = kindOf(n);
-            const horiz = left > 72 ? "right-0" : left < 28 ? "left-0" : "left-1/2 -translate-x-1/2";
-            const vert = top < 35 ? "top-4" : "bottom-4";
-            return (
-              <a
-                key={n.url}
-                href={n.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="group absolute -translate-x-1/2 -translate-y-1/2 hover:z-20"
-                style={{ left: `${left}%`, top: `calc(${top}% + ${dy}px)` }}
-                aria-label={`${KIND_LABEL[k] ?? "News"}: ${n.title}`}
-              >
-                <span className="block h-3 w-3 rounded-full border-2 border-[#0b1120] shadow" style={{ background: KIND_DOT[k] ?? "#94a3b8" }} />
+      {(() => {
+        const navSplit =
+          tf !== "24H" && hist.nav.length > 1
+            ? splitNavWeekendGaps(hist.nav)
+            : { segments: hist.nav.length > 1 ? [hist.nav] : [], gaps: [] };
+        return (
+          <div className="relative">
+            <svg
+              viewBox={`0 0 ${W} ${H}`}
+              className="h-[190px] w-full cursor-crosshair touch-pan-y"
+              preserveAspectRatio="none"
+              role="img"
+              aria-label={`${tfLabel} price chart`}
+              onMouseMove={(e) => scrubAt(e.clientX, e.currentTarget.getBoundingClientRect())}
+              onTouchMove={(e) => e.touches[0] && scrubAt(e.touches[0].clientX, e.currentTarget.getBoundingClientRect())}
+              onTouchEnd={() => setHoverT(null)}
+              onTouchCancel={() => setHoverT(null)}
+              onMouseLeave={() => setHoverT(null)}
+            >
+              {navSplit.gaps.map((g, idx) => {
+                const gx0 = x(g.from[0]);
+                const gx1 = x(g.to[0]);
+                return (
+                  <rect
+                    key={`gap-${idx}-${g.from[0]}`}
+                    x={gx0}
+                    y={0}
+                    width={Math.max(2, gx1 - gx0)}
+                    height={H}
+                    fill="rgba(148, 163, 184, 0.1)"
+                  />
+                );
+              })}
+              {navSplit.gaps.map((g, idx) => (
+                <line
+                  key={`bridge-${idx}-${g.from[0]}`}
+                  x1={x(g.from[0])}
+                  y1={y(g.from[1])}
+                  x2={x(g.to[0])}
+                  y2={y(g.to[1])}
+                  stroke={color}
+                  strokeOpacity="0.35"
+                  strokeWidth="1.5"
+                  strokeDasharray="3 4"
+                  vectorEffect="non-scaling-stroke"
+                />
+              ))}
+              {navSplit.segments.map((seg, idx) =>
+                seg.length > 1 ? (
+                  <path
+                    key={`nav-seg-${idx}-${seg[0][0]}`}
+                    d={path(seg)}
+                    fill="none"
+                    stroke={color}
+                    strokeWidth="2"
+                    vectorEffect="non-scaling-stroke"
+                  />
+                ) : null
+              )}
+              {hist.dex.length > 1 && <path d={path(hist.dex)} fill="none" stroke="#22d3ee" strokeWidth="1.5" strokeDasharray="4 3" vectorEffect="non-scaling-stroke" />}
+              {marks.map(({ n, t }) => (
+                <line key={`l${n.url}`} x1={x(t)} x2={x(t)} y1={0} y2={H} stroke={KIND_DOT[kindOf(n)] ?? "#94a3b8"} strokeOpacity="0.25" strokeDasharray="2 3" vectorEffect="non-scaling-stroke" />
+              ))}
+              {hoverT !== null && (
+                <line x1={x(hoverT)} x2={x(hoverT)} y1={0} y2={H} stroke="rgba(148, 163, 184, 0.5)" strokeDasharray="3 3" vectorEffect="non-scaling-stroke" />
+              )}
+            </svg>
+            {/* Weekend closure labels rendered as HTML so preserveAspectRatio="none" never distorts text */}
+            {navSplit.gaps.map((g, idx) => {
+              const gx0 = x(g.from[0]);
+              const gx1 = x(g.to[0]);
+              const pctW = ((gx1 - gx0) / W) * 100;
+              if (pctW < 7) return null;
+              const centerLeft = (((gx0 + gx1) / 2) / W) * 100;
+              return (
                 <span
-                  className={`pointer-events-none absolute z-20 hidden w-48 sm:w-56 rounded-lg border border-slate-700 bg-[#050811] p-2 text-[10px] leading-snug text-slate-300 shadow-xl group-hover:block group-focus:block ${horiz} ${vert}`}
+                  key={`gap-lbl-${idx}-${g.from[0]}`}
+                  className="pointer-events-none absolute top-1.5 -translate-x-1/2 rounded px-1 py-0.5 font-mono text-[9px] text-slate-400"
+                  style={{ left: `${centerLeft}%` }}
                 >
-                  <span className="block font-bold text-white">{n.title}</span>
-                  <span className="mt-0.5 block text-slate-500">
-                    {KIND_LABEL[k] ?? "News"} · {new Date(n.publishedAt).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "America/New_York" })}
-                    {n.changePct !== null ? ` · ${n.changePct >= 0 ? "+" : ""}${n.changePct.toFixed(2)}% since` : ""}
-                  </span>
+                  NY closed
                 </span>
-              </a>
-            );
-          });
-        })()}
-      </div>
+              );
+            })}
+            {/* News dots: HTML on top of the SVG so they stay round; staggered to avoid collisions */}
+            {(() => {
+              const placed: number[] = [];
+              return marks.map(({ n, t }) => {
+                const left = (x(t) / W) * 100;
+                const top = Math.max(8, Math.min(92, (y(priceAt(t)) / H) * 100));
+                const closeCount = placed.filter((prevL) => Math.abs(prevL - left) < 5).length;
+                placed.push(left);
+                const dy = closeCount === 0 ? 0 : closeCount % 2 === 1 ? -11 * Math.ceil(closeCount / 2) : 11 * Math.ceil(closeCount / 2);
+                const k = kindOf(n);
+                const horiz = left > 72 ? "right-0" : left < 28 ? "left-0" : "left-1/2 -translate-x-1/2";
+                const vert = top < 35 ? "top-4" : "bottom-4";
+                return (
+                  <a
+                    key={n.url}
+                    href={n.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="group absolute -translate-x-1/2 -translate-y-1/2 hover:z-20"
+                    style={{ left: `${left}%`, top: `calc(${top}% + ${dy}px)` }}
+                    aria-label={`${KIND_LABEL[k] ?? "News"}: ${n.title}`}
+                  >
+                    <span className="block h-3 w-3 rounded-full border-2 border-[#0b1120] shadow" style={{ background: KIND_DOT[k] ?? "#94a3b8" }} />
+                    <span
+                      className={`pointer-events-none absolute z-20 hidden w-48 sm:w-56 rounded-lg border border-slate-700 bg-[#050811] p-2 text-[10px] leading-snug text-slate-300 shadow-xl group-hover:block group-focus:block ${horiz} ${vert}`}
+                    >
+                      <span className="block font-bold text-white">{n.title}</span>
+                      <span className="mt-0.5 block text-slate-500">
+                        {KIND_LABEL[k] ?? "News"} · {new Date(n.publishedAt).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "America/New_York" })}
+                        {n.changePct !== null ? ` · ${n.changePct >= 0 ? "+" : ""}${n.changePct.toFixed(2)}% since` : ""}
+                      </span>
+                    </span>
+                  </a>
+                );
+              });
+            })()}
+          </div>
+        );
+      })()}
       <div className="mt-1.5 flex items-center justify-between font-mono tabular-nums text-[10px] text-slate-400">
         <span>{usd(lo)}</span>
         <span className="hidden sm:inline text-slate-500">

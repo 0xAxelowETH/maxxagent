@@ -9,7 +9,7 @@
     "start": "next start -p 3000",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src",
-    "test": "npm run test:contracts && npm run test:agent && npm run test:rebalance && npm run test:indexmatch && npm run test:drift",
+    "test": "npm run test:contracts && npm run test:agent && npm run test:rebalance && npm run test:indexmatch && npm run test:drift && npm run test:market",
     "agent:cli": "node scripts/agent-cli.mjs",
     "verify:onchain": "node scripts/verify-onchain.mjs",
     "compile:contracts": "node scripts/compile-contracts.mjs",
@@ -26,6 +26,7 @@
     "test:rebalance": "node scripts/test-rebalance.mjs",
     "test:indexmatch": "node scripts/test-index-match.mjs",
     "test:drift": "node scripts/test-drift.mjs",
+    "test:market": "node scripts/test-market-hours.mjs",
     "verify:registry": "node scripts/verify-registry.mjs",
     "test:agent": "node scripts/test-agent.mjs"
   },
