@@ -183,12 +183,19 @@ input[type="range"]::-moz-range-thumb {
   background: #4c6fff;
 }
 
-/* Logo visibility on the dark theme:
-   - dark/transparent third-party logos get a subtle ring so their edges never disappear
+/* Logo visibility on the dark & light themes:
+   - standalone dark/transparent logos get a subtle hairline ring
+   - stacked index avatars (.maxx-avatar-ring) get an opaque surface ring + hairline so adjacent light/white logos stay separated
    - BaseScan's mark is black-on-transparent, so it sits on a white chip */
-img[src^="/logos/stocks/"],
+img[src^="/logos/stocks/"]:not(.maxx-avatar-ring),
 img[src^="/logos/partners/"] {
   box-shadow: 0 0 0 1px rgba(148, 163, 184, 0.35);
+}
+.maxx-avatar-ring {
+  box-shadow: 0 0 0 2px #0b1120, 0 0 0 3px rgba(148, 163, 184, 0.4);
+}
+html[data-theme="light"] .maxx-avatar-ring {
+  box-shadow: 0 0 0 2px #ffffff, 0 0 0 3px rgba(148, 163, 184, 0.55);
 }
 img[src$="/logos/brands/basescan.svg"] {
   background: #ffffff;

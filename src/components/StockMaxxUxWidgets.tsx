@@ -48,29 +48,32 @@ export function GuidedQuickStartBar({
   if (hidden !== false) return null;
 
   return (
-    <div className="hero-mesh-card rounded-2xl px-4 py-2.5 flex flex-wrap items-center justify-between gap-2.5 animate-fade-up">
-      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
-        <span className="inline-flex items-center gap-1.5 rounded-full bg-cyan-500/15 border border-cyan-500/35 px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-cyan-300">
+    <div className="hero-mesh-card rounded-2xl px-3 py-2 sm:px-4 sm:py-2.5 flex flex-wrap items-center justify-between gap-2 animate-fade-up">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] sm:text-xs min-w-0">
+        <span className="inline-flex items-center gap-1 rounded-full bg-cyan-500/15 border border-cyan-500/35 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-cyan-300 shrink-0">
           <Sparkles className="h-3 w-3 text-cyan-400" />
           Quick start
         </span>
-        <span className="inline-flex items-center gap-1 text-slate-200 font-semibold">
+        <span className="sm:hidden font-medium text-slate-200 truncate">
+          1. Explore · 2. Ask Agent · 3. Sign
+        </span>
+        <span className="hidden sm:inline-flex items-center gap-1 text-slate-200 font-semibold">
           <span>1. Explore 10 live stocks</span>
         </span>
         <span className="hidden sm:inline text-slate-500" aria-hidden="true">·</span>
-        <span className="text-slate-300">2. Ask Agent for a basket</span>
+        <span className="hidden sm:inline text-slate-300">2. Ask Agent for a basket</span>
         <span className="hidden md:inline text-slate-500" aria-hidden="true">·</span>
         <span className="hidden md:inline text-slate-300">3. Review &amp; sign in your own wallet</span>
       </div>
 
-      <div className="flex items-center gap-2 shrink-0 ml-auto">
+      <div className="flex items-center gap-1.5 sm:gap-2 shrink-0 ml-auto">
         <button
           type="button"
           onClick={() => {
             setActiveTab("agent");
             onQuickRunAgent();
           }}
-          className="inline-flex min-h-[34px] items-center gap-1.5 rounded-xl bg-gradient-to-r from-[#4C6FFF] to-cyan-600 hover:brightness-110 px-3 py-1.5 text-xs font-bold text-white shadow-md shadow-[#4C6FFF]/25 transition cursor-pointer"
+          className="inline-flex min-h-[32px] sm:min-h-[34px] items-center gap-1.5 rounded-xl bg-gradient-to-r from-[#4C6FFF] to-cyan-600 hover:brightness-110 px-2.5 sm:px-3 py-1 sm:py-1.5 text-[11px] sm:text-xs font-bold text-white shadow-md shadow-[#4C6FFF]/25 transition cursor-pointer"
         >
           <Bot className="h-3.5 w-3.5" />
           Run Agent
@@ -88,7 +91,7 @@ export function GuidedQuickStartBar({
           }}
           aria-label="Dismiss quick start"
           title="Dismiss"
-          className="inline-flex min-h-[34px] min-w-[34px] items-center justify-center rounded-xl border border-slate-700/80 bg-[#050a16] text-slate-400 hover:text-white hover:border-slate-500 transition cursor-pointer"
+          className="inline-flex min-h-[32px] min-w-[32px] sm:min-h-[34px] sm:min-w-[34px] items-center justify-center rounded-xl border border-slate-700/80 bg-[#050a16] text-slate-400 hover:text-white hover:border-slate-500 transition cursor-pointer"
         >
           <X className="h-3.5 w-3.5" />
         </button>
@@ -909,7 +912,7 @@ export function InteractiveB20TradingChart({
           </div>
         </div>
 
-        <div className="lg:col-span-4 rounded-2xl border border-slate-800/90 bg-[#050914] p-5 flex flex-col justify-between space-y-4">
+        <div className="lg:col-span-4 min-w-0 rounded-2xl border border-slate-800/90 bg-[#050914] p-5 flex flex-col justify-between space-y-4">
           <div className="space-y-3">
             <div className="flex items-center justify-between">
               <span className="text-xs font-bold uppercase tracking-wider text-slate-400">Live onchain data</span>
@@ -985,7 +988,7 @@ export function InteractiveB20TradingChart({
             </div>
           </div>
 
-          <div className="space-y-2 pt-2 border-t border-slate-800/80">
+          <div className="min-w-0 space-y-2 pt-2 border-t border-slate-800/80">
             <SwapPanel
               stock={activeStock}
               stocks={stockList}
@@ -1108,10 +1111,10 @@ function SwapPanel({
   const chip = "rounded-lg border px-2 py-1 text-[11px] font-bold transition cursor-pointer";
 
   return (
-    <div id="swap-panel" className="rounded-2xl border border-slate-800 bg-[#050a18] p-3 space-y-3 scroll-mt-24">
+    <div id="swap-panel" className="min-w-0 rounded-2xl border border-slate-800 bg-[#050a18] p-3 space-y-3 scroll-mt-40">
       {stocks && stocks.length > 1 && onSelectSymbol && (
-        <div className="flex items-center justify-between gap-2 text-[11px]">
-          <label htmlFor="swap-stock-select" className="text-slate-400 font-semibold">
+        <div className="flex min-w-0 items-center justify-between gap-2 text-[11px]">
+          <label htmlFor="swap-stock-select" className="shrink-0 text-slate-400 font-semibold">
             Asset
           </label>
           <select
@@ -1119,7 +1122,7 @@ function SwapPanel({
             name="swapStockSymbol"
             value={stock.symbol}
             onChange={(e) => onSelectSymbol(e.target.value)}
-            className="rounded-lg border border-slate-700 bg-[#040814] px-2.5 py-1 font-mono text-xs font-bold text-white focus:border-[#4C6FFF] focus:outline-none cursor-pointer"
+            className="min-w-0 w-full flex-1 truncate rounded-lg border border-slate-700 bg-[#040814] px-2.5 py-1 font-mono text-xs font-bold text-white focus:border-[#4C6FFF] focus:outline-none cursor-pointer"
           >
             {stocks.map((st) => (
               <option key={st.symbol} value={st.symbol} className="bg-[#040814]">

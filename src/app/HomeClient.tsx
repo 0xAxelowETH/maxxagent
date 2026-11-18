@@ -1841,9 +1841,9 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
       </div>
 
       {/* Compact context bar */}
-      <div className="relative z-30 border-b border-slate-800/80 bg-[#040814]/95 px-4 py-1.5 text-[11px] backdrop-blur-md">
-        <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-2 text-slate-400">
-          <span className="inline-flex items-center gap-1.5">
+      <div className="relative z-30 border-b border-slate-800/80 bg-[#040814]/95 px-3 sm:px-4 py-1 text-[10px] sm:text-[11px] backdrop-blur-md">
+        <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-x-2 gap-y-0.5 text-slate-400">
+          <span className="inline-flex items-center gap-1.5 truncate">
             Built for Base Stocks Maxxing Season · independent project
           </span>
           <MarketStatus />
@@ -1852,7 +1852,7 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
       </div>
 
       {/* Live Infinite Wall Street x Base B20 Stock Ticker Tape */}
-      <div className="relative z-30 border-b border-slate-800/80 bg-[#050a18]/90 py-2 overflow-hidden">
+      <div className="relative z-30 border-b border-slate-800/80 bg-[#050a18]/90 py-1.5 sm:py-2 overflow-hidden">
         <div className="animate-ticker flex items-center gap-6 px-4">
           {[...(stocks.length > 0 ? stocks : BASE_TOKENIZED_STOCKS), ...(stocks.length > 0 ? stocks : BASE_TOKENIZED_STOCKS)].map(
             (item, idx) => {
@@ -1909,7 +1909,7 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
 
       {/* Main Header */}
       <header className="sticky top-0 z-30 border-b border-slate-800/80 bg-[#040814]/90 backdrop-blur-xl shadow-2xl shadow-black/50">
-        <div className="mx-auto flex max-w-7xl items-center justify-between gap-2 sm:gap-3 px-3 sm:px-4 py-2.5 sm:py-3">
+        <div className="mx-auto flex max-w-7xl items-center justify-between gap-2 sm:gap-3 px-3 sm:px-4 py-2 sm:py-2.5">
           <div className="flex min-w-0 items-center gap-2 sm:gap-3.5">
             <MaxxAgentLogo size={40} tagline="Tokenized stock indexes on Base" />
             <span className="hidden 2xl:inline-flex items-center gap-1.5 rounded-full bg-emerald-500/10 px-2.5 py-0.5 font-mono text-[10px] font-bold text-emerald-300 border border-emerald-500/30">
@@ -2134,7 +2134,7 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
 
         {/* Navigation Tabs */}
         <nav className="mx-auto max-w-7xl px-4 hidden md:block" aria-label="Sections">
-          <div className="flex overflow-x-auto gap-1.5 border-t border-slate-800/60 pt-2.5 pb-2.5">
+          <div className="flex overflow-x-auto gap-1.5 border-t border-slate-800/60 pt-1.5 pb-1.5">
             {[
               {
                 id: "terminal",
@@ -2185,7 +2185,7 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                     window.scrollTo({ top: 0, behavior: "smooth" });
                   }}
                   aria-current={isActive ? "page" : undefined}
-                  className={`flex items-center gap-2 whitespace-nowrap rounded-xl px-4 py-2.5 text-xs font-semibold transition-all cursor-pointer ${
+                  className={`flex items-center gap-2 whitespace-nowrap rounded-xl px-3.5 py-2 text-xs font-semibold transition-all cursor-pointer ${
                     isActive
                       ? "bg-gradient-to-r from-[#4C6FFF] to-[#1d4ed8] text-white shadow-lg shadow-[#4C6FFF]/30 border border-blue-400/30"
                       : "text-slate-400 hover:bg-slate-800/60 hover:text-slate-200 border border-transparent"
@@ -2204,20 +2204,20 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
               );
             })}
             <span className="ml-auto flex items-center gap-1">
-              <a href="/verify" className="whitespace-nowrap rounded-xl px-3 py-2.5 text-xs font-semibold text-slate-400 hover:bg-slate-800/60 hover:text-slate-200">
+              <a href="/verify" className="whitespace-nowrap rounded-xl px-3 py-2 text-xs font-semibold text-slate-400 hover:bg-slate-800/60 hover:text-slate-200">
                 Verify
               </a>
-              <a href="/stats" className="whitespace-nowrap rounded-xl px-3 py-2.5 text-xs font-semibold text-slate-400 hover:bg-slate-800/60 hover:text-slate-200">
+              <a href="/stats" className="whitespace-nowrap rounded-xl px-3 py-2 text-xs font-semibold text-slate-400 hover:bg-slate-800/60 hover:text-slate-200">
                 Live stats
               </a>
-              <a href="/faq" className="whitespace-nowrap rounded-xl px-3 py-2.5 text-xs font-semibold text-slate-400 hover:bg-slate-800/60 hover:text-slate-200">
+              <a href="/faq" className="whitespace-nowrap rounded-xl px-3 py-2 text-xs font-semibold text-slate-400 hover:bg-slate-800/60 hover:text-slate-200">
                 FAQ
               </a>
             </span>
           </div>
         </nav>
         {/* Phones: the bottom bar holds the tabs, so the help links sit under the header */}
-        <div className="md:hidden mx-auto flex max-w-7xl justify-end gap-4 px-4 pb-2 text-[11px] font-semibold text-slate-400">
+        <div className="md:hidden mx-auto flex max-w-7xl justify-end gap-4 px-3 pb-1.5 text-[11px] font-semibold text-slate-400">
           <a href="/verify" className="hover:text-white">Verify</a>
           <a href="/stats" className="hover:text-white">Live stats</a>
           <a href="/faq" className="hover:text-white">FAQ</a>
@@ -2225,7 +2225,7 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
       </header>
 
       {/* Main Content Container */}
-      <main className="relative z-10 mx-auto w-full max-w-7xl flex-1 px-3 sm:px-4 pt-4 sm:pt-6 pb-28 md:pb-10 space-y-5 sm:space-y-6">
+      <main className="relative z-10 mx-auto w-full max-w-7xl flex-1 px-3 sm:px-4 pt-2.5 sm:pt-5 pb-24 md:pb-10 space-y-3.5 sm:space-y-5">
         {/* Compact dismissible 1-line quick start (Market tab, until a wallet is connected) */}
         {activeTab === "terminal" && !walletAddress && (
           <GuidedQuickStartBar
@@ -2397,25 +2397,25 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
 
             {/* Institutional Hero Command Center + 4-Card Bento KPI Grid (Overview mode) */}
             {marketView === "overview" && (
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
-              <div className="lg:col-span-7 glass-panel rounded-3xl p-6 sm:p-7 relative overflow-hidden flex flex-col justify-between">
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 sm:gap-5">
+              <div className="lg:col-span-7 glass-panel rounded-3xl p-4 sm:p-7 relative overflow-hidden flex flex-col justify-between">
                 <div className="pointer-events-none absolute -right-20 -top-20 h-64 w-64 rounded-full bg-[#4C6FFF]/20 blur-3xl" />
-                <div className="space-y-4 relative z-10">
+                <div className="space-y-3 sm:space-y-4 relative z-10">
                   <div className="flex flex-wrap items-center gap-2">
-                    <span className="inline-flex items-center gap-2 rounded-full bg-[#4C6FFF]/20 border border-[#4C6FFF]/45 px-3 py-1 text-xs font-semibold text-blue-200">
-                      <Layers className="h-3.5 w-3.5" />
+                    <span className="inline-flex items-center gap-1.5 sm:gap-2 rounded-full bg-[#4C6FFF]/20 border border-[#4C6FFF]/45 px-2.5 sm:px-3 py-0.5 sm:py-1 text-[11px] sm:text-xs font-semibold text-blue-200">
+                      <Layers className="h-3 w-3 sm:h-3.5 sm:w-3.5" />
                       <span>Programmable stock indexes on Base</span>
                     </span>
                   </div>
 
-                  <h2 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-white leading-tight">
+                  <h2 className="text-xl sm:text-3xl font-extrabold tracking-tight text-white leading-tight">
                     Build your own stock index.{" "}
                     <span className="bg-gradient-to-r from-[#60a5fa] via-cyan-300 to-emerald-300 bg-clip-text text-transparent maxx-hero-accent">
                       Buy it in one click, from your wallet.
                     </span>
                   </h2>
 
-                  <p className="text-xs sm:text-sm text-slate-300 leading-relaxed max-w-2xl">
+                  <p className="text-xs sm:text-sm text-slate-300 leading-snug sm:leading-relaxed max-w-2xl">
                     Buy tokenized US stock exposure from anywhere outside the US, from about $1.50, in your own wallet. Tell the agent what you
                     want: it researches from Chainlink, SEC filings and DEX pools, shows every step with its source, and says
                     what it won&apos;t do. No wallet needed to try.
@@ -2443,18 +2443,18 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                         onChange={(e) => setHeroPrompt(e.target.value.slice(0, 300))}
                         placeholder='e.g. "Chips and cloud, nothing above 25%, keep 15% in cash"'
                         aria-label="What do you want the agent to build?"
-                        className="min-w-0 flex-1 rounded-xl border border-slate-700 bg-[#050811] px-3 py-2.5 text-xs sm:text-sm text-white placeholder-slate-500 focus:border-[#4C6FFF] focus:outline-none"
+                        className="min-w-0 flex-1 rounded-xl border border-slate-700 bg-[#050811] px-3 py-2 sm:py-2.5 text-xs sm:text-sm text-white placeholder-slate-500 focus:border-[#4C6FFF] focus:outline-none"
                       />
                       <button
                         type="submit"
                         disabled={!hydrated}
-                        className="inline-flex shrink-0 items-center gap-1.5 rounded-xl bg-gradient-to-r from-[#4C6FFF] to-cyan-600 px-3.5 py-2.5 text-xs font-bold text-white hover:opacity-95 cursor-pointer disabled:opacity-50"
+                        className="inline-flex shrink-0 items-center gap-1.5 rounded-xl bg-gradient-to-r from-[#4C6FFF] to-cyan-600 px-3 sm:px-3.5 py-2 sm:py-2.5 text-xs font-bold text-white hover:opacity-95 cursor-pointer disabled:opacity-50"
                       >
                         <Sparkles className="h-4 w-4" />
                         Ask
                       </button>
                     </div>
-                    <div className="flex flex-wrap gap-1.5">
+                    <div className="flex flex-nowrap overflow-x-auto pb-0.5 sm:pb-0 sm:overflow-visible sm:flex-wrap gap-1.5">
                       {[
                         "Chips and cloud plus Palantir, nothing above 25%, keep 15% in cash",
                         "Big tech, no crypto, equal weight",
@@ -2464,7 +2464,7 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                           key={ex}
                           type="button"
                           onClick={() => setHeroPrompt(ex)}
-                          className="rounded-lg border border-slate-700 bg-slate-800/60 px-2.5 py-1 text-left whitespace-normal text-[10px] leading-snug text-slate-300 hover:border-[#4C6FFF] hover:text-white cursor-pointer"
+                          className="shrink-0 whitespace-nowrap sm:whitespace-normal rounded-lg border border-slate-700 bg-slate-800/60 px-2.5 py-1 text-left text-[10px] leading-snug text-slate-300 hover:border-[#4C6FFF] hover:text-white cursor-pointer"
                         >
                           {ex}
                         </button>
@@ -2473,20 +2473,20 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                   </form>
                 </div>
 
-                <div className="mt-6 pt-5 border-t border-slate-800/80 flex flex-wrap items-center justify-between gap-4 relative z-10">
+                <div className="mt-3.5 pt-3.5 sm:mt-6 sm:pt-5 border-t border-slate-800/80 flex flex-wrap items-center justify-between gap-2.5 sm:gap-4 relative z-10">
                   <div className="flex items-center gap-2">
-                    <div className="flex -space-x-2 overflow-hidden">
+                    <div className="flex -space-x-2 py-0.5 pl-0.5">
                       {BASE_TOKENIZED_STOCKS.map((st) => (
                         <img
                           key={st.symbol}
                           src={st.logoUrl}
                           alt={st.companyName}
                           title={`${st.companyName} (${st.symbol})`}
-                          className="inline-block h-7 w-7 rounded-full ring-2 ring-[#070d1d] bg-slate-900 object-cover"
+                          className="inline-block h-6 w-6 sm:h-7 sm:w-7 rounded-full maxx-avatar-ring bg-slate-900 object-cover"
                         />
                       ))}
                     </div>
-                    <span className="text-xs text-slate-400 font-medium pl-1">
+                    <span className="text-[11px] sm:text-xs text-slate-400 font-medium pl-1">
                       10 Live B20 Equities
                     </span>
                   </div>
@@ -4006,13 +4006,13 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                     >
                       <span className="flex flex-wrap items-center justify-between gap-2">
                         <span className="text-base font-bold text-white">{preset.name}</span>
-                        <span className="flex flex-wrap -space-x-2 shrink-0">
+                        <span className="flex flex-wrap -space-x-2 py-0.5 pl-0.5 shrink-0">
                           {preset.allocations.map((a) => (
                             <img
                               key={a.symbol}
                               src={STOCK_LOGO_MAP[a.symbol]}
                               alt={a.symbol}
-                              className="h-6 w-6 rounded-full ring-2 ring-[#0b1120] bg-slate-900 object-cover"
+                              className="h-6 w-6 rounded-full maxx-avatar-ring bg-slate-900 object-cover"
                             />
                           ))}
                         </span>
@@ -4043,7 +4043,7 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
 
             {/* Interactive Programmable Index Constructor */}
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-              <div id="index-builder" className={`${hasRegistry ? "lg:col-span-7" : "lg:col-span-12"} rounded-2xl border border-slate-800 bg-[#0b1120] p-6 space-y-5 scroll-mt-24`}>
+              <div id="index-builder" className={`${hasRegistry ? "lg:col-span-7" : "lg:col-span-12"} rounded-2xl border border-slate-800 bg-[#0b1120] p-6 space-y-5 scroll-mt-40`}>
                 {sharedBasketLoaded && (
                   <div className="flex items-start justify-between gap-3 rounded-xl border border-cyan-500/40 bg-cyan-500/10 p-3 text-xs text-cyan-100">
                     <span>
@@ -4140,6 +4140,22 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                     centerLabel={customIndexTicker}
                     centerValue={`${(totalCustomWeightBps / 100).toFixed(0)}%`}
                   />
+                  <div className="mt-3 pt-3 border-t border-slate-800/80 flex flex-wrap items-center justify-between gap-2 text-xs">
+                    <span className="text-slate-400">
+                      {Object.values(customWeights).filter((w) => w > 0).length} selected ·{" "}
+                      <strong className={`font-mono ${totalCustomWeightBps === 10000 ? "text-emerald-400" : "text-amber-400"}`}>
+                        {(totalCustomWeightBps / 100).toFixed(0)}% allocated
+                      </strong>
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => document.getElementById("builder-actions")?.scrollIntoView({ behavior: "smooth", block: "center" })}
+                      className="inline-flex items-center gap-1 rounded-lg border border-cyan-500/35 bg-cyan-500/10 px-2.5 py-1 text-[11px] font-semibold text-cyan-300 hover:bg-cyan-500/20 transition cursor-pointer"
+                    >
+                      Amount &amp; Buy / Publish
+                      <ChevronDown className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
                 </div>
 
                 {/* Sliders for the 10 supported Coinbase B20 tokenized stocks, with official logos */}
@@ -4202,7 +4218,7 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                   })}
                 </div>
 
-                <div className="pt-2 border-t border-slate-800">{amountControl}</div>
+                <div id="builder-actions" className="pt-2 border-t border-slate-800 scroll-mt-40">{amountControl}</div>
 
                 <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
                   <span className="text-slate-400">
@@ -4407,13 +4423,13 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                       >
                         <div className="flex items-start justify-between gap-3">
                           <div className="flex min-w-0 items-center gap-3">
-                            <div className="flex shrink-0 -space-x-2">
+                            <div className="flex shrink-0 -space-x-2 py-0.5 pl-0.5">
                               {ix.constituents.slice(0, 4).map((c) => (
                                 <img
                                   key={c.b20Address}
                                   src={STOCK_LOGO_MAP[c.symbol]}
                                   alt=""
-                                  className="h-8 w-8 rounded-full bg-slate-900 object-cover ring-2 ring-[#0b1120]"
+                                  className="h-8 w-8 rounded-full bg-slate-900 object-cover maxx-avatar-ring"
                                 />
                               ))}
                             </div>
@@ -4426,14 +4442,12 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                                 <span className="font-mono text-slate-500">
                                   #{ix.id} · by {ix.creator.slice(0, 6)}…{ix.creator.slice(-4)}
                                 </span>
-                                {indexBuys && (
+                                {indexBuys && indexBuys[ix.id] && (
                                   <span
-                                    className={`rounded px-1.5 py-0.5 font-semibold ${indexBuys[ix.id] ? "bg-emerald-500/15 text-emerald-200" : "bg-slate-800 text-slate-400"}`}
+                                    className="rounded px-1.5 py-0.5 font-semibold bg-emerald-500/15 text-emerald-200"
                                     title="Counted from onchain swaps that match this index's stocks and weights (team test wallet excluded)"
                                   >
-                                    {indexBuys[ix.id]
-                                      ? `${indexBuys[ix.id].buys} ${indexBuys[ix.id].buys === 1 ? "buy" : "buys"} · $${indexBuys[ix.id].volumeUsd.toLocaleString("en-US", { maximumFractionDigits: 0 })}`
-                                      : "No buys yet"}
+                                    {`${indexBuys[ix.id].buys} ${indexBuys[ix.id].buys === 1 ? "buy" : "buys"} · $${indexBuys[ix.id].volumeUsd.toLocaleString("en-US", { maximumFractionDigits: 0 })}`}
                                   </span>
                                 )}
                               </div>
