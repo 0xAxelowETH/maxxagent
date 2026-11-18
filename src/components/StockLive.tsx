@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { MarketStatus } from "./MarketStatus";
 import { BASE_TOKENIZED_STOCKS } from "@/lib/tokenizedStocks";
 import { earningsLabel, recentEarnings } from "@/lib/earnings";
+import { usMarketStatus } from "@/lib/marketHours";
 
 interface Live {
   navPrice: number;
@@ -43,6 +44,17 @@ export function StockLive({ symbol, color }: { symbol: string; color: string }) 
   const [tf, setTf] = useState<"24H" | "7D" | "30D">("7D");
   const [hist, setHist] = useState<{ nav: Point[]; dex: Point[] } | null>(null);
   const [news, setNews] = useState<NewsMark[]>([]);
+  const [sessionLabel, setSessionLabel] = useState<{ label: string; open: boolean } | null>(null);
+
+  useEffect(() => {
+    const update = () => {
+      const st = usMarketStatus();
+      setSessionLabel({ label: st.state === "open" ? "NY open" : "NY closed", open: st.state === "open" });
+    };
+    update();
+    const id = setInterval(update, 60_000);
+    return () => clearInterval(id);
+  }, []);
 
   useEffect(() => {
     let off = false;
@@ -89,6 +101,7 @@ export function StockLive({ symbol, color }: { symbol: string; color: string }) 
         ["DEX volume 24h", live.dexVolume24hUsd ? compact(live.dexVolume24hUsd) : "—"],
         ["Onchain market cap", compact(live.onchainMarketCapUsd), `${live.totalSupplyTokens.toLocaleString("en-US", { maximumFractionDigits: 0 })} tokens`],
         ["Multiplier", live.uiMultiplier.toFixed(6), "dividends & splits"],
+        ["Trading venue", sessionLabel?.label ?? "24/7 DEX", sessionLabel?.open ? "NAV & DEX live" : "DEX live · NAV paused"],
       ]
     : [];
 
@@ -312,8 +325,13 @@ function Chart({
           );
         })}
       </div>
-      <div className="mt-1 flex justify-between font-mono text-[10px] text-slate-500">
+      <div className="mt-1.5 flex items-center justify-between font-mono tabular-nums text-[10px] text-slate-400">
         <span>{usd(lo)}</span>
+        <span className="hidden sm:inline text-slate-500">
+          {new Date(t0 * 1000).toLocaleDateString("en-US", { month: "short", day: "numeric" })} →{" "}
+          {new Date(((t0 + t1) / 2) * 1000).toLocaleDateString("en-US", { month: "short", day: "numeric" })} →{" "}
+          {new Date(t1 * 1000).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
+        </span>
         <span>{usd(hi)}</span>
       </div>
       {marks.length > 0 && (

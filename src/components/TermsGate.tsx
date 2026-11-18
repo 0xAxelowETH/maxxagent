@@ -97,10 +97,10 @@ export function TermsGate({ open, onAccept }: { open: boolean; onAccept: () => v
       aria-modal="true"
       aria-labelledby="terms-gate-title"
     >
-      <div className="w-full sm:max-w-lg max-h-[100dvh] sm:max-h-[90vh] flex flex-col rounded-t-3xl sm:rounded-3xl border border-slate-700 bg-[#0b1120] shadow-2xl">
-        <div className="px-5 pt-5 pb-3 sm:px-6 sm:pt-6 border-b border-slate-800">
-          <MaxxAgentLogo size={36} />
-          <h2 id="terms-gate-title" className="mt-4 text-lg font-bold text-white">
+      <div className="w-full sm:max-w-lg max-h-[94dvh] sm:max-h-[88vh] flex flex-col rounded-t-3xl sm:rounded-3xl border border-slate-700 bg-[#0b1120] shadow-2xl">
+        <div className="px-5 pt-4 pb-2.5 sm:px-6 sm:pt-5 border-b border-slate-800 shrink-0">
+          <MaxxAgentLogo size={32} />
+          <h2 id="terms-gate-title" className="mt-2.5 text-lg font-bold text-white">
             Before you continue
           </h2>
           <p className="text-xs text-slate-400">Please confirm each statement. All are required.</p>
@@ -121,11 +121,11 @@ export function TermsGate({ open, onAccept }: { open: boolean; onAccept: () => v
           </div>
         ) : (
           <>
-            <div className="flex-1 overflow-y-auto px-5 py-4 sm:px-6 space-y-2.5">
+            <div className="flex-1 overflow-y-auto px-4 py-3 sm:px-6 space-y-2">
               {ITEMS.map((item) => (
                 <label
                   key={item.id}
-                  className={`flex items-start gap-3 rounded-2xl border p-3.5 text-[13px] leading-relaxed cursor-pointer select-none transition ${
+                  className={`flex items-start gap-2.5 rounded-xl border p-2.5 sm:p-3 text-xs sm:text-[13px] leading-snug cursor-pointer select-none transition ${
                     checked[item.id]
                       ? "border-emerald-500/50 bg-emerald-500/10 text-slate-100"
                       : "border-slate-800 bg-[#070b14] text-slate-300 hover:border-slate-700"

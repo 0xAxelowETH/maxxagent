@@ -57,7 +57,14 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className={`dark ${jakarta.variable} ${jetbrainsMono.variable}`}>
+    <html lang="en" className={`dark ${jakarta.variable} ${jetbrainsMono.variable}`} suppressHydrationWarning>
+      <head>
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `(function(){try{if(localStorage.getItem("maxxagent_theme")==="light"){var r=document.documentElement;r.dataset.theme="light";r.classList.remove("dark");r.classList.add("light");var m=document.querySelector('meta[name="theme-color"]');if(m)m.setAttribute("content","#f4f7fc");}}catch(e){}})();`,
+          }}
+        />
+      </head>
       <body className="min-h-screen bg-[#03060e] text-slate-100 antialiased selection:bg-[#4C6FFF] selection:text-white">
         {children}
         <MiniAppReady />

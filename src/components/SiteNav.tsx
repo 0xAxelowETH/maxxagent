@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { MaxxAgentLogo } from "./BrandLogo";
+import { ThemeToggle } from "./ThemeToggle";
 
 /** Shared top navigation for the content pages (stats, verify, FAQ, terms, stock and index pages). */
 export function SiteNav({ current }: { current?: "stats" | "verify" | "faq" | "terms" }) {
@@ -26,6 +27,7 @@ export function SiteNav({ current }: { current?: "stats" | "verify" | "faq" | "t
             {l.label}
           </Link>
         ))}
+        <ThemeToggle />
         <Link
           href="/"
           className="inline-flex min-h-[38px] items-center rounded-xl bg-gradient-to-r from-[#4C6FFF] to-cyan-600 px-3.5 py-2 font-bold text-white shadow-lg shadow-[#4C6FFF]/25 hover:brightness-110"

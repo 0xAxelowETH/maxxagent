@@ -68,7 +68,7 @@ export function MaxxAgentLogo({
       <div className="leading-tight">
         <div className="text-xl font-extrabold tracking-tight">
           <span className="text-white">MAXX</span>
-          <span className="bg-gradient-to-r from-sky-400 via-indigo-400 to-emerald-400 bg-clip-text text-transparent">
+          <span className="bg-gradient-to-r from-sky-400 via-indigo-400 to-emerald-400 bg-clip-text text-transparent maxx-wordmark-accent">
             AGENT
           </span>
         </div>

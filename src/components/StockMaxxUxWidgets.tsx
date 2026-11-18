@@ -49,16 +49,18 @@ export function GuidedQuickStartBar({
 
   return (
     <div className="hero-mesh-card rounded-2xl px-4 py-2.5 flex flex-wrap items-center justify-between gap-2.5 animate-fade-up">
-      <div className="flex flex-wrap items-center gap-2 text-xs">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
         <span className="inline-flex items-center gap-1.5 rounded-full bg-cyan-500/15 border border-cyan-500/35 px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-cyan-300">
           <Sparkles className="h-3 w-3 text-cyan-400" />
           Quick start
         </span>
-        <span className="text-slate-200 font-semibold">1. Explore 10 live stocks</span>
-        <span className="text-slate-500">·</span>
+        <span className="inline-flex items-center gap-1 text-slate-200 font-semibold">
+          <span>1. Explore 10 live stocks</span>
+        </span>
+        <span className="hidden sm:inline text-slate-500" aria-hidden="true">·</span>
         <span className="text-slate-300">2. Ask Agent for a basket</span>
-        <span className="text-slate-500 hidden sm:inline">·</span>
-        <span className="text-slate-300 hidden sm:inline">3. Review &amp; sign in your own wallet</span>
+        <span className="hidden md:inline text-slate-500" aria-hidden="true">·</span>
+        <span className="hidden md:inline text-slate-300">3. Review &amp; sign in your own wallet</span>
       </div>
 
       <div className="flex items-center gap-2 shrink-0 ml-auto">
@@ -245,6 +247,7 @@ export function InteractiveB20TradingChart({
 }) {
   const [timeframe, setTimeframe] = useState<HistoryTf>("7D");
   const [hoverT, setHoverT] = useState<number | null>(null);
+  const [hoverSpread, setHoverSpread] = useState<{ t: number; pct: number } | null>(null);
   const [peerSymbol, setPeerSymbol] = useState<string>("");
   const [showPins, setShowPins] = useState<boolean>(true);
   const [allNews, setAllNews] = useState<NewsPin[]>([]);
@@ -711,41 +714,47 @@ export function InteractiveB20TradingChart({
                     {peerAt && <circle cx={x(peerAt[0])} cy={y(peerAt[1])} r="4.5" fill="#f472b6" stroke="#fff" strokeWidth="1.5" />}
                   </svg>
 
-                  {/* Interactive news/SEC pin dots */}
-                  {newsMarks.map(({ n, t }) => {
-                    const pVal = interpAt(pinLine, t);
-                    if (pVal === null) return null;
-                    const left = (x(t) / svgWidth) * 100;
-                    const top = (y(pVal) / svgHeight) * 100;
-                    const k = pinKind(n);
-                    return (
-                      <a
-                        key={`pd-${n.url}`}
-                        href={n.url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="group absolute -translate-x-1/2 -translate-y-1/2 z-10"
-                        style={{ left: `${left}%`, top: `${top}%` }}
-                        aria-label={`${PIN_LABEL[k] ?? "News"}: ${n.title}`}
-                      >
-                        <span
-                          className="block h-3 w-3 rounded-full border-2 border-[#040814] shadow transition-transform group-hover:scale-125"
-                          style={{ backgroundColor: PIN_COLOR[k] ?? "#94a3b8" }}
-                        />
-                        <span
-                          className={`pointer-events-none absolute bottom-4 z-20 hidden w-56 rounded-lg border border-slate-700 bg-[#050811] p-2 text-[10px] leading-snug text-slate-200 shadow-xl group-hover:block group-focus:block ${
-                            left > 60 ? "right-0" : "left-0"
-                          }`}
+                  {/* Interactive news/SEC pin dots (vertically staggered when timestamps cluster) */}
+                  {(() => {
+                    const placed: number[] = [];
+                    return newsMarks.map(({ n, t }) => {
+                      const pVal = interpAt(pinLine, t);
+                      if (pVal === null) return null;
+                      const left = (x(t) / svgWidth) * 100;
+                      const top = (y(pVal) / svgHeight) * 100;
+                      const closeCount = placed.filter((prevL) => Math.abs(prevL - left) < 2.8).length;
+                      placed.push(left);
+                      const dy = closeCount === 0 ? 0 : closeCount % 2 === 1 ? -9 * Math.ceil(closeCount / 2) : 9 * Math.ceil(closeCount / 2);
+                      const k = pinKind(n);
+                      return (
+                        <a
+                          key={`pd-${n.url}`}
+                          href={n.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="group absolute -translate-x-1/2 -translate-y-1/2 z-10 hover:z-30"
+                          style={{ left: `${left}%`, top: `calc(${top}% + ${dy}px)` }}
+                          aria-label={`${PIN_LABEL[k] ?? "News"}: ${n.title}`}
                         >
-                          <span className="block font-bold text-white">{n.title}</span>
-                          <span className="mt-0.5 block text-slate-400">
-                            {PIN_LABEL[k] ?? "News"} · {new Date(n.publishedAt).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "America/New_York" })}
-                            {n.changePct !== null ? ` · ${n.changePct >= 0 ? "+" : ""}${n.changePct.toFixed(2)}% since` : ""}
+                          <span
+                            className="block h-3 w-3 rounded-full border-2 border-[#040814] shadow transition-transform group-hover:scale-125"
+                            style={{ backgroundColor: PIN_COLOR[k] ?? "#94a3b8" }}
+                          />
+                          <span
+                            className={`pointer-events-none absolute bottom-4 z-20 hidden w-56 rounded-lg border border-slate-700 bg-[#050811] p-2 text-[10px] leading-snug text-slate-200 shadow-xl group-hover:block group-focus:block ${
+                              left > 60 ? "right-0" : "left-0"
+                            }`}
+                          >
+                            <span className="block font-bold text-white">{n.title}</span>
+                            <span className="mt-0.5 block text-slate-400">
+                              {PIN_LABEL[k] ?? "News"} · {new Date(n.publishedAt).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "America/New_York" })}
+                              {n.changePct !== null ? ` · ${n.changePct >= 0 ? "+" : ""}${n.changePct.toFixed(2)}% since` : ""}
+                            </span>
                           </span>
-                        </span>
-                      </a>
-                    );
-                  })}
+                        </a>
+                      );
+                    });
+                  })()}
 
                   {/* Floating crosshair tooltip */}
                   {hoverT !== null && (
@@ -776,13 +785,25 @@ export function InteractiveB20TradingChart({
                 {/* DEX vs NAV historical spread histogram sub-chart */}
                 {spreadBars.length > 0 && (
                   <div className="mt-2 rounded-xl border border-slate-800/80 bg-[#050a18]/80 px-3 py-2">
-                    <div className="mb-1 flex items-center justify-between text-[10px] text-slate-400">
+                    <div className="mb-1 flex flex-wrap items-center justify-between gap-2 text-[10px] text-slate-400">
                       <span className="font-semibold text-slate-300">DEX vs NAV Spread History (%)</span>
                       <span className="font-mono tabular-nums">
-                        <span className="text-emerald-300">Below NAV</span> · <span className="text-amber-300">Above NAV</span>
+                        {hoverSpread ? (
+                          <span className={hoverSpread.pct <= 0 ? "text-emerald-300" : "text-amber-300"}>
+                            {fmtTime(hoverSpread.t)}: {hoverSpread.pct >= 0 ? "+" : ""}{hoverSpread.pct.toFixed(2)}% vs NAV
+                          </span>
+                        ) : (
+                          <>
+                            <span className="text-emerald-300">Below NAV</span> · <span className="text-amber-300">Above NAV</span>
+                          </>
+                        )}
                       </span>
                     </div>
-                    <svg viewBox={`0 0 ${svgWidth} 44`} className="w-full h-11 overflow-visible">
+                    <svg
+                      viewBox={`0 0 ${svgWidth} 44`}
+                      className="w-full h-11 overflow-visible cursor-crosshair"
+                      onMouseLeave={() => setHoverSpread(null)}
+                    >
                       <line x1={padL} x2={svgWidth - padR} y1={22} y2={22} stroke="rgba(148, 163, 184, 0.35)" strokeDasharray="3 3" />
                       <text x={svgWidth - 4} y={25} textAnchor="end" fill="rgba(148, 163, 184, 0.7)" fontSize="9" fontFamily="ui-monospace, monospace">
                         0%
@@ -792,6 +813,7 @@ export function InteractiveB20TradingChart({
                         const h = Math.max(2, (Math.abs(b.pct) / spreadAmp) * 18);
                         const barW = Math.max(4, (plotW / spreadBars.length) * 0.68);
                         const by = b.pct >= 0 ? 22 - h : 22;
+                        const active = hoverSpread?.t === b.t;
                         return (
                           <rect
                             key={b.t}
@@ -801,7 +823,8 @@ export function InteractiveB20TradingChart({
                             height={h}
                             rx={1.5}
                             fill={b.pct <= 0 ? "#34d399" : "#fbbf24"}
-                            fillOpacity={0.78}
+                            fillOpacity={active ? 1 : 0.78}
+                            onMouseEnter={() => setHoverSpread(b)}
                           >
                             <title>{`${fmtTime(b.t)}: ${b.pct >= 0 ? "+" : ""}${b.pct.toFixed(2)}% vs NAV`}</title>
                           </rect>
@@ -948,6 +971,8 @@ export function InteractiveB20TradingChart({
           <div className="space-y-2 pt-2 border-t border-slate-800/80">
             <SwapPanel
               stock={activeStock}
+              stocks={stockList}
+              onSelectSymbol={onSelectSymbol}
               price={liveActive ? liveActive.dexPrice24_7 || liveActive.navPrice : 0}
               dexLiquidityUsd={liquidityUsd}
               tradeUsd={tradeUsd}
@@ -986,6 +1011,8 @@ const ETH_GAS_RESERVE = 0.0001;
 /** Buy/Sell one stock for any amount (USDC in, or a share of the current holding out). */
 function SwapPanel({
   stock,
+  stocks,
+  onSelectSymbol,
   price,
   dexLiquidityUsd,
   tradeUsd,
@@ -1001,6 +1028,8 @@ function SwapPanel({
   onSell,
 }: {
   stock: TokenizedStockMetadata;
+  stocks?: TokenizedStockMetadata[];
+  onSelectSymbol?: (sym: string) => void;
   price: number;
   dexLiquidityUsd?: number;
   tradeUsd: number;
@@ -1063,6 +1092,26 @@ function SwapPanel({
 
   return (
     <div id="swap-panel" className="rounded-2xl border border-slate-800 bg-[#050a18] p-3 space-y-3 scroll-mt-24">
+      {stocks && stocks.length > 1 && onSelectSymbol && (
+        <div className="flex items-center justify-between gap-2 text-[11px]">
+          <label htmlFor="swap-stock-select" className="text-slate-400 font-semibold">
+            Asset
+          </label>
+          <select
+            id="swap-stock-select"
+            name="swapStockSymbol"
+            value={stock.symbol}
+            onChange={(e) => onSelectSymbol(e.target.value)}
+            className="rounded-lg border border-slate-700 bg-[#040814] px-2.5 py-1 font-mono text-xs font-bold text-white focus:border-[#4C6FFF] focus:outline-none cursor-pointer"
+          >
+            {stocks.map((st) => (
+              <option key={st.symbol} value={st.symbol} className="bg-[#040814]">
+                {st.symbol} · {st.companyName}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
       <div className="grid grid-cols-2 gap-1 rounded-xl bg-[#040814] p-1">
         {(["buy", "sell"] as const).map((s) => (
           <button
@@ -1097,19 +1146,23 @@ function SwapPanel({
               ))}
             </div>
           </div>
-          <label className="block">
-            <span className="flex items-center justify-between text-[11px] text-slate-400">
+          <div>
+            <label htmlFor="swap-amount-usd" className="flex items-center justify-between text-[11px] text-slate-400">
               <span>You pay (USD)</span>
-              {walletConnected && payWith === "usdc" && usdcBalance !== null && <span>Balance: {usdcBalance.toFixed(2)} USDC</span>}
+              {walletConnected && payWith === "usdc" && usdcBalance !== null && (
+                <span className="font-mono tabular-nums">Balance: {usdcBalance.toFixed(2)} USDC</span>
+              )}
               {walletConnected && payWith === "eth" && ethBalance !== null && (
-                <span>
+                <span className="font-mono tabular-nums">
                   Balance: {ethBalance.toFixed(5)} ETH{ethUsd ? ` ≈ $${(ethBalance * ethUsd).toFixed(2)}` : ""}
                 </span>
               )}
-            </span>
+            </label>
             <div className="mt-1 flex items-center rounded-xl border border-slate-700 bg-[#040814] px-3 focus-within:border-[#4C6FFF]">
               <span className="text-slate-400 font-mono">$</span>
               <input
+                id="swap-amount-usd"
+                name="swapAmountUsd"
                 type="number"
                 inputMode="decimal"
                 min={BUY_MIN_USD}
@@ -1121,11 +1174,11 @@ function SwapPanel({
                   commit(e.target.value);
                 }}
                 aria-label="Amount in USD"
-                className="w-full bg-transparent px-2 py-2 font-mono text-base font-bold text-white outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                className="w-full bg-transparent px-2 py-2 font-mono tabular-nums text-base font-bold text-white outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
               />
             </div>
-          </label>
-          <div className="flex flex-wrap gap-1.5">
+          </div>
+          <div className="grid grid-cols-4 gap-1.5">
             {[1, 2, 5, 10, 25, 50, 100].map((v) => (
               <button
                 key={v}
@@ -1135,15 +1188,36 @@ function SwapPanel({
                 ${v}
               </button>
             ))}
-            {maxBuy !== null && maxBuy >= BUY_MIN_USD && (
-              <button
-                onClick={() => onTradeUsdChange(maxBuy)}
-                className={`${chip} border-slate-700 text-slate-300 hover:border-slate-500`}
-              >
-                Max
-              </button>
-            )}
+            <button
+              type="button"
+              disabled={maxBuy === null || maxBuy < BUY_MIN_USD}
+              onClick={() => maxBuy !== null && maxBuy >= BUY_MIN_USD && onTradeUsdChange(maxBuy)}
+              className={`${chip} border-slate-700 text-slate-300 hover:border-slate-500 disabled:opacity-40 disabled:cursor-not-allowed`}
+              title={maxBuy !== null && maxBuy >= BUY_MIN_USD ? `Use wallet max ($${maxBuy.toFixed(2)})` : "Connect wallet with balance to use Max"}
+            >
+              Max
+            </button>
           </div>
+          {walletConnected && maxBuy !== null && maxBuy >= BUY_MIN_USD && (
+            <div className="flex items-center justify-between gap-1.5 text-[10px] text-slate-400">
+              <span>Wallet %</span>
+              <div className="flex gap-1">
+                {[0.25, 0.5, 1].map((frac) => {
+                  const amt = Math.max(BUY_MIN_USD, Math.floor(maxBuy * frac * 100) / 100);
+                  return (
+                    <button
+                      key={frac}
+                      type="button"
+                      onClick={() => onTradeUsdChange(amt)}
+                      className="rounded-md border border-slate-700 px-2 py-0.5 font-mono text-slate-300 hover:border-cyan-400 hover:text-white cursor-pointer"
+                    >
+                      {frac === 1 ? "100%" : `${Math.round(frac * 100)}%`}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
           {payWith === "eth" && ethNeeded !== null && (
             <div className="text-[11px] text-slate-400">
               You pay ≈ <span className="font-mono text-slate-200">{ethNeeded.toFixed(6)} ETH</span>

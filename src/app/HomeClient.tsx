@@ -62,6 +62,7 @@ import {
   type WalletHint,
 } from "@/lib/basketExecutor";
 import { MaxxAgentLogo, MaxxAgentMark } from "@/components/BrandLogo";
+import { ThemeToggle } from "@/components/ThemeToggle";
 import { OrderReview } from "@/components/OrderReview";
 import { TradeHistoryPanel, type TradeHistoryEntry } from "@/components/TradeHistoryPanel";
 import { MarketStatus } from "@/components/MarketStatus";
@@ -91,6 +92,23 @@ type ActiveTab = "terminal" | "agent" | "indexes" | "news" | "traction" | "publi
 // Tab <-> URL (?tab=…): shareable links, and the browser's Back button goes to the previous tab
 const SLUG_BY_TAB: Partial<Record<ActiveTab, string>> = { agent: "agent", indexes: "indexes", news: "news", traction: "portfolio" };
 const TAB_BY_SLUG: Record<string, ActiveTab> = { market: "terminal", agent: "agent", indexes: "indexes", news: "news", portfolio: "traction" };
+
+function largestRemainderInts(values: number[], target = 100): number[] {
+  if (values.length === 0) return [];
+  const total = values.reduce((a, b) => a + Math.max(0, b), 0);
+  if (total <= 0) return values.map(() => 0);
+  const scaled = values.map((v) => (Math.max(0, v) / total) * target);
+  const floored = scaled.map((x) => Math.floor(x));
+  let remainder = target - floored.reduce((a, b) => a + b, 0);
+  const order = scaled
+    .map((x, idx) => ({ idx, frac: x - floored[idx] }))
+    .sort((a, b) => b.frac - a.frac);
+  for (let i = 0; i < order.length && remainder > 0; i++) {
+    floored[order[i].idx] += 1;
+    remainder -= 1;
+  }
+  return floored;
+}
 
 interface EthereumProvider {
   request: (args: { method: string; params?: unknown[] }) => Promise<unknown>;
@@ -1610,10 +1628,17 @@ export default function StockMaxxingDashboard() {
       if (timer) clearTimeout(timer);
     };
   }, [activeTab, indexBuys]);
-  // Most bought first (by volume), then newest
-  const rankedIndexes = [...publishedIndexes].sort(
-    (a, b) => (indexBuys?.[b.id]?.volumeUsd ?? 0) - (indexBuys?.[a.id]?.volumeUsd ?? 0) || b.id - a.id
-  );
+  const [indexSort, setIndexSort] = useState<"volume" | "buys" | "newest">("volume");
+  // Sort published indexes by user selection (volume, count, or newest)
+  const rankedIndexes = [...publishedIndexes].sort((a, b) => {
+    const aStats = indexBuys?.[a.id];
+    const bStats = indexBuys?.[b.id];
+    if (indexSort === "newest") return b.id - a.id;
+    if (indexSort === "buys") {
+      return (bStats?.buys ?? 0) - (aStats?.buys ?? 0) || (bStats?.volumeUsd ?? 0) - (aStats?.volumeUsd ?? 0) || b.id - a.id;
+    }
+    return (bStats?.volumeUsd ?? 0) - (aStats?.volumeUsd ?? 0) || (bStats?.buys ?? 0) - (aStats?.buys ?? 0) || b.id - a.id;
+  });
 
   const normalizeCustomWeights = () => {
     const entries = Object.entries(customWeights).filter(([, w]) => w > 0);
@@ -1626,6 +1651,22 @@ export default function StockMaxxingDashboard() {
     });
     setCustomWeights(next);
   };
+
+  const equalizeCustomWeights = () => {
+    const activeSymbols = Object.entries(customWeights)
+      .filter(([, w]) => w > 0)
+      .map(([sym]) => sym);
+    const targets = activeSymbols.length > 0 ? activeSymbols : BASE_TOKENIZED_STOCKS.map((s) => s.symbol);
+    const rounded = roundWeightsBps(targets.map(() => 1));
+    if (!rounded) return;
+    const next: Record<string, number> = {};
+    targets.forEach((sym, idx) => {
+      next[sym] = rounded[idx];
+    });
+    setCustomWeights(next);
+  };
+
+  const clearCustomWeights = () => setCustomWeights({});
 
   const totalCustomWeightBps = Object.values(customWeights).reduce((a, b) => a + b, 0);
 
@@ -1830,8 +1871,8 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
             </span>
           </div>
 
-          {/* Global KPIs & Wallet Connect */}
-          <div className="ml-auto flex flex-wrap items-center justify-end gap-3">
+          {/* Global KPIs, Theme Switcher & Wallet Connect */}
+          <div className="ml-auto flex items-center justify-end gap-2 sm:gap-3">
             <div className="hidden xl:flex items-center gap-5 rounded-2xl border border-slate-800/90 bg-[#091022]/90 px-4 py-2 shadow-inner">
               <div className="flex items-center gap-2.5">
                 <div>
@@ -1859,6 +1900,8 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                 </div>
               </div>
             </div>
+
+            <ThemeToggle />
 
             {walletAddress ? (
               <div className="flex items-center gap-2">
@@ -2089,7 +2132,10 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
               return (
                 <button
                   key={tab.id}
-                  onClick={() => setActiveTab(tab.id as ActiveTab)}
+                  onClick={() => {
+                    setActiveTab(tab.id as ActiveTab);
+                    window.scrollTo({ top: 0, behavior: "smooth" });
+                  }}
                   aria-current={isActive ? "page" : undefined}
                   className={`flex items-center gap-2 whitespace-nowrap rounded-xl px-4 py-2.5 text-xs font-semibold transition-all cursor-pointer ${
                     isActive
@@ -2110,6 +2156,9 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
               );
             })}
             <span className="ml-auto flex items-center gap-1">
+              <a href="/verify" className="whitespace-nowrap rounded-xl px-3 py-2.5 text-xs font-semibold text-slate-400 hover:bg-slate-800/60 hover:text-slate-200">
+                Verify
+              </a>
               <a href="/stats" className="whitespace-nowrap rounded-xl px-3 py-2.5 text-xs font-semibold text-slate-400 hover:bg-slate-800/60 hover:text-slate-200">
                 Live stats
               </a>
@@ -2119,8 +2168,9 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
             </span>
           </div>
         </nav>
-        {/* Phones: the bottom bar holds the 4 tabs, so the help links sit under the header */}
+        {/* Phones: the bottom bar holds the tabs, so the help links sit under the header */}
         <div className="md:hidden mx-auto flex max-w-7xl justify-end gap-4 px-4 pb-2 text-[11px] font-semibold text-slate-400">
+          <a href="/verify" className="hover:text-white">Verify</a>
           <a href="/stats" className="hover:text-white">Live stats</a>
           <a href="/faq" className="hover:text-white">FAQ</a>
         </div>
@@ -2139,13 +2189,15 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
         {/* Slim status pill row (saves vertical space above the fold) */}
         <div className="hidden md:flex flex-wrap items-center justify-between gap-2 px-1 text-[11px] text-slate-400">
           <div className="flex flex-wrap items-center gap-2.5">
-            <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/35 bg-emerald-500/10 px-2.5 py-1 text-emerald-200">
-              <ShieldCheck className="h-3.5 w-3.5 text-emerald-400 shrink-0" />
-              Terms accepted
-              <a href="/terms" target="_blank" rel="noopener noreferrer" className="text-emerald-300/90 underline hover:text-white">
-                review
-              </a>
-            </span>
+            {termsAccepted === true && (
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/35 bg-emerald-500/10 px-2.5 py-1 text-emerald-200">
+                <ShieldCheck className="h-3.5 w-3.5 text-emerald-400 shrink-0" />
+                Terms accepted
+                <a href="/terms" target="_blank" rel="noopener noreferrer" className="text-emerald-300/90 underline hover:text-white">
+                  review
+                </a>
+              </span>
+            )}
             <span>Base Mainnet · non-custodial · you sign every order</span>
           </div>
 
@@ -2283,7 +2335,7 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                     type="button"
                     onClick={() => setMarketView(v.id)}
                     aria-pressed={marketView === v.id}
-                    className={`rounded-lg px-2.5 py-1 font-bold transition cursor-pointer ${
+                    className={`whitespace-nowrap rounded-lg px-2.5 py-1 font-bold transition cursor-pointer ${
                       marketView === v.id ? "bg-[#4C6FFF] text-white" : "text-slate-400 hover:text-white"
                     }`}
                   >
@@ -2337,6 +2389,8 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                   >
                     <div className="flex gap-2">
                       <input
+                        id="hero-prompt-input"
+                        name="heroPrompt"
                         value={heroPrompt}
                         onChange={(e) => setHeroPrompt(e.target.value.slice(0, 300))}
                         placeholder='e.g. "Chips and cloud, nothing above 25%, keep 15% in cash"'
@@ -2362,7 +2416,7 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                           key={ex}
                           type="button"
                           onClick={() => setHeroPrompt(ex)}
-                          className="rounded-lg border border-slate-700 bg-slate-800/60 px-2 py-1 text-[10px] text-slate-300 hover:border-[#4C6FFF] hover:text-white cursor-pointer"
+                          className="rounded-lg border border-slate-700 bg-slate-800/60 px-2.5 py-1 text-left whitespace-normal text-[10px] leading-snug text-slate-300 hover:border-[#4C6FFF] hover:text-white cursor-pointer"
                         >
                           {ex}
                         </button>
@@ -2864,7 +2918,7 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                             </div>
                           </td>
                           <td className="py-3.5 px-4">
-                            <span className="rounded-full bg-slate-800 px-2.5 py-1 text-[11px] text-slate-300">
+                            <span className="inline-block whitespace-nowrap rounded-full bg-slate-800 px-2.5 py-1 text-[11px] text-slate-300">
                               {stock.sector}
                             </span>
                           </td>
@@ -2873,12 +2927,15 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                               ${stock.navPrice.toFixed(2)}
                             </div>
                             <div
-                              className={`text-[11px] font-medium ${
+                              className={`text-[11px] font-medium whitespace-nowrap ${
                                 stock.change24hPct >= 0 ? "text-emerald-400" : "text-rose-400"
                               }`}
                             >
                               {stock.change24hPct >= 0 ? "+" : ""}
-                              {stock.change24hPct.toFixed(2)}% ({fmtAge(stock.oracleAgeMinutes ?? 3)})
+                              {stock.change24hPct.toFixed(2)}%
+                            </div>
+                            <div className="text-[10px] text-slate-500 whitespace-nowrap">
+                              {fmtAge(stock.oracleAgeMinutes ?? 3)} ago
                             </div>
                           </td>
                           <td className="py-3.5 px-4 text-right font-mono tabular-nums">
@@ -2966,7 +3023,7 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                             </td>
                           )}
                           <td className="py-3.5 px-4">
-                            <div className="flex items-center justify-center gap-1.5 flex-wrap">
+                            <div className="flex items-center justify-center gap-1.5 whitespace-nowrap">
                               <button
                                 onClick={(e) => {
                                   e.stopPropagation();
@@ -2987,37 +3044,47 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                               >
                                 Inspect
                               </a>
-                              <a
-                                href={stock.basescanUrl}
-                                target="_blank"
-                                rel="noopener noreferrer"
+                              <details
+                                className="relative inline-block"
                                 onClick={(e) => e.stopPropagation()}
-                                title="View B20 Precompile on BaseScan"
-                                className="inline-flex items-center gap-1.5 rounded-md border border-slate-700 bg-slate-800/70 px-2 py-1 font-mono text-[11px] text-slate-300 hover:border-[#4C6FFF] hover:text-white transition"
                               >
-                                B20
-                              </a>
-                              <a
-                                href={`https://basescan.org/address/${stock.chainlinkFeed}`}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                onClick={(e) => e.stopPropagation()}
-                                title="View Chainlink Oracle Proxy on BaseScan"
-                                className="inline-flex items-center gap-1 rounded-md border border-slate-700 bg-slate-800/70 px-2 py-1 text-[11px] text-cyan-300 hover:border-cyan-400 transition"
-                              >
-                                Feed
-                              </a>
-                              <a
-                                href={stock.prospectusUrl}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                onClick={(e) => e.stopPropagation()}
-                                title="Issuer prospectus (PDF, published by Coinbase)"
-                                className="inline-flex items-center gap-1 rounded-md border border-slate-700 bg-slate-800/70 px-2 py-1 text-[11px] text-amber-300 hover:border-amber-400 transition"
-                              >
-                                <FileText className="h-3 w-3" />
-                                PDF
-                              </a>
+                                <summary
+                                  className="list-none inline-flex items-center gap-1 rounded-md border border-slate-700 bg-slate-800/70 px-2 py-1 text-[11px] font-semibold text-slate-300 hover:border-slate-500 hover:text-white transition cursor-pointer select-none"
+                                  title="B20 contract, Chainlink feed & prospectus links"
+                                >
+                                  Sources
+                                  <ChevronDown className="h-3 w-3 opacity-70" />
+                                </summary>
+                                <div className="absolute right-0 top-full z-30 mt-1.5 w-36 rounded-xl border border-slate-700 bg-[#0b1120] p-1.5 shadow-2xl space-y-1 text-left">
+                                  <a
+                                    href={stock.basescanUrl}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="flex items-center justify-between rounded-lg px-2 py-1.5 font-mono text-[11px] text-slate-200 hover:bg-slate-800"
+                                  >
+                                    <span>B20 contract</span>
+                                    <ExternalLink className="h-3 w-3 text-slate-400" />
+                                  </a>
+                                  <a
+                                    href={`https://basescan.org/address/${stock.chainlinkFeed}`}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="flex items-center justify-between rounded-lg px-2 py-1.5 text-[11px] text-cyan-300 hover:bg-slate-800"
+                                  >
+                                    <span>Chainlink feed</span>
+                                    <ExternalLink className="h-3 w-3 text-cyan-400/80" />
+                                  </a>
+                                  <a
+                                    href={stock.prospectusUrl}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="flex items-center justify-between rounded-lg px-2 py-1.5 text-[11px] text-amber-300 hover:bg-slate-800"
+                                  >
+                                    <span>Prospectus PDF</span>
+                                    <FileText className="h-3 w-3 text-amber-300/80" />
+                                  </a>
+                                </div>
+                              </details>
                             </div>
                           </td>
                         </tr>
@@ -3125,10 +3192,12 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
 
                 {/* Natural Language Mandate Input */}
                 <div className="space-y-1.5">
-                  <label className="text-xs font-semibold uppercase tracking-wider text-slate-400">
+                  <label htmlFor="agent-prompt-input" className="text-xs font-semibold uppercase tracking-wider text-slate-400">
                     What do you want? e.g. &quot;AI and cloud, no Tesla, 3 stocks, equal weight&quot;
                   </label>
                   <textarea
+                    id="agent-prompt-input"
+                    name="agentPrompt"
                     rows={3}
                     value={userPrompt}
                     onChange={(e) => setUserPrompt(e.target.value)}
@@ -3140,10 +3209,12 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                 {/* Risk Profile & Capital */}
                 <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
+                    <label htmlFor="agent-risk-profile" className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
                       Risk profile
                     </label>
                     <select
+                      id="agent-risk-profile"
+                      name="agentRiskProfile"
                       value={riskProfile}
                       onChange={(e) =>
                         setRiskProfile(
@@ -3528,40 +3599,51 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                     </h3>
 
                     <div className="mb-3 rounded-xl border border-slate-800/90 bg-[#050914] p-3 space-y-2">
-                      <div className="flex h-6 w-full overflow-hidden rounded-lg bg-slate-900">
-                        {agentReport.allocations.map((alloc) => {
-                          const sharePct = alloc.capitalSharePct ?? (alloc.targetWeightBps / 100);
-                          const isHi = highlightedAlloc === alloc.symbol;
-                          return (
-                            <button
-                              key={`bar-${alloc.symbol}`}
-                              type="button"
-                              onMouseEnter={() => setHighlightedAlloc(alloc.symbol)}
-                              onMouseLeave={() => setHighlightedAlloc(null)}
-                              onClick={() => setHighlightedAlloc((prev) => (prev === alloc.symbol ? null : alloc.symbol))}
-                              style={{
-                                width: `${Math.max(2, sharePct)}%`,
-                                backgroundColor: alloc.color || STOCK_COLOR_MAP[alloc.symbol] || "#4C6FFF",
-                              }}
-                              className={`flex items-center justify-center text-[10px] font-mono font-bold text-white transition-all cursor-pointer border-r border-[#050914]/70 ${
-                                highlightedAlloc && !isHi ? "opacity-45" : "opacity-100"
-                              }`}
-                              title={`${alloc.symbol}: ${sharePct.toFixed(1)}% ($${alloc.usdAllocation.toFixed(2)})`}
-                            >
-                              {sharePct >= 12 ? `${alloc.symbol.replace(/c$/, "")} ${Math.round(sharePct)}%` : ""}
-                            </button>
-                          );
-                        })}
-                        {(agentReport.cashReservePct ?? 0) > 0 && (
-                          <div
-                            style={{ width: `${agentReport.cashReservePct}%` }}
-                            className="flex items-center justify-center bg-emerald-600/80 text-[10px] font-mono font-bold text-white"
-                            title={`USDC cash reserve: ${agentReport.cashReservePct}%`}
-                          >
-                            {(agentReport.cashReservePct ?? 0) >= 12 ? `USDC ${agentReport.cashReservePct}%` : ""}
+                      {(() => {
+                        const cashPct = Math.max(0, agentReport.cashReservePct ?? 0);
+                        const stockShares = agentReport.allocations.map((a) => Math.max(0, a.capitalSharePct ?? a.targetWeightBps / 100));
+                        const rawParts = cashPct > 0 ? [...stockShares, cashPct] : stockShares;
+                        const rawTotal = rawParts.reduce((s, v) => s + v, 0) || 100;
+                        const intPcts = largestRemainderInts(rawParts, 100);
+                        const cashIntPct = cashPct > 0 ? intPcts[agentReport.allocations.length] : 0;
+                        return (
+                          <div className="flex h-6 w-full overflow-hidden rounded-lg bg-slate-900">
+                            {agentReport.allocations.map((alloc, idx) => {
+                              const sharePct = stockShares[idx];
+                              const widthPct = (sharePct / rawTotal) * 100;
+                              const isHi = highlightedAlloc === alloc.symbol;
+                              return (
+                                <button
+                                  key={`bar-${alloc.symbol}`}
+                                  type="button"
+                                  onMouseEnter={() => setHighlightedAlloc(alloc.symbol)}
+                                  onMouseLeave={() => setHighlightedAlloc(null)}
+                                  onClick={() => setHighlightedAlloc((prev) => (prev === alloc.symbol ? null : alloc.symbol))}
+                                  style={{
+                                    width: `${Math.max(2, widthPct)}%`,
+                                    backgroundColor: alloc.color || STOCK_COLOR_MAP[alloc.symbol] || "#4C6FFF",
+                                  }}
+                                  className={`flex items-center justify-center text-[10px] font-mono font-bold text-white transition-all cursor-pointer border-r border-[#050914]/70 ${
+                                    highlightedAlloc && !isHi ? "opacity-45" : "opacity-100"
+                                  }`}
+                                  title={`${alloc.symbol}: ${sharePct.toFixed(1)}% ($${alloc.usdAllocation.toFixed(2)})`}
+                                >
+                                  {widthPct >= 12 ? `${alloc.symbol.replace(/c$/, "")} ${intPcts[idx]}%` : ""}
+                                </button>
+                              );
+                            })}
+                            {cashPct > 0 && (
+                              <div
+                                style={{ width: `${(cashPct / rawTotal) * 100}%` }}
+                                className="flex items-center justify-center bg-emerald-600/80 text-[10px] font-mono font-bold text-white"
+                                title={`USDC cash reserve: ${cashPct.toFixed(1)}%`}
+                              >
+                                {(cashPct / rawTotal) * 100 >= 12 ? `USDC ${cashIntPct}%` : ""}
+                              </div>
+                            )}
                           </div>
-                        )}
-                      </div>
+                        );
+                      })()}
                       <div className="flex flex-wrap gap-x-3 gap-y-1 text-[10px] text-slate-400 font-mono tabular-nums">
                         {agentReport.allocations.map((a) => (
                           <button
@@ -3791,34 +3873,37 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                 const onchain = publishedIndexes.find(
                   (ix) => ix.ticker === preset.ticker && ix.constituents.map((c) => `${c.symbol}:${c.weightBps}`).join(",") === presetKey
                 );
+                const selectPreset = () => {
+                  setSelectedPreset(preset);
+                  setCustomIndexName(preset.name);
+                  setCustomIndexTicker(preset.ticker);
+                  const map: Record<string, number> = {};
+                  preset.allocations.forEach((a) => {
+                    map[a.symbol] = a.weightBps;
+                  });
+                  setCustomWeights(map);
+                };
                 return (
                   <div
                     key={preset.id}
-                    onClick={() => {
-                      setSelectedPreset(preset);
-                      setCustomIndexName(preset.name);
-                      setCustomIndexTicker(preset.ticker);
-                      const map: Record<string, number> = {};
-                      preset.allocations.forEach((a) => {
-                        map[a.symbol] = a.weightBps;
-                      });
-                      setCustomWeights(map);
-                    }}
-                    className={`rounded-2xl border p-5 transition cursor-pointer ${
+                    className={`rounded-2xl border p-5 transition ${
                       isSelected
                         ? "border-[#4C6FFF] bg-[#0b152e] shadow-lg shadow-[#4C6FFF]/20"
                         : "border-slate-800 bg-[#0b1120] hover:border-slate-700"
                     }`}
                   >
-                    <div className="flex items-center justify-between gap-2 mb-3">
-                      <span className="rounded-md bg-[#4C6FFF]/20 border border-[#4C6FFF]/40 px-2.5 py-0.5 font-mono text-xs font-bold text-blue-300">
+                    <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+                      <button
+                        type="button"
+                        onClick={selectPreset}
+                        className="rounded-md bg-[#4C6FFF]/20 border border-[#4C6FFF]/40 px-2.5 py-0.5 font-mono text-xs font-bold text-blue-300 hover:bg-[#4C6FFF]/30 cursor-pointer"
+                      >
                         {preset.ticker}
-                      </span>
-<span className="flex items-center gap-2">
+                      </button>
+                      <span className="flex flex-wrap items-center gap-2">
                         {onchain && (
                           <a
                             href={`/index/${onchain.id}`}
-                            onClick={(e) => e.stopPropagation()}
                             className="rounded-md border border-emerald-500/40 bg-emerald-500/10 px-2 py-0.5 text-[11px] font-bold text-emerald-200 hover:border-emerald-400"
                             title="This index is published onchain: open its public page"
                           >
@@ -3829,37 +3914,43 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                       </span>
                     </div>
 
-                    <div className="flex items-center justify-between gap-3">
-                      <h3 className="text-base font-bold text-white">{preset.name}</h3>
-                      <div className="flex -space-x-2 shrink-0">
+                    <button
+                      type="button"
+                      onClick={selectPreset}
+                      className="block w-full text-left cursor-pointer focus:outline-none"
+                    >
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <h3 className="text-base font-bold text-white">{preset.name}</h3>
+                        <div className="flex flex-wrap -space-x-2 shrink-0">
+                          {preset.allocations.map((a) => (
+                            <img
+                              key={a.symbol}
+                              src={STOCK_LOGO_MAP[a.symbol]}
+                              alt={a.symbol}
+                              className="h-6 w-6 rounded-full ring-2 ring-[#0b1120] bg-slate-900 object-cover"
+                            />
+                          ))}
+                        </div>
+                      </div>
+
+                      <p className="text-xs text-slate-400 mt-1.5 line-clamp-2">{preset.tagline}</p>
+
+                      <div className="mt-4 flex flex-wrap gap-1.5">
                         {preset.allocations.map((a) => (
-                          <img
+                          <span
                             key={a.symbol}
-                            src={STOCK_LOGO_MAP[a.symbol]}
-                            alt={a.symbol}
-                            className="h-6 w-6 rounded-full ring-2 ring-[#0b1120] bg-slate-900 object-cover"
-                          />
+                            className="inline-flex items-center gap-1 rounded bg-slate-800/90 px-2 py-0.5 font-mono text-[11px] text-slate-200"
+                          >
+                            <img
+                              src={STOCK_LOGO_MAP[a.symbol]}
+                              alt={a.symbol}
+                              className="h-3.5 w-3.5 rounded-full"
+                            />
+                            {a.symbol} {(a.weightBps / 100).toFixed(0)}%
+                          </span>
                         ))}
                       </div>
-                    </div>
-
-                    <p className="text-xs text-slate-400 mt-1.5 line-clamp-2">{preset.tagline}</p>
-
-                    <div className="mt-4 flex flex-wrap gap-1.5">
-                      {preset.allocations.map((a) => (
-                        <span
-                          key={a.symbol}
-                          className="inline-flex items-center gap-1 rounded bg-slate-800/90 px-2 py-0.5 font-mono text-[11px] text-slate-200"
-                        >
-                          <img
-                            src={STOCK_LOGO_MAP[a.symbol]}
-                            alt={a.symbol}
-                            className="h-3.5 w-3.5 rounded-full"
-                          />
-                          {a.symbol} {(a.weightBps / 100).toFixed(0)}%
-                        </span>
-                      ))}
-                    </div>
+                    </button>
                   </div>
                 );
               })}
@@ -3891,20 +3982,41 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                       </p>
                     </div>
                   </div>
-                  <button
-                    onClick={normalizeCustomWeights}
-                    className="rounded-lg border border-cyan-500/40 bg-cyan-500/15 px-3 py-1.5 text-xs font-medium text-cyan-300 hover:bg-cyan-500/25 transition cursor-pointer"
-                  >
-                    Normalize to 100%
-                  </button>
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={equalizeCustomWeights}
+                      className="rounded-lg border border-slate-700 bg-slate-800/80 px-2.5 py-1.5 text-xs font-medium text-slate-200 hover:border-[#4C6FFF] hover:text-white transition cursor-pointer"
+                      title="Split weights equally across selected stocks (or all 10)"
+                    >
+                      Equal
+                    </button>
+                    <button
+                      type="button"
+                      onClick={clearCustomWeights}
+                      className="rounded-lg border border-slate-700 bg-slate-800/80 px-2.5 py-1.5 text-xs font-medium text-slate-300 hover:border-rose-400/60 hover:text-rose-200 transition cursor-pointer"
+                      title="Reset all weights to 0%"
+                    >
+                      Clear
+                    </button>
+                    <button
+                      type="button"
+                      onClick={normalizeCustomWeights}
+                      className="rounded-lg border border-cyan-500/40 bg-cyan-500/15 px-3 py-1.5 text-xs font-medium text-cyan-300 hover:bg-cyan-500/25 transition cursor-pointer"
+                    >
+                      Normalize to 100%
+                    </button>
+                  </div>
                 </div>
 
                 <div className={`grid grid-cols-1 gap-3 ${hasRegistry ? "sm:grid-cols-2" : ""}`}>
                   <div>
-                    <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">
+                    <label htmlFor="custom-index-name" className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">
                       Index Name
                     </label>
                     <input
+                      id="custom-index-name"
+                      name="customIndexName"
                       type="text"
                       value={customIndexName}
                       onChange={(e) => setCustomIndexName(e.target.value)}
@@ -3914,10 +4026,12 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                   {/* The ticker only matters for publishing to the registry */}
                   {hasRegistry && (
                   <div>
-                    <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">
+                    <label htmlFor="custom-index-ticker" className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">
                       Index Ticker Symbol
                     </label>
                     <input
+                      id="custom-index-ticker"
+                      name="customIndexTicker"
                       type="text"
                       value={customIndexTicker}
                       onChange={(e) => setCustomIndexTicker(e.target.value)}
@@ -3989,7 +4103,7 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                           aria-label={`${stock.symbol} weight`}
                         />
 
-                        <div className="w-14 sm:w-24 shrink-0 text-right font-mono text-xs font-bold text-white">
+                        <div className="w-16 sm:w-28 shrink-0 whitespace-nowrap text-right font-mono tabular-nums text-xs font-bold text-white">
                           {(weightBps / 100).toFixed(1)}%
                           <span className="hidden sm:inline text-[10px] font-normal text-slate-400">
                             {" "}({weightBps} bps)
@@ -4135,8 +4249,32 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                   <ExternalLink className="h-3 w-3 text-slate-500" />
                 </a>
 
-                {/* Amount per buy */}
-                <div className="rounded-2xl border border-slate-800 bg-[#070b14] p-3 space-y-2">
+                {/* Sort controls + Amount per buy */}
+                <div className="rounded-2xl border border-slate-800 bg-[#070b14] p-3 space-y-2.5">
+                  <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800/80 pb-2">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Sort by</span>
+                    <div className="inline-flex rounded-lg border border-slate-700 bg-[#040814] p-0.5 text-[10px]" role="group" aria-label="Sort published indexes">
+                      {(
+                        [
+                          { id: "volume", label: "Volume" },
+                          { id: "buys", label: "Buys" },
+                          { id: "newest", label: "Newest" },
+                        ] as const
+                      ).map((opt) => (
+                        <button
+                          key={opt.id}
+                          type="button"
+                          onClick={() => setIndexSort(opt.id)}
+                          aria-pressed={indexSort === opt.id}
+                          className={`rounded px-2 py-0.5 font-semibold transition cursor-pointer ${
+                            indexSort === opt.id ? "bg-[#4C6FFF] text-white" : "text-slate-400 hover:text-white"
+                          }`}
+                        >
+                          {opt.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
                   <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Amount per buy</div>
                   <div className="flex flex-wrap items-center gap-1.5">
                     {[5, 10, 20, 50, 100].map((v) => (
@@ -4160,7 +4298,7 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                             ariaLabel="Amount per index buy in USD"
                           />
                     </span>
-                    <span className="ml-auto">{payToggle}</span>
+                    <span className="sm:ml-auto">{payToggle}</span>
                   </div>
                 </div>
 
@@ -4173,7 +4311,7 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                       : "No indexes published yet — publish the first one."}
                   </div>
                 ) : (
-                  <div className="space-y-3 max-h-[640px] overflow-y-auto pr-1">
+                  <div className="space-y-3">
                     {rankedIndexes.map((ix) => (
                       <div
                         key={ix.id}
@@ -4256,6 +4394,23 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                           >
                             <Zap className="h-3.5 w-3.5" />
                             {basketPending ? basketStatus || "Working…" : `Buy $${basketUsd} ${payLabel}`}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const map: Record<string, number> = {};
+                              ix.constituents.forEach((c) => {
+                                map[c.symbol] = c.weightBps;
+                              });
+                              setCustomIndexName(`${ix.name} (Remix)`);
+                              setCustomIndexTicker(ix.ticker.slice(0, 8));
+                              setCustomWeights(map);
+                              document.getElementById("index-builder")?.scrollIntoView({ behavior: "smooth", block: "start" });
+                            }}
+                            className="rounded-xl border border-slate-700 px-3 py-2.5 text-xs font-semibold text-cyan-200 hover:border-cyan-400/60 hover:text-white cursor-pointer"
+                            title="Load these stocks and weights into the builder"
+                          >
+                            Fork
                           </button>
                           <a
                             href={`/index/${ix.id}`}
@@ -5152,7 +5307,7 @@ const walletClient = createWalletClient({
       )}
 
       {/* Footer: participation statement + disclaimers (no third-party marks: Stocks Maxxing rules 6.7 / 11) */}
-      <footer className="border-t border-slate-800/80 bg-[#070b14] px-4 py-6 mt-12">
+      <footer className="border-t border-slate-800/80 bg-[#070b14] px-4 pt-6 pb-28 md:pb-6 mt-12">
         <div className="mx-auto max-w-7xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 text-[11px] text-slate-500">
           <div className="max-w-3xl space-y-1.5">
             <div className="flex items-center gap-2.5 text-slate-300 font-medium">

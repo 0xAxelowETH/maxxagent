@@ -421,6 +421,8 @@ const decode = (s: string) =>
     .replace(/&lt;/g, "<")
     .replace(/&gt;/g, ">")
     .replace(/&amp;/g, "&")
+    // Strip HTML tags that were entity-encoded inside RSS descriptions (e.g. &lt;img src="..."&gt; from blogs)
+    .replace(/<\/?(?:img|p|br|a|div|span|strong|em|b|i|u|ul|ol|li|h[1-6]|figure|figcaption|blockquote|iframe|table|tr|td|th)\b[^>]*>/gi, " ")
     .replace(/\s+/g, " ")
     .trim();
 const tag = (block: string, name: string) => block.match(new RegExp(`<${name}(?:\\s[^>]*)?>([\\s\\S]*?)</${name}>`, "i"))?.[1] ?? "";
