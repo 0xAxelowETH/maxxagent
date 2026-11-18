@@ -2,7 +2,7 @@
 // Reads the team wallet key from .env.local (DEPLOYER_PRIVATE_KEY), never prints it.
 // Usage: node scripts/register-agent.mjs            (dry run: checks wallet, card and gas)
 //        node scripts/register-agent.mjs --execute  (sends the transaction)
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { createPublicClient, createWalletClient, http, parseAbi, parseEventLogs } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { base } from "viem/chains";
@@ -12,16 +12,19 @@ const AGENT_URI = "https://maxxagent.xyz/agent-registration.json";
 const EXPECTED_OWNER = "0xD986C711F575C71dA22Bd08742b9DB2091Ba9e33";
 
 const env = {};
-for (const l of readFileSync(new URL("../.env.local", import.meta.url), "utf8").split(/\r?\n/)) {
-  const m = l.match(/^([A-Z_]+)=(.*)$/);
-  if (m) env[m[1]] = m[2].trim().replace(/^["']|["']$/g, "");
+const envFile = new URL("../.env.local", import.meta.url);
+if (existsSync(envFile)) {
+  for (const l of readFileSync(envFile, "utf8").split(/\r?\n/)) {
+    const m = l.match(/^([A-Z_]+)=(.*)$/);
+    if (m) env[m[1]] = m[2].trim().replace(/^["']|["']$/g, "");
+  }
 }
-const key = env.DEPLOYER_PRIVATE_KEY;
-if (!key) throw new Error("DEPLOYER_PRIVATE_KEY missing in .env.local");
+const key = env.DEPLOYER_PRIVATE_KEY || process.env.DEPLOYER_PRIVATE_KEY;
+if (!key) throw new Error("DEPLOYER_PRIVATE_KEY missing in .env.local or environment");
 const account = privateKeyToAccount(key.startsWith("0x") ? key : `0x${key}`);
 if (account.address.toLowerCase() !== EXPECTED_OWNER.toLowerCase()) throw new Error(`Key is for ${account.address}, expected the team wallet`);
 
-const rpc = env.BASE_RPC_URL || "https://mainnet.base.org";
+const rpc = env.BASE_RPC_URL || process.env.BASE_RPC_URL || "https://mainnet.base.org";
 const pub = createPublicClient({ chain: base, transport: http(rpc) });
 const abi = parseAbi([
   "function register(string agentURI) returns (uint256 agentId)",

@@ -109,18 +109,31 @@ const companyOf = (symbol: string) =>
     .replace(/^Space Exploration Technologies.*/, "SpaceX")
     .replace(/,?\s+(Inc\.?|Corporation|Corp\.?)$/, "");
 
-/** HTML document -> text; `lines` keeps block boundaries (used to find a press release's headline) */
+function safeFromCodePoint(cp: number): string {
+  return Number.isInteger(cp) && cp >= 0x20 && cp <= 0x10ffff ? String.fromCodePoint(cp) : " ";
+}
+
+/** HTML document -> text; `lines` keeps block boundaries while stripping inline formatting tags cleanly */
 function htmlText(html: string, lines = false): string {
   return html
     .slice(0, 600_000)
     .replace(/<(script|style)[\s\S]*?<\/\1>/gi, " ")
+    .replace(/<\/?(?:b|strong|i|em|u|s|sub|sup|small|span|font|a|abbr|cite|code|label|ix:[a-z0-9_:-]+)(?:\s[^>]*)?>/gi, "")
     .replace(/<[^>]+>/g, lines ? "\n" : " ")
     .replace(/&nbsp;|&#160;|&#xa0;/gi, " ")
     .replace(/&#8217;|&#8216;|&rsquo;|&lsquo;/gi, "'")
     .replace(/&#8220;|&#8221;|&ldquo;|&rdquo;/gi, '"')
     .replace(/&#8211;|&#8212;|&ndash;|&mdash;/gi, "-")
+    .replace(/&hellip;|&#8230;/gi, "…")
+    .replace(/&trade;|&#8482;/gi, "™")
+    .replace(/&reg;|&#174;/gi, "®")
+    .replace(/&copy;|&#169;/gi, "©")
+    .replace(/&#(\d+);/g, (_, n) => safeFromCodePoint(Number(n)))
+    .replace(/&#x([0-9a-f]+);/gi, (_, n) => safeFromCodePoint(parseInt(n, 16)))
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
     .replace(/&amp;/gi, "&")
-    .replace(/&#\d+;|&[a-z]+;/gi, " ")
+    .replace(/&[a-z]+;/gi, " ")
     .replace(lines ? /[ \t\r\f\v]+/g : /\s+/g, " ");
 }
 /** First sentence of a text, at most ~220 characters. "Inc.", "Corp.", "U.S." and the like don't end it. */
@@ -230,15 +243,21 @@ async function enrich8K(cik: number, accession: string, url: string, company: st
 async function secFilings(): Promise<Omit<NewsItem, "priceThen" | "priceNow" | "changePct" | "priceSource">[]> {
   const since = Date.now() - 30 * 86_400_000;
   const out: (Omit<NewsItem, "priceThen" | "priceNow" | "changePct" | "priceSource"> & { cik: number; accession: string })[] = [];
-  // Five companies at a time (SEC allows 10 requests a second): was one after another, up to 8 s each
-  await inBatches(Object.entries(SEC_CIK), 5, async ([symbol, cik]) => {
+  // Three companies at a time so parallel cold start with secFundamentals stays safely below SEC's 10 req/s cap
+  await inBatches(Object.entries(SEC_CIK), 3, async ([symbol, cik]) => {
     try {
-      const res = await fetch(`https://data.sec.gov/submissions/CIK${String(cik).padStart(10, "0")}.json`, {
-        headers: { "User-Agent": USER_AGENT, Accept: "application/json" },
-        // New filings come a few times a month per company: checking every 30 minutes is plenty
-        next: { revalidate: 1800 },
-        signal: AbortSignal.timeout(8000),
-      });
+      const url = `https://data.sec.gov/submissions/CIK${String(cik).padStart(10, "0")}.json`;
+      const fetchOne = () =>
+        fetch(url, {
+          headers: { "User-Agent": USER_AGENT, Accept: "application/json" },
+          next: { revalidate: 1800 },
+          signal: AbortSignal.timeout(8000),
+        });
+      let res = await fetchOne();
+      if (res.status === 429) {
+        await new Promise((r) => setTimeout(r, 600));
+        res = await fetchOne();
+      }
       if (!res.ok) return;
       const r = (await res.json())?.filings?.recent;
       if (!r?.form) return;
@@ -274,11 +293,11 @@ async function secFilings(): Promise<Omit<NewsItem, "priceThen" | "priceNow" | "
     }
   });
   // Current reports are short and say what happened: use the attached press release, else the opening sentence.
-  // Five at a time stays under SEC's 10 requests per second.
+  // Three at a time stays safely under SEC's 10 requests per second
   const reports = out.filter((x) => x.form?.startsWith("8-K") || x.form === "6-K");
-  for (let i = 0; i < reports.length; i += 5) {
+  for (let i = 0; i < reports.length; i += 3) {
     await Promise.all(
-      reports.slice(i, i + 5).map(async (x) => {
+      reports.slice(i, i + 3).map(async (x) => {
         const e = await enrich8K(x.cik, x.accession, x.url, companyOf(x.symbol));
         if (e.title) x.title = `${companyOf(x.symbol)}: ${e.title}`;
         // A dateline cut can leave "Today announced …": put the company back in front
@@ -387,21 +406,29 @@ const decode = (s: string) =>
   s
     .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, "$1")
     .replace(/<[^>]+>/g, " ")
-    .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)))
-    .replace(/&#x([0-9a-f]+);/gi, (_, n) => String.fromCharCode(parseInt(n, 16)))
+    .replace(/&#(\d+);/g, (_, n) => safeFromCodePoint(Number(n)))
+    .replace(/&#x([0-9a-f]+);/gi, (_, n) => safeFromCodePoint(parseInt(n, 16)))
     .replace(/&quot;/g, '"')
     .replace(/&apos;|&#039;|&rsquo;|&lsquo;/g, "'")
     .replace(/&ldquo;|&rdquo;/g, '"')
     .replace(/&nbsp;/g, " ")
     .replace(/&mdash;/g, "—")
     .replace(/&ndash;/g, "–")
+    .replace(/&hellip;|&#8230;/gi, "…")
+    .replace(/&trade;|&#8482;/gi, "™")
+    .replace(/&reg;|&#174;/gi, "®")
+    .replace(/&copy;|&#169;/gi, "©")
     .replace(/&lt;/g, "<")
     .replace(/&gt;/g, ">")
-    .replace(/<[^>]+>/g, " ")
     .replace(/&amp;/g, "&")
     .replace(/\s+/g, " ")
     .trim();
 const tag = (block: string, name: string) => block.match(new RegExp(`<${name}(?:\\s[^>]*)?>([\\s\\S]*?)</${name}>`, "i"))?.[1] ?? "";
+const atomLink = (block: string): string => {
+  const tags = block.match(/<link\b[^>]*>/gi) ?? [];
+  const alt = tags.find((t) => /\brel=["']alternate["']/i.test(t) || !/\brel=["'](?:self|enclosure|hub|replies)["']/i.test(t));
+  return alt?.match(/\bhref=["']([^"']+)["']/i)?.[1] ?? "";
+};
 const teaserOf = (s: string) => {
   const m = s.match(/^(.{40,220}?[.!?])(\s|$)/);
   const out = m ? m[1] : s;
@@ -425,14 +452,14 @@ async function newsrooms(): Promise<Omit<NewsItem, "priceThen" | "priceNow" | "c
         for (const b of blocks) {
           const title = decode(tag(b, "title"));
           // RSS <link>url</link>, or Atom <link rel="alternate" href="url"/>
-          const link = decode(tag(b, "link") || b.match(/<link[^>]*rel="alternate"[^>]*href="([^"]+)"/i)?.[1] || b.match(/<link[^>]*href="([^"]+)"/i)?.[1] || "");
+          const link = decode(tag(b, "link") || atomLink(b));
           const date = Date.parse(decode(tag(b, "pubDate") || tag(b, "published") || tag(b, "updated") || tag(b, "dc:date")));
           const categories = [...b.matchAll(/<category(?:\s[^>]*)?>([\s\S]*?)<\/category>|<category[^>]*term="([^"]+)"/gi)].map((m) => decode(m[1] || m[2] || ""));
           if (!title || !/^https:\/\//i.test(link) || !(date > since) || date > Date.now() + 86_400_000) continue;
           if (n.keep && !n.keep({ link, title, categories })) continue;
-          // WordPress feeds add "The post X appeared first on Y." — not a teaser
+          // WordPress feeds add "The post X appeared first on Y." — bounded length avoids catastrophic backtracking
           const teaser = decode(tag(b, "description") || tag(b, "summary"))
-            .replace(/The post .*? appeared first on .*?\.?$/i, "")
+            .replace(/\bThe post [^\n.]{1,180} appeared first on [^\n.]{1,120}\.?$/i, "")
             .trim();
           out.push({
             symbol: n.symbol,
@@ -458,13 +485,13 @@ async function newsrooms(): Promise<Omit<NewsItem, "priceThen" | "priceNow" | "c
 const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9 ]+/g, " ").replace(/\s+/g, " ").trim();
 function isDuplicate(x: { symbol: string; title: string; publishedAt: string }, others: { symbol: string; title: string; publishedAt: string; pressRelease?: boolean }[]) {
   const t = norm(x.title);
-  return others.some(
-    (o) =>
-      o.pressRelease &&
-      o.symbol === x.symbol &&
-      Math.abs(Date.parse(o.publishedAt) - Date.parse(x.publishedAt)) < 3 * 86_400_000 &&
-      (norm(o.title) === t || norm(o.title).includes(t) || t.includes(norm(o.title)))
-  );
+  if (!t) return false;
+  return others.some((o) => {
+    if (!o.pressRelease || o.symbol !== x.symbol) return false;
+    if (Math.abs(Date.parse(o.publishedAt) - Date.parse(x.publishedAt)) >= 3 * 86_400_000) return false;
+    const no = norm(o.title);
+    return no.length > 0 && (no === t || no.includes(t) || t.includes(no));
+  });
 }
 
 /**

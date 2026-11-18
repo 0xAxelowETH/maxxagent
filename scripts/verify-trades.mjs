@@ -17,7 +17,7 @@ const env = (() => {
   try {
     return Object.fromEntries(
       fs.readFileSync(".env.local", "utf8").split(/\r?\n/).filter((l) => l.includes("=") && !l.trim().startsWith("#"))
-        .map((l) => [l.slice(0, l.indexOf("=")).trim(), l.slice(l.indexOf("=") + 1).trim()])
+        .map((l) => [l.slice(0, l.indexOf("=")).trim(), l.slice(l.indexOf("=") + 1).trim().replace(/^["']|["']$/g, "")])
     );
   } catch {
     return {};
@@ -30,10 +30,13 @@ if (!/^0x[a-fA-F0-9]{40}$/.test(WALLET)) {
   process.exit(1);
 }
 const HOURS = Math.min(24 * 14, Math.max(1, Number(arg("hours", "24")) || 24));
-const CODE = env.NEXT_PUBLIC_BASE_BUILDER_CODE || "bc_ewm6gcvz";
+const CODE = env.NEXT_PUBLIC_BASE_BUILDER_CODE || process.env.NEXT_PUBLIC_BASE_BUILDER_CODE || "bc_ewm6gcvz";
 const w = WALLET.toLowerCase();
 
-const client = createPublicClient({ chain: base, transport: http(env.BASE_RPC_URL || "https://mainnet.base.org", { retryCount: 2 }) });
+const client = createPublicClient({
+  chain: base,
+  transport: http(env.BASE_RPC_URL || process.env.BASE_RPC_URL || "https://mainnet.base.org", { retryCount: 2 }),
+});
 const USDC = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
 const STOCKS = {
   "0xb20000000000000000000078ee7ce2fe4908108c": "NVDAc",

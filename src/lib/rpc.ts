@@ -17,9 +17,10 @@ export function baseTransport(opts: { timeout?: number } = {}) {
   const timeout = opts.timeout ?? 10_000;
   const custom = customRpc();
   const urls = [...(custom && !PUBLIC_RPCS.includes(custom) ? [custom] : []), ...PUBLIC_RPCS];
+  // Zero transport-level retries per URL so fallback switches providers immediately instead of stacking latency
   return fallback(
-    urls.map((u) => http(u, { timeout, retryCount: 1 })),
-    { rank: false, retryCount: 1 }
+    urls.map((u) => http(u, { timeout, retryCount: 0 })),
+    { rank: false, retryCount: 0 }
   );
 }
 

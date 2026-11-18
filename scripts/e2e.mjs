@@ -589,7 +589,7 @@ await step("Shared basket link opens the index builder with validated, normalize
   const t = await text();
   assert(/Buy for \$7 USDC/.test(t), "amount from the link not applied");
   assert(!/XXX/.test(t.split("Shared basket loaded")[1] || ""), "invalid symbol was not dropped");
-  const total = await page.evaluate(() => (document.body.innerText.match(/(\d+(?:\.\d+)?)%\s*\/\s*100/) || [])[1]);
+  const total = await page.evaluate(() => (document.body.innerText.match(/\/\s*10,000\s*bps\s*\((\d+(?:\.\d+)?)%\)/) || [])[1]);
   return total ? `weights total ${total}%` : "loaded";
 });
 

@@ -26,7 +26,7 @@ const SWAPPED_TOPIC = "0xd6d4f5681c246c9f42c203e287975af1601f8df8035a9251f79aab5
 const SOURCE_TAG = toHex('"Source":"maxxagent"').slice(2);
 // First swap built by MAXXAGENT (2026-11-07). Nothing to scan before it.
 const START_BLOCK = 54_150_000n;
-const CHUNK = process.env.BASE_RPC_URL ? 100_000n : 45_000n;
+const CHUNK = process.env.BASE_RPC_URL || process.env.NEXT_PUBLIC_BASE_RPC_URL ? 100_000n : 45_000n;
 const CONCURRENCY = 2;
 const BUILDER_CODE = process.env.NEXT_PUBLIC_BASE_BUILDER_CODE || "bc_ewm6gcvz";
 const USDC = "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913";
@@ -38,7 +38,7 @@ const EXCLUDED = new Set(
 const ENTRY_POINTS = new Set([entryPoint06Address, entryPoint07Address, entryPoint08Address].map((a) => a.toLowerCase()));
 const STOCKS = new Map(BASE_TOKENIZED_STOCKS.map((s) => [s.b20Address.toLowerCase(), s]));
 
-const client = createPublicClient({ chain: base, transport: baseTransport({ timeout: 30_000 }) });
+const client = createPublicClient({ chain: base, transport: baseTransport({ timeout: 12_000 }) });
 
 interface Trade {
   hash: string;
@@ -167,10 +167,16 @@ async function readTrades(hash: `0x${string}`, entries: { logIndex: number; usd:
   }[] = [];
   for (let i = 0; i < swappedLogs.length; i++) {
     const log = swappedLogs[i];
-    const [sender, src, dst] = decodeAbiParameters(
-      ["address", "address", "address", "address", "uint256", "uint256"].map((type) => ({ type })),
-      log.data
-    ) as readonly [string, string, string, string, bigint, bigint];
+    let decoded: readonly [string, string, string, string, bigint, bigint];
+    try {
+      decoded = decodeAbiParameters(
+        ["address", "address", "address", "address", "uint256", "uint256"].map((type) => ({ type })),
+        log.data
+      ) as readonly [string, string, string, string, bigint, bigint];
+    } catch {
+      continue;
+    }
+    const [sender, src, dst] = decoded;
     const s = src.toLowerCase();
     const d = dst.toLowerCase();
     const side = STOCKS.has(d) && (s === USDC || s === NATIVE_ETH) ? "buy" : STOCKS.has(s) && d === USDC ? "sell" : null;
@@ -220,14 +226,34 @@ type RawLog = { transactionHash: `0x${string}`; blockNumber?: string; logIndex?:
 
 async function fetchLogsAdaptive(a: bigint, b: bigint): Promise<RawLog[]> {
   try {
-    return (await withRetry(() =>
-      client.request({
-        method: "eth_getLogs",
-        params: [{ address: ROUTER, topics: [CLIENT_DATA_TOPIC], fromBlock: toHex(a), toBlock: toHex(b) }],
-      })
-    )) as unknown as RawLog[];
+    return (await client.request({
+      method: "eth_getLogs",
+      params: [{ address: ROUTER, topics: [CLIENT_DATA_TOPIC], fromBlock: toHex(a), toBlock: toHex(b) }],
+    })) as unknown as RawLog[];
   } catch (e) {
-    if (b - a <= 1_000n) throw e;
+    const msg = e instanceof Error ? e.message : String(e);
+    if (b - a <= 1_000n) {
+      return (await withRetry(
+        () =>
+          client.request({
+            method: "eth_getLogs",
+            params: [{ address: ROUTER, topics: [CLIENT_DATA_TOPIC], fromBlock: toHex(a), toBlock: toHex(b) }],
+          }) as Promise<unknown>,
+        2
+      )) as RawLog[];
+    }
+    if (!/limit|range|exceed|more than|too large|response size|timeout/i.test(msg)) {
+      try {
+        return (await withRetry(
+          () =>
+            client.request({
+              method: "eth_getLogs",
+              params: [{ address: ROUTER, topics: [CLIENT_DATA_TOPIC], fromBlock: toHex(a), toBlock: toHex(b) }],
+            }) as Promise<unknown>,
+          2
+        )) as RawLog[];
+      } catch {}
+    }
     const mid = a + (b - a) / 2n;
     const left = await fetchLogsAdaptive(a, mid);
     const right = await fetchLogsAdaptive(mid + 1n, b);
@@ -245,58 +271,66 @@ async function refresh(): Promise<StatsState> {
   const latest = await client.getBlockNumber();
   const since = state?.since ?? Number((await withRetry(() => client.getBlock({ blockNumber: START_BLOCK }))).timestamp);
   const trades = new Map(state?.trades ?? []);
+  const seenHashes = new Set([...trades.values()].map((t) => t.hash));
   const from = state ? state.scannedTo + 1n : START_BLOCK;
   const ranges: [bigint, bigint][] = [];
   for (let a = from; a <= latest; a += CHUNK) ranges.push([a, a + CHUNK - 1n > latest ? latest : a + CHUNK - 1n]);
 
-  // ClientData logs of the router; keep only MAXXAGENT ones (verified from decoded JSON Source field)
-  const found = await pool(ranges, CONCURRENCY, ([a, b]) => fetchLogsAdaptive(a, b));
-  const ours = new Map<string, { block: bigint; entries: { logIndex: number; usd: number }[] }>();
-  for (const logs of found) {
-    for (const l of logs) {
-      if (!l.data.toLowerCase().includes(SOURCE_TAG)) continue;
-      let usd = 0;
-      let isMaxxagent = false;
-      try {
-        const [bytes] = decodeAbiParameters([{ type: "bytes" }], l.data as `0x${string}`);
-        const json = JSON.parse(Buffer.from(bytes.slice(2), "hex").toString("utf8"));
-        if (json?.Source === "maxxagent") {
-          isMaxxagent = true;
-          const parsedUsd = Number(json.AmountInUSD);
-          usd = Number.isFinite(parsedUsd) && parsedUsd >= 0 && parsedUsd <= 1_000_000 ? parsedUsd : 0;
-        }
-      } catch {}
-      if (!isMaxxagent) continue;
-      const cur = ours.get(l.transactionHash) ?? {
-        block: l.blockNumber ? BigInt(l.blockNumber) : latest,
-        entries: [],
-      };
-      cur.entries.push({ logIndex: l.logIndex ? Number(l.logIndex) : cur.entries.length, usd });
-      ours.set(l.transactionHash, cur);
+  let currentScannedTo = state ? state.scannedTo : START_BLOCK - 1n;
+  // Scan chronologically in batches so cold starts checkpoint progress to KV before hitting Vercel's 60s limit
+  const BATCH_SIZE = CONCURRENCY * 3;
+  for (let startIdx = 0; startIdx < ranges.length; startIdx += BATCH_SIZE) {
+    const batch = ranges.slice(startIdx, startIdx + BATCH_SIZE);
+    const found = await pool(batch, CONCURRENCY, ([a, b]) => fetchLogsAdaptive(a, b));
+    const ours = new Map<string, { block: bigint; entries: { logIndex: number; usd: number }[] }>();
+    for (const logs of found) {
+      for (const l of logs) {
+        if (!l.data.toLowerCase().includes(SOURCE_TAG)) continue;
+        let usd = 0;
+        let isMaxxagent = false;
+        try {
+          const [bytes] = decodeAbiParameters([{ type: "bytes" }], l.data as `0x${string}`);
+          const json = JSON.parse(Buffer.from(bytes.slice(2), "hex").toString("utf8"));
+          if (json?.Source === "maxxagent") {
+            isMaxxagent = true;
+            const parsedUsd = Number(json.AmountInUSD);
+            usd = Number.isFinite(parsedUsd) && parsedUsd >= 0 && parsedUsd <= 1_000_000 ? parsedUsd : 0;
+          }
+        } catch {}
+        if (!isMaxxagent) continue;
+        const cur = ours.get(l.transactionHash) ?? {
+          block: l.blockNumber ? BigInt(l.blockNumber) : latest,
+          entries: [],
+        };
+        cur.entries.push({ logIndex: l.logIndex ? Number(l.logIndex) : cur.entries.length, usd });
+        ours.set(l.transactionHash, cur);
+      }
     }
+    const fresh = [...ours.entries()].filter(([h]) => !seenHashes.has(h));
+    let failedMinBlock: bigint | null = null;
+    const read = await pool(fresh, 4, ([h, info]) =>
+      readTrades(h as `0x${string}`, info.entries.sort((a, b) => a.logIndex - b.logIndex)).catch(() => {
+        failedMinBlock = failedMinBlock === null || info.block < failedMinBlock ? info.block : failedMinBlock;
+        return [] as Trade[];
+      })
+    );
+    for (const list of read) {
+      for (const t of list) {
+        trades.set(`${t.hash}:${t.logIndex}`, t);
+        seenHashes.add(t.hash);
+      }
+    }
+    const batchEnd = batch[batch.length - 1][1];
+    currentScannedTo = failedMinBlock !== null ? failedMinBlock - 1n : batchEnd;
+    const partialState: StatsState = { scannedTo: currentScannedTo, trades, at: Date.now(), since };
+    state = partialState;
+    await savePersistedState(partialState);
+    if (failedMinBlock !== null) break;
   }
-  const seenHashes = new Set([...trades.values()].map((t) => t.hash));
-  const fresh = [...ours.entries()].filter(([h]) => !seenHashes.has(h));
-  let failedMinBlock: bigint | null = null;
-  const read = await pool(fresh, 4, ([h, info]) =>
-    readTrades(h as `0x${string}`, info.entries.sort((a, b) => a.logIndex - b.logIndex)).catch(() => {
-      failedMinBlock = failedMinBlock === null || info.block < failedMinBlock ? info.block : failedMinBlock;
-      return [] as Trade[];
-    })
-  );
-  for (const list of read) for (const t of list) trades.set(`${t.hash}:${t.logIndex}`, t);
-  const nextScannedTo =
-    failedMinBlock !== null
-      ? failedMinBlock - 1n
-      : latest;
-  const nextState: StatsState = {
-    scannedTo: nextScannedTo,
-    trades,
-    at: Date.now(),
-    since,
-  };
-  await savePersistedState(nextState);
-  return nextState;
+
+  const finalState: StatsState = { scannedTo: currentScannedTo, trades, at: Date.now(), since };
+  await savePersistedState(finalState);
+  return finalState;
 }
 
 export async function GET(request: NextRequest) {
@@ -317,7 +351,10 @@ export async function GET(request: NextRequest) {
         const done = await Promise.race([job, new Promise<null>((r) => setTimeout(() => r(null), RESPONSE_BUDGET_MS))]);
         if (!done) {
           keep();
-          return NextResponse.json({ ok: false, loading: true, error: "Stats are loading. This page retries by itself." }, { status: 202 });
+          return NextResponse.json(
+            { ok: false, loading: true, error: "Stats are loading. This page retries by itself." },
+            { status: 202, headers: { "Cache-Control": "no-store" } }
+          );
         }
         state = done;
       }
@@ -342,11 +379,15 @@ export async function GET(request: NextRequest) {
       daily.set(date, dd);
     }
     // Buys of published indexes, recognised by their shape (same wallet, the index's stocks and weights)
+    let indexBuysFailed = false;
     const indexBuys = await (async () => {
       const total = await indexCount();
       const ids = Array.from({ length: total }, (_, i) => total - 1 - i);
       return matchIndexBuys(all, await readIndexes(ids));
-    })().catch(() => []);
+    })().catch(() => {
+      indexBuysFailed = true;
+      return [];
+    });
     const body = {
       ok: true,
       builderCode: BUILDER_CODE,
@@ -375,9 +416,16 @@ export async function GET(request: NextRequest) {
         attributed: t.attributed,
       })),
     };
-    return NextResponse.json(body, { headers: { "Cache-Control": "public, s-maxage=120, stale-while-revalidate=600" } });
+    return NextResponse.json(body, {
+      headers: {
+        "Cache-Control": indexBuysFailed ? "no-store" : "public, s-maxage=120, stale-while-revalidate=600",
+      },
+    });
   } catch (e) {
     console.error("stats error", redactSecrets(e instanceof Error ? e.message : String(e)).slice(0, 200));
-    return NextResponse.json({ ok: false, error: "Stats are unavailable right now. Please retry in a moment." }, { status: 502 });
+    return NextResponse.json(
+      { ok: false, error: "Stats are unavailable right now. Please retry in a moment." },
+      { status: 502, headers: { "Cache-Control": "no-store" } }
+    );
   }
 }

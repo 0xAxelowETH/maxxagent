@@ -25,7 +25,7 @@ export async function GET() {
     console.error("indexes route error", redactSecrets(e instanceof Error ? e.message : String(e)));
     return NextResponse.json(
       { ok: false, deployed: true, registry: REGISTRY, error: "Could not read onchain indexes. Please retry." },
-      { status: 502 }
+      { status: 502, headers: { "Cache-Control": "no-store" } }
     );
   }
 }

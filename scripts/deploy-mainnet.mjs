@@ -26,8 +26,14 @@ if (newOwner && !isAddress(newOwner)) {
   console.error("❌ --owner is not a valid address.");
   process.exit(1);
 }
-if (fs.readFileSync(path.join(process.cwd(), ".env.local"), "utf8").match(/^NEXT_PUBLIC_INDEX_REGISTRY_ADDRESS=0x[0-9a-fA-F]{40}/m) && CONFIRM) {
-  console.error("❌ .env.local already has NEXT_PUBLIC_INDEX_REGISTRY_ADDRESS: a registry is deployed. Remove it first to deploy another.");
+const envPathCheck = path.join(process.cwd(), ".env.local");
+const existingRegistryAddr =
+  process.env.NEXT_PUBLIC_INDEX_REGISTRY_ADDRESS ||
+  (fs.existsSync(envPathCheck)
+    ? fs.readFileSync(envPathCheck, "utf8").match(/^NEXT_PUBLIC_INDEX_REGISTRY_ADDRESS=(.*)$/m)?.[1]?.trim().replace(/^["']|["']$/g, "")
+    : "");
+if (/^0x[0-9a-fA-F]{40}$/.test(existingRegistryAddr || "") && CONFIRM) {
+  console.error("❌ NEXT_PUBLIC_INDEX_REGISTRY_ADDRESS is already set: a registry is deployed. Remove it first to deploy another.");
   process.exit(1);
 }
 if (!fs.existsSync(ARTIFACT_PATH)) {
@@ -91,10 +97,10 @@ console.log(`✅ Deployed at ${registry} (block ${receipt.blockNumber})`);
 
 // Save right away, so a failure below never loses the address
 const envPath = path.join(process.cwd(), ".env.local");
-let env = fs.readFileSync(envPath, "utf8");
+let env = fs.existsSync(envPath) ? fs.readFileSync(envPath, "utf8") : "";
 env = /^NEXT_PUBLIC_INDEX_REGISTRY_ADDRESS=.*$/m.test(env)
   ? env.replace(/^NEXT_PUBLIC_INDEX_REGISTRY_ADDRESS=.*$/m, `NEXT_PUBLIC_INDEX_REGISTRY_ADDRESS=${registry}`)
-  : `${env.trimEnd()}\nNEXT_PUBLIC_INDEX_REGISTRY_ADDRESS=${registry}\n`;
+  : `${env.trimEnd()}${env.trim() ? "\n" : ""}NEXT_PUBLIC_INDEX_REGISTRY_ADDRESS=${registry}\n`;
 fs.writeFileSync(envPath, env.trimEnd() + "\n");
 fs.writeFileSync(
   path.join(process.cwd(), "contracts", "deployment.base.json"),

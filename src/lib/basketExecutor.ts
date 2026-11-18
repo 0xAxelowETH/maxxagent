@@ -297,25 +297,53 @@ async function waitForReceipt(eth: EthProvider, hash: string, timeoutMs = 120_00
   throw new Error(`Timed out waiting for ${hash}`);
 }
 
-function nestedErrorCode(err: unknown): number | undefined {
-  const e = err as { code?: number; data?: { originalError?: { code?: number }; code?: number }; cause?: { code?: number } };
-  return e?.code ?? e?.data?.originalError?.code ?? e?.data?.code ?? e?.cause?.code;
+function hasErrorCode(err: unknown, targetCode: number, depth = 0): boolean {
+  if (!err || typeof err !== "object" || depth > 4) return false;
+  const e = err as Record<string, unknown>;
+  if (e.code === targetCode) return true;
+  return (
+    hasErrorCode(e.data, targetCode, depth + 1) ||
+    hasErrorCode(e.originalError, targetCode, depth + 1) ||
+    hasErrorCode(e.cause, targetCode, depth + 1)
+  );
+}
+
+function extractErrorMessages(err: unknown, depth = 0, out: string[] = []): string[] {
+  if (err == null || depth > 4) return out;
+  if (typeof err === "string") {
+    if (err.trim()) out.push(err);
+    return out;
+  }
+  if (typeof err !== "object") return out;
+  const e = err as Record<string, unknown>;
+  for (const k of ["shortMessage", "message", "reason"] as const) {
+    if (typeof e[k] === "string" && (e[k] as string).trim()) out.push(e[k] as string);
+  }
+  extractErrorMessages(e.data, depth + 1, out);
+  extractErrorMessages(e.originalError, depth + 1, out);
+  extractErrorMessages(e.cause, depth + 1, out);
+  return out;
+}
+
+function errorMessageText(err: unknown): string {
+  const parts = extractErrorMessages(err);
+  if (parts.length > 0) return parts.join(" | ");
+  if (err && typeof err === "object") return "Wallet request failed";
+  return String(err ?? "failed");
 }
 
 function isUnsupportedMethod(err: unknown) {
-  const code = nestedErrorCode(err);
-  const e = err as { message?: string };
   return (
-    code === 4200 ||
-    code === -32601 ||
-    /not supported|unsupported|does not exist|unknown method|method not found|missing or invalid|wallet_sendcalls/i.test(e?.message || "")
+    hasErrorCode(err, 4200) ||
+    hasErrorCode(err, -32601) ||
+    /not supported|unsupported|does not exist|unknown method|method not found|missing or invalid|wallet_sendcalls|not approved by the wallet/i.test(
+      errorMessageText(err)
+    )
   );
 }
 
 function isChainMissingError(err: unknown) {
-  const code = nestedErrorCode(err);
-  const e = err as { message?: string };
-  return code === 4902 || /unrecognized chain|unknown chain|chain.*not.*added|\b4902\b/i.test(e?.message || "");
+  return hasErrorCode(err, 4902) || /unrecognized chain|unknown chain|chain.*not.*added|\b4902\b/i.test(errorMessageText(err));
 }
 
 async function ensureBase(eth: EthProvider, onStatus: StatusFn) {
@@ -434,15 +462,19 @@ async function buildApprovals(eth: EthProvider, sender: string, legs: LegQuote[]
 
 /** True when the user declined in the wallet (never retried in another form). */
 function isUserRejection(err: unknown) {
-  const e = err as { code?: number; message?: string };
-  return e?.code === 4001 || /user (rejected|denied|cancel)|rejected by (the )?user|request rejected|denied transaction|cancell?ed/i.test(e?.message || "");
+  return (
+    hasErrorCode(err, 4001) ||
+    /user (rejected|denied|cancel)|rejected by (the )?user|request rejected|denied transaction|cancell?ed|dibatalkan|ditolak|batal/i.test(
+      errorMessageText(err)
+    )
+  );
 }
 
 const shortError = (err: unknown) => {
-  const m = err instanceof Error ? err.message : String((err as { message?: string })?.message ?? err ?? "failed");
+  const m = extractErrorMessages(err)[0] ?? (err instanceof Error && err.message ? err.message : errorMessageText(err));
   if (/reverted/i.test(m)) return "Swap reverted onchain (price moved or liquidity changed); only gas was spent";
   // Not a failure: it may still confirm. Saying "failed" could make the user buy again.
-  if (/timed out/i.test(m)) return "Still pending after 2 minutes: check BaseScan before retrying";
+  if (/timed out waiting for 0x[0-9a-f]{64}/i.test(m)) return "Still pending after 2 minutes: check BaseScan before retrying";
   return m.slice(0, 140);
 };
 
@@ -541,8 +573,7 @@ async function sendCalls(
         });
       } catch (capErr) {
         // Non-compliant wallets may reject the optional capability: retry once without it.
-        const e = capErr as { code?: number; message?: string };
-        if (e?.code !== 5700 && !/capabilit/i.test(e?.message || "")) throw capErr;
+        if (!hasErrorCode(capErr, 5700) && !/capabilit/i.test(errorMessageText(capErr))) throw capErr;
         sendRes = await eth.request({ method: "wallet_sendCalls", params: [base] });
       }
       batchId = extractBatchId(sendRes);
@@ -580,6 +611,9 @@ async function sendCalls(
           4500,
           "wallet_getCallsStatus timeout"
         )) as CallsStatusResponse | undefined;
+        if (status && (status.status !== undefined || (Array.isArray(status.receipts) && status.receipts.length > 0))) {
+          misses = 0;
+        }
       } catch (statusErr) {
         misses++;
         if (isUnsupportedMethod(statusErr)) {
@@ -708,6 +742,7 @@ async function sendCalls(
       const outcome = await Promise.race([sendPromise, watchAllowance]);
       settled = true;
       if (outcome.kind === "hash") {
+        if (!/^0x[0-9a-fA-F]{64}$/.test(outcome.hash)) throw new Error(`Invalid transaction hash from wallet: ${outcome.hash}`);
         txHashes.push(outcome.hash);
         onStatus(`Confirming approval onchain (${i + 1}/${calls.length})…`);
         await waitForReceipt(eth, outcome.hash);
@@ -787,6 +822,7 @@ async function sendCalls(
       const outcome = await Promise.race([sendSwapPromise, watchSwapOnchain]);
       swapSettled = true;
       hash = outcome.hash;
+      if (!/^0x[0-9a-fA-F]{64}$/.test(hash)) throw new Error(`Invalid transaction hash from wallet: ${hash}`);
       txHashes.push(hash);
       if (outcome.kind === "hash") {
         onStatus(`Waiting for ${labels[j]} confirmation…`);
@@ -811,6 +847,25 @@ async function sendCalls(
   return { mode: "sequential", txHashes, failed };
 }
 
+async function findContractTxBySender(to: string, senderTopic: string, startBlock: bigint): Promise<string | null> {
+  const latestHex = (await basePublicRpc("eth_blockNumber", []).catch(() => null)) as string | null;
+  const latest = latestHex ? BigInt(latestHex) : null;
+  const fromBlock = latest !== null && latest - startBlock > 1500n ? latest - 1500n : startBlock;
+  const logs = (await basePublicRpc("eth_getLogs", [
+    {
+      address: to,
+      fromBlock: toHex(fromBlock),
+      toBlock: "latest",
+    },
+  ])) as { topics?: string[]; transactionHash?: string }[] | null;
+  const mine = (logs || []).find(
+    (l) =>
+      /^0x[0-9a-fA-F]{64}$/.test(l?.transactionHash || "") &&
+      (l.topics || []).some((t) => t.toLowerCase() === senderTopic)
+  );
+  return mine?.transactionHash || null;
+}
+
 /**
  * Sends ONE contract call that moves no funds (e.g. publishing an index) and resolves with the mined tx hash.
  * Same safety as orders: Builder Code 32-byte aligned + the dataSuffix capability for smart wallets, EIP-5792
@@ -826,14 +881,14 @@ export async function sendContractCall(params: {
   walletHint?: WalletHint;
 }): Promise<string> {
   const { eth, sender, to, builderCode, onStatus = () => {}, walletHint } = params;
-  await ensureBase(eth, onStatus);
   const suffix = builderSuffix(builderCode);
   const call = { to, data: alignedWithSuffix(params.data, suffix), value: "0x0" };
   const nonceOf = () =>
     (rpcRead(eth, "eth_getTransactionCount", [sender, "latest"]) as Promise<string>).then((n) => BigInt(n)).catch(() => null);
-  const [nonceBefore, startBlockHex] = await Promise.all([
+  const [, nonceBefore, startBlockHex] = await Promise.all([
+    ensureBase(eth, onStatus),
     nonceOf(),
-    (basePublicRpc("eth_blockNumber", []).catch(() => null)) as Promise<string | null>,
+    (withTimeout(basePublicRpc("eth_blockNumber", []), 2000).catch(() => null)) as Promise<string | null>,
   ]);
   const startBlock = startBlockHex ? BigInt(startBlockHex) : null;
   onStatus("Confirm in your wallet…");
@@ -850,8 +905,7 @@ export async function sendContractCall(params: {
           params: [{ ...base, capabilities: { dataSuffix: { value: suffix, optional: true } } }],
         });
       } catch (capErr) {
-        const e = capErr as { code?: number; message?: string };
-        if (e?.code !== 5700 && !/capabilit/i.test(e?.message || "")) throw capErr;
+        if (!hasErrorCode(capErr, 5700) && !/capabilit/i.test(errorMessageText(capErr))) throw capErr;
         res = await eth.request({ method: "wallet_sendCalls", params: [base] });
       }
       batchId = extractBatchId(res);
@@ -868,10 +922,11 @@ export async function sendContractCall(params: {
     }
   }
 
+  const senderTopic = "0x" + sender.toLowerCase().replace(/^0x/, "").padStart(64, "0");
+
   if (batchId) {
     onStatus("Waiting for confirmation onchain…");
     const start = Date.now();
-    const senderTopic = "0x" + sender.toLowerCase().replace(/^0x/, "").padStart(64, "0");
     let misses = 0;
     let statusUnsupported = false;
     while (Date.now() - start < 180_000) {
@@ -882,6 +937,9 @@ export async function sendContractCall(params: {
           4500,
           "wallet_getCallsStatus timeout"
         )) as CallsStatusResponse | undefined;
+        if (status && (status.status !== undefined || (Array.isArray(status.receipts) && status.receipts.length > 0))) {
+          misses = 0;
+        }
       } catch (statusErr) {
         misses++;
         if (isUnsupportedMethod(statusErr)) {
@@ -906,22 +964,8 @@ export async function sendContractCall(params: {
 
       if (startBlock !== null && (Date.now() - start >= 3000 || misses > 0 || parsed.isDone)) {
         try {
-          const latestHex = (await basePublicRpc("eth_blockNumber", []).catch(() => null)) as string | null;
-          const latest = latestHex ? BigInt(latestHex) : null;
-          const fromBlock = latest !== null && latest - startBlock > 1500n ? latest - 1500n : startBlock;
-          const logs = (await basePublicRpc("eth_getLogs", [
-            {
-              address: to,
-              fromBlock: toHex(fromBlock),
-              toBlock: "latest",
-            },
-          ])) as { topics?: string[]; transactionHash?: string }[] | null;
-          const mine = (logs || []).find(
-            (l) =>
-              /^0x[0-9a-fA-F]{64}$/.test(l?.transactionHash || "") &&
-              (l.topics || []).some((t) => t.toLowerCase() === senderTopic)
-          );
-          if (mine?.transactionHash) return mine.transactionHash;
+          const hit = await findContractTxBySender(to, senderTopic, startBlock);
+          if (hit) return hit;
         } catch {}
       }
 
@@ -933,23 +977,48 @@ export async function sendContractCall(params: {
     throw new Error("Still pending after 3 minutes: check your wallet activity before retrying.");
   }
 
-  let hash: string;
+  let settled = false;
+  const sendTx = eth
+    .request({ method: "eth_sendTransaction", params: [{ from: sender, ...call }] })
+    .then((raw) => ({ kind: "hash" as const, hash: extractBatchId(raw) || String(raw || "") }));
+  sendTx.catch(() => {});
+  const watchOnchain = (async () => {
+    await sleep(5000);
+    const started = Date.now();
+    while (!settled && startBlock !== null && Date.now() - started < 120_000) {
+      try {
+        const hit = await findContractTxBySender(to, senderTopic, startBlock);
+        if (hit) return { kind: "onchain" as const, hash: hit };
+      } catch {}
+      await sleep(2500);
+    }
+    return new Promise<never>(() => {});
+  })();
+
+  let outcome: { kind: "hash" | "onchain"; hash: string };
   try {
-    hash = (await eth.request({ method: "eth_sendTransaction", params: [{ from: sender, ...call }] })) as string;
+    outcome = await Promise.race([sendTx, watchOnchain]);
+    settled = true;
   } catch (err) {
+    settled = true;
     if (isUserRejection(err)) throw new Error("Cancelled in wallet.");
     throw err;
   }
-  onStatus("Waiting for confirmation onchain…");
-  try {
-    await waitForReceipt(eth, hash);
-  } catch (err) {
-    const m = err instanceof Error ? err.message : "";
-    if (/reverted/i.test(m)) throw new Error("The transaction reverted onchain (only gas was spent).");
-    if (/timed out/i.test(m)) throw new Error(`Still pending after 2 minutes: check BaseScan (${hash}) before retrying.`);
-    throw err;
+  if (!/^0x[0-9a-fA-F]{64}$/.test(outcome.hash)) {
+    throw new Error(`Invalid transaction hash from wallet: ${outcome.hash}`);
   }
-  return hash;
+  if (outcome.kind === "hash") {
+    onStatus("Waiting for confirmation onchain…");
+    try {
+      await waitForReceipt(eth, outcome.hash);
+    } catch (err) {
+      const m = err instanceof Error ? err.message : "";
+      if (/reverted/i.test(m)) throw new Error("The transaction reverted onchain (only gas was spent).");
+      if (/timed out/i.test(m)) throw new Error(`Still pending after 2 minutes: check BaseScan (${outcome.hash}) before retrying.`);
+      throw err;
+    }
+  }
+  return outcome.hash;
 }
 
 async function postSwap(body: Record<string, unknown>, fallbackSymbol: string): Promise<LegQuote> {

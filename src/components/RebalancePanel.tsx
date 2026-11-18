@@ -26,6 +26,7 @@ export function RebalancePanel({
   onBuy,
   maxWeightPct,
   rebalanceBuyDoneNonce = 0,
+  usdcBaseline: externalUsdcBaseline,
 }: {
   stocks: StockPrice[];
   balances: Record<string, { rawTokens: number }>;
@@ -39,19 +40,21 @@ export function RebalancePanel({
   maxWeightPct?: number;
   /** Incremented only after a Step 2 rebalance buy confirms onchain */
   rebalanceBuyDoneNonce?: number;
+  /** Parent-managed baseline captured after a confirmed Step 1 rebalance sell (null when inactive) */
+  usdcBaseline?: number | null;
 }) {
   const [addUsdText, setAddUsdText] = useState<string>("");
   const addUsd = Math.max(0, Number(addUsdText) || 0);
-  // USDC balance right before step 1: after the sales, the increase is the proceeds that step 2 reinvests
-  const [usdcBaseline, setUsdcBaseline] = useState<number | null>(null);
+  const [localBaseline, setLocalBaseline] = useState<number | null>(null);
   useEffect(() => {
-    if (rebalanceBuyDoneNonce > 0) setUsdcBaseline(null);
+    if (rebalanceBuyDoneNonce > 0) setLocalBaseline(null);
   }, [rebalanceBuyDoneNonce]);
+  const activeBaseline = externalUsdcBaseline !== undefined ? externalUsdcBaseline : localBaseline;
   const holdings = stocks
     .map((s) => ({ symbol: s.symbol, b20Address: s.b20Address, tokens: balances[s.symbol]?.rawTokens ?? 0, price: s.navPrice }))
     .filter((h) => h.tokens > 0);
   const usdc = usdcBalance ?? 0;
-  const proceeds = usdcBaseline !== null ? Math.max(0, usdc - usdcBaseline) : 0;
+  const proceeds = activeBaseline !== null ? Math.max(0, usdc - activeBaseline) : 0;
   const nonProceedsUsdc = Math.max(0, usdc - proceeds);
   const extra = Math.min(Math.max(0, addUsd), nonProceedsUsdc);
   const plan = useMemo(
@@ -144,7 +147,7 @@ export function RebalancePanel({
         <div className="flex flex-wrap gap-2">
           <button
             onClick={() => {
-              if (usdcBalance !== null) setUsdcBaseline(usdcBalance);
+              if (externalUsdcBaseline === undefined && usdcBalance !== null) setLocalBaseline(usdcBalance);
               onSell(plan.sells, "rebalance");
             }}
             disabled={pending || plan.sells.length === 0 || tooSmall || usdcBalance === null}

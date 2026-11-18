@@ -21,7 +21,9 @@ const APP_NAME = "MAXXAGENT";
 const PUBLIC_BASE_RPC = "https://mainnet.base.org";
 
 let coinbaseProvider: Eip1193Provider | null = null;
+let coinbaseInit: Promise<Eip1193Provider> | null = null;
 let walletConnectProvider: Eip1193Provider | null = null;
+let wcConnectInFlight: Promise<Eip1193Provider> | null = null;
 
 function origin() {
   return typeof window !== "undefined" ? window.location.origin : "http://localhost:3000";
@@ -29,16 +31,24 @@ function origin() {
 
 export async function getCoinbaseSmartWallet(): Promise<Eip1193Provider> {
   if (coinbaseProvider) return coinbaseProvider;
-  const { createCoinbaseWalletSDK } = await import("@coinbase/wallet-sdk");
-  const sdk = createCoinbaseWalletSDK({
-    appName: APP_NAME,
-    appLogoUrl: `${origin()}/brand/maxxagent-mark-512.png`,
-    appChainIds: [BASE_CHAIN_ID],
-    // "all": Coinbase Wallet app/extension if present, otherwise the Smart Wallet popup
-    preference: { options: "all" },
-  });
-  coinbaseProvider = sdk.getProvider() as unknown as Eip1193Provider;
-  return coinbaseProvider;
+  if (!coinbaseInit) {
+    coinbaseInit = import("@coinbase/wallet-sdk")
+      .then(({ createCoinbaseWalletSDK }) => {
+        const sdk = createCoinbaseWalletSDK({
+          appName: APP_NAME,
+          appLogoUrl: `${origin()}/brand/maxxagent-mark-512.png`,
+          appChainIds: [BASE_CHAIN_ID],
+          // "all": Coinbase Wallet app/extension if present, otherwise the Smart Wallet popup
+          preference: { options: "all" },
+        });
+        coinbaseProvider = sdk.getProvider() as unknown as Eip1193Provider;
+        return coinbaseProvider;
+      })
+      .finally(() => {
+        coinbaseInit = null;
+      });
+  }
+  return coinbaseInit;
 }
 
 export function walletConnectConfigured(): boolean {
@@ -91,11 +101,25 @@ function initWalletConnect(): Promise<WalletConnectProvider> {
 
 export async function getWalletConnect(): Promise<Eip1193Provider> {
   if (!walletConnectConfigured()) throw new Error("WalletConnect is not configured.");
-  if (walletConnectProvider) return walletConnectProvider;
-  const provider = await initWalletConnect();
-  if (!provider.session) await provider.enable(); // opens the QR / wallet-list modal
-  walletConnectProvider = provider as unknown as Eip1193Provider;
-  return walletConnectProvider;
+  if (walletConnectProvider) {
+    const activeSession = (walletConnectProvider as unknown as { session?: unknown }).session;
+    if (activeSession) return walletConnectProvider;
+    // Wallet disconnected remotely (`session_delete`): clear stale handle so reconnect opens QR/modal cleanly
+    walletConnectProvider = null;
+    wcInit = null;
+  }
+  if (!wcConnectInFlight) {
+    wcConnectInFlight = initWalletConnect()
+      .then(async (provider) => {
+        if (!provider.session) await provider.enable(); // opens the QR / wallet-list modal
+        walletConnectProvider = provider as unknown as Eip1193Provider;
+        return walletConnectProvider;
+      })
+      .finally(() => {
+        wcConnectInFlight = null;
+      });
+  }
+  return wcConnectInFlight;
 }
 
 export async function connectExternalWallet(kind: ExternalWalletKind): Promise<Eip1193Provider> {
@@ -134,6 +158,8 @@ export async function disconnectExternalWallets() {
     await coinbaseProvider?.disconnect?.();
   } catch {}
   walletConnectProvider = null;
+  wcConnectInFlight = null;
   coinbaseProvider = null;
+  coinbaseInit = null;
   wcInit = null;
 }

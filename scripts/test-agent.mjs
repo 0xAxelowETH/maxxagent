@@ -158,6 +158,57 @@ ok(!m.include.includes("MSTRc"), "\"strategy-driven\" is not Strategy Inc");
 m = parseMandate("Strategy shares and Tesla");
 ok(m.include.includes("MSTRc"), "\"Strategy shares\" is Strategy Inc");
 
+// Pass 8 NLP regressions
+m = parseMandate("tanpa tesla dan meta");
+ok(
+  m.exclude.includes("TSLAc") && m.exclude.includes("METAc") && !m.include.includes("METAc"),
+  `chained Indonesian negation excludes both -> excl=${JSON.stringify(m.exclude)}`,
+);
+m = parseMandate("no tesla, no meta");
+ok(
+  m.exclude.includes("TSLAc") && m.exclude.includes("METAc") && !m.include.includes("METAc"),
+  `repeated English negation excludes both -> excl=${JSON.stringify(m.exclude)}`,
+);
+m = parseMandate("cap Apple at 25%");
+ok(
+  !Object.keys(m.weightsPct).length && m.include.includes("AAPLc"),
+  `"cap Apple at 25%" is not read as an exact weight -> max=${m.maxWeightPct} w=${JSON.stringify(m.weightsPct)}`,
+);
+m = parseMandate("under 30% in Tesla");
+ok(
+  !Object.keys(m.weightsPct).length && m.include.includes("TSLAc"),
+  `"under 30% in Tesla" is not read as an exact weight -> w=${JSON.stringify(m.weightsPct)}`,
+);
+m = parseMandate("Apple 30% cap");
+ok(
+  !Object.keys(m.weightsPct).length && m.include.includes("AAPLc"),
+  `"Apple 30% cap" is not read as an exact weight -> w=${JSON.stringify(m.weightsPct)}`,
+);
+m = parseMandate("saham AI, di bawah 25% per saham");
+ok(
+  m.maxWeightPct === 25 && !Object.keys(m.weightsPct).length,
+  `"di bawah 25% per saham" sets maxWeightPct=25 -> max=${m.maxWeightPct}`,
+);
+m = parseMandate("20% max cash");
+ok(
+  m.cashPct === 20 && !Object.keys(m.weightsPct).length,
+  `"20% max cash" parses cashPct -> cash=${m.cashPct} w=${JSON.stringify(m.weightsPct)}`,
+);
+m = parseMandate("keep half in cash");
+ok(m.cashPct === 50, `"keep half in cash" -> cash=${m.cashPct}`);
+m = parseMandate("24/7 stocks, AI");
+ok(m.count === undefined && m.themes.includes("ai"), `"24/7 stocks" does not set count=7 -> ${m.count}`);
+m = parseMandate("don't include Tesla");
+ok(
+  m.exclude.includes("TSLAc") && !m.include.includes("TSLAc"),
+  `"don't include Tesla" excludes TSLAc -> excl=${JSON.stringify(m.exclude)}`,
+);
+m = parseMandate("no tesla, ai, 3 stocks");
+ok(
+  m.exclude.includes("TSLAc") && !m.include.includes("TSLAc") && m.themes.includes("ai") && m.count === 3,
+  `"no tesla, ai, 3 stocks" excludes TSLAc without blocking themes/count -> ${JSON.stringify(m)}`,
+);
+
 // Weight capping
 let w = capWeightsBps([5000, 3000, 2000], 4000);
 ok(w && w.reduce((a, b) => a + b, 0) === 10000 && Math.max(...w) <= 4000 && w[1] > w[2], `cap 40%: [50,30,20] -> ${JSON.stringify(w)}`);

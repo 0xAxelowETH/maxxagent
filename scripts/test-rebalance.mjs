@@ -53,5 +53,37 @@ ok(p.sells.some((x) => x.symbol === "MSFTc"), `MSFTc at 71% with a 70% limit is 
 p = planRebalance([N(0.145), M(0.142)], T(3000, 7000));
 ok(p.sells.length === 0, "without a limit the same 1-point gap stays within tolerance");
 
+// Pass 8 regressions: budget utilization with $2,500 MAX_LEG_USD cap, sub-minSellUsd target dust exit, duplicate holdings
+p = planRebalance(
+  [],
+  [
+    { symbol: "MSFTc", b20Address: "0xm", weightBps: 9000 },
+    { symbol: "AAPLc", b20Address: "0xa", weightBps: 1000 },
+  ],
+  { usdcAvailable: 3000, addUsd: 10000 },
+);
+ok(
+  p.buyUsd > 2999 && p.buys.every((b) => b.usd <= 2500),
+  `MAX_LEG_USD excess redistributes across uncovered legs (buyUsd=${p.buyUsd}, buys=${JSON.stringify(p.buys)})`,
+);
+
+p = planRebalance(
+  [N(0.2425), { symbol: "TSLAc", b20Address: "0xt", tokens: 0.005, price: 300 }],
+  [
+    { symbol: "NVDAc", b20Address: "0xn", weightBps: 9960 },
+    { symbol: "TSLAc", b20Address: "0xt", weightBps: 40 },
+  ],
+);
+ok(
+  p.sells.length === 1 && p.sells[0]?.symbol === "TSLAc" && p.sells[0]?.tokens === 0.005,
+  `target below minSellUsd triggers fullExit so no dust remains (sells=${JSON.stringify(p.sells)})`,
+);
+
+p = planRebalance([N(0.25), N(0.25)], T(5000, 5000));
+ok(
+  p.sells.length === 1 && Math.abs(p.sells[0].tokens - 0.25) < 1e-9,
+  `duplicate holding symbols merge before planning (sells=${JSON.stringify(p.sells)})`,
+);
+
 console.log(fail ? `\n❌ ${fail} check(s) failed` : "\n✅ All rebalance checks passed");
 process.exitCode = fail ? 1 : 0;

@@ -32,9 +32,9 @@ function signed(body: { header: string; payload: string; signature: string }): {
     const payload = JSON.parse(payBuf.toString("utf8")) as Record<string, unknown> | null;
     if (!header || typeof header !== "object" || Array.isArray(header)) return null;
     if (!payload || typeof payload !== "object" || Array.isArray(payload)) return null;
-    const fid = Number(header.fid);
+    const fid = header.fid;
     const key = String(header.key || "").replace(/^0x/, "");
-    if (!Number.isSafeInteger(fid) || fid <= 0 || !/^[0-9a-fA-F]{64}$/.test(key)) return null;
+    if (typeof fid !== "number" || !Number.isSafeInteger(fid) || fid <= 0 || !/^[0-9a-fA-F]{64}$/.test(key)) return null;
     const pub = createPublicKey({ key: Buffer.concat([SPKI_ED25519, Buffer.from(key, "hex")]), format: "der", type: "spki" });
     return verify(null, Buffer.from(`${body.header}.${body.payload}`), pub, sigBuf) ? { fid, key, payload } : null;
   } catch {
@@ -67,10 +67,10 @@ export async function POST(req: NextRequest) {
     // Verify Farcaster key ownership BEFORE checking getWatch(fid) so unauthenticated callers cannot enumerate FIDs
     if (!(await isAppKeyOf(v.fid, v.key))) return NextResponse.json({ ok: false }, { status: 401 });
     if (!(await getWatch(v.fid))) return NextResponse.json({ ok: true, stored: false }); // no drift alert on: nothing to keep
-    // Replay guard over the immutable signed payload (header.payload); clean up if setNotify throws
+    // Replay guard over the immutable signed payload (header.payload) for 30 days; clean up if setNotify throws
     const sigDigest = createHash("sha256").update(`${body.header}.${body.payload}`).digest("hex").slice(0, 32);
     const seenKey = `wh:seen:${sigDigest}`;
-    const fresh = await kv("SET", seenKey, "1", "EX", 86_400, "NX");
+    const fresh = await kv("SET", seenKey, "1", "EX", 30 * 86_400, "NX");
     if (fresh !== "OK") return NextResponse.json({ ok: true, replayed: true });
     try {
       await setNotify(v.fid, details);

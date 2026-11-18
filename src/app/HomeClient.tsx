@@ -375,10 +375,24 @@ function PortfolioDonutChart({
   );
 }
 
-const errMsg = (err: unknown, fallback: string) => {
+const errMsg = (err: unknown, fallback: string): string => {
+  if (!err) return fallback;
+  if (typeof err === "string" && err.trim()) return err;
   if (err instanceof Error && err.message) return err.message;
-  const m = (err as { message?: unknown; shortMessage?: unknown })?.shortMessage ?? (err as { message?: unknown })?.message;
-  return typeof m === "string" && m.trim() ? m : fallback;
+  if (typeof err === "object") {
+    const e = err as Record<string, unknown>;
+    for (const candidate of [
+      e.shortMessage,
+      e.message,
+      (e.data as Record<string, unknown> | undefined)?.originalError &&
+        ((e.data as Record<string, unknown>).originalError as Record<string, unknown>).message,
+      (e.data as Record<string, unknown> | undefined)?.message,
+      (e.cause as Record<string, unknown> | undefined)?.message,
+    ]) {
+      if (typeof candidate === "string" && candidate.trim()) return candidate;
+    }
+  }
+  return fallback;
 };
 
 // Oracle age for compact cells: 12m / 17h / 2d
@@ -388,7 +402,7 @@ const fmtAge = (m: number) =>
 const SLIPPAGE_OPTIONS = [30, 50, 100];
 
 // Shareable basket links: /?basket=NVDAc-40,MSFTc-30&amount=50 (parsing in lib/shareBasket)
-const PUBLIC_SITE_URL = (process.env.NEXT_PUBLIC_SITE_URL || "").replace(/\/$/, "");
+const PUBLIC_SITE_URL = (process.env.NEXT_PUBLIC_SITE_URL || "https://maxxagent.xyz").replace(/\/$/, "");
 
 export default function StockMaxxingDashboard() {
   const [activeTab, setActiveTab] = useState<ActiveTab>("terminal");
@@ -431,6 +445,8 @@ export default function StockMaxxingDashboard() {
   useDismissMenu(showWalletMenu, walletMenuRef, closeWalletMenu);
   const [connectedWalletName, setConnectedWalletName] = useState<string>("");
   const [connectingWallet, setConnectingWallet] = useState<boolean>(false);
+  const connectingWalletRef = useRef(false);
+  const inMiniAppRef = useRef(false);
   const providerRef = useRef<EthereumProvider | null>(null);
   const walletMetaRef = useRef<WalletHint | undefined>(undefined);
   const detachListenersRef = useRef<(() => void) | null>(null);
@@ -452,7 +468,10 @@ export default function StockMaxxingDashboard() {
     };
   }, []);
   useEffect(() => {
-    if (showWalletMenu) window.dispatchEvent(new Event("eip6963:requestProvider"));
+    if (!showWalletMenu) return;
+    window.dispatchEvent(new Event("eip6963:requestProvider"));
+    // Pre-warm Coinbase SDK chunk while the menu is open so Safari click preserves user activation for window.open
+    void import("@coinbase/wallet-sdk").catch(() => {});
   }, [showWalletMenu]);
   const getEthProvider = useCallback((): EthereumProvider | null => {
     return providerRef.current ?? getInjectedFallback();
@@ -554,6 +573,7 @@ export default function StockMaxxingDashboard() {
   // The basket this wallet wants to hold (saved in this browser, per wallet). The agent checks the wallet against it on every visit.
   const [savedTarget, setSavedTarget] = useState<SavedTarget | null>(null);
   const [runningAgent, setRunningAgent] = useState<boolean>(false);
+  const [agentError, setAgentError] = useState<string>("");
 
   // Programmable Index Builder State
   const [selectedPreset, setSelectedPreset] = useState<ProgrammableIndexPreset>(
@@ -669,11 +689,20 @@ export default function StockMaxxingDashboard() {
   }, [rebalanceKey]);
 
   const [rebalanceBuyDoneNonce, setRebalanceBuyDoneNonce] = useState(0);
+  const [rebalanceUsdcBaseline, setRebalanceUsdcBaseline] = useState<number | null>(null);
+  const usdcBalanceRef = useRef<number | null>(null);
+  usdcBalanceRef.current = usdcBalance;
   const recordResult = useCallback(
-    (result: BasketResult, label: string) => {
+    (result: BasketResult, label: string, preTxUsdcBalance: number | null = null) => {
       setBasketResult(result);
-      if (label === "rebalance" && result.side === "buy" && result.bought.length > 0) {
-        setRebalanceBuyDoneNonce((n) => n + 1);
+      if (label === "rebalance" && result.bought.length > 0) {
+        if (result.side === "sell" && preTxUsdcBalance !== null) {
+          // Only lock USDC baseline after Step 1 Sell actually confirms onchain
+          setRebalanceUsdcBaseline((prev) => prev ?? preTxUsdcBalance);
+        } else if (result.side === "buy") {
+          setRebalanceUsdcBaseline(null);
+          setRebalanceBuyDoneNonce((n) => n + 1);
+        }
       }
       if (label === "rebalance" && rebalanceKey && result.txHashes.length) {
         const summary =
@@ -738,7 +767,9 @@ export default function StockMaxxingDashboard() {
   const targetReady = Boolean(savedTarget && walletAddress && balancesFor === walletAddress.toLowerCase());
   const targetOff = targetDrift !== null && (targetDrift.driftPct >= alertPctOf(savedTarget) || targetDrift.breaches.length > 0);
 
+  const syncAutoWalletRef = useRef<(eth: EthereumProvider, sender: string, chainId?: unknown) => void>(() => {});
   const orderLockRef = useRef(false);
+  const reviewBusyRef = useRef(false);
   // Step 1 (buy): quote one or more B20 stocks and open the review. Nothing is sent yet.
   const buyStocks = useCallback(
     async (legs: BasketLeg[], label: string) => {
@@ -770,7 +801,7 @@ export default function StockMaxxingDashboard() {
         const sender = await resolveSender(eth);
         if (!walletAddress || sender.toLowerCase() !== walletAddress.toLowerCase()) {
           const cid = normalizeChainHex(await eth.request({ method: "eth_chainId" }).catch(() => "")) || "0x2105";
-          attachWalletRef.current(eth, sender, cid);
+          syncAutoWalletRef.current(eth, sender, cid);
         }
         const order = await prepareBuy({ eth, sender, legs: validLegs, slippageBps: slippageRef.current, onStatus: setBasketStatus });
         setChainIdHex("0x2105");
@@ -829,7 +860,8 @@ export default function StockMaxxingDashboard() {
 
   // Re-quote the order under review (expired quote or user request)
   const refreshReview = useCallback(async (newSlippageBps?: number) => {
-    if (!review) return;
+    if (!review || reviewBusyRef.current) return;
+    reviewBusyRef.current = true;
     if (newSlippageBps) {
       slippageRef.current = newSlippageBps;
       setSlippageBps(newSlippageBps);
@@ -838,7 +870,10 @@ export default function StockMaxxingDashboard() {
       } catch {}
     }
     const eth = getEthProvider();
-    if (!eth) return;
+    if (!eth) {
+      reviewBusyRef.current = false;
+      return;
+    }
     const targetSender = review.order.sender.toLowerCase();
     setReviewBusy(true);
     setBasketError("");
@@ -855,6 +890,7 @@ export default function StockMaxxingDashboard() {
       setReview(null);
       setBasketError(errMsg(err, "Could not refresh the quote"));
     } finally {
+      reviewBusyRef.current = false;
       setBasketStatus("");
       setReviewBusy(false);
     }
@@ -872,9 +908,16 @@ export default function StockMaxxingDashboard() {
     orderLockRef.current = true;
     const { order, label } = review;
     const targetSender = order.sender.toLowerCase();
+    const preTxUsdcBalance = label === "rebalance" && order.side === "sell" ? usdcBalanceRef.current : null;
     setReview(null);
     setBasketPending(true);
     try {
+      const activeAccounts = (await eth.request({ method: "eth_accounts" }).catch(() => [])) as string[];
+      if (activeAccounts?.[0] && activeAccounts[0].toLowerCase() !== targetSender) {
+        const cid = normalizeChainHex(await eth.request({ method: "eth_chainId" }).catch(() => "")) || "0x2105";
+        syncAutoWalletRef.current(eth, activeAccounts[0], cid);
+        throw new Error("Your wallet switched to another account. Please review a fresh quote.");
+      }
       const result = await submitOrder({
         eth,
         order,
@@ -882,7 +925,7 @@ export default function StockMaxxingDashboard() {
         onStatus: setBasketStatus,
         walletHint: walletMetaRef.current,
       });
-      if (walletRef.current === targetSender) recordResult(result, label);
+      if (walletRef.current === targetSender) recordResult(result, label, preTxUsdcBalance);
     } catch (err: unknown) {
       if (walletRef.current === targetSender) {
         setBasketError(
@@ -954,6 +997,8 @@ export default function StockMaxxingDashboard() {
         if (typeof data.walletUsdc === "number") setUsdcBalance(data.walletUsdc);
         if (typeof data.walletEth === "number") setEthBalance(data.walletEth);
         if (typeof data.ethUsd === "number") setEthUsd(data.ethUsd);
+      } else if (walletToQuery) {
+        setBalancesError(data?.error || "Could not read your balances.");
       }
     } catch (err) {
       if ((err as { name?: string })?.name === "AbortError") return;
@@ -972,6 +1017,7 @@ export default function StockMaxxingDashboard() {
     async (stocksData?: LiveTokenizedStock[], promptOverride?: string) => {
       const runId = ++agentRunId.current;
       setRunningAgent(true);
+      setAgentError("");
       try {
         const res = await fetch("/api/agent", {
           method: "POST",
@@ -988,8 +1034,13 @@ export default function StockMaxxingDashboard() {
         if (runId !== agentRunId.current) return;
         if (data?.ok && data.report) {
           setAgentReport(data.report);
+        } else {
+          setAgentError(data?.error || "Could not run the stock agent right now. Please retry.");
         }
       } catch (err) {
+        if (runId === agentRunId.current) {
+          setAgentError(errMsg(err, "Could not run the stock agent right now. Please retry."));
+        }
         console.error("Agent error:", err);
       } finally {
         if (runId === agentRunId.current) setRunningAgent(false);
@@ -1020,9 +1071,10 @@ export default function StockMaxxingDashboard() {
     if (!walletAddress || balancesFor !== walletAddress.toLowerCase()) return;
     let cancelled = false;
     const w = walletAddress.toLowerCase();
+    const ctrl = new AbortController();
     let retry: ReturnType<typeof setTimeout> | undefined;
     const load = (attempt: number) =>
-      fetch(`/api/pnl?wallet=${w}${balanceRefreshNonce > 0 ? "&fresh=1" : ""}`)
+      fetch(`/api/pnl?wallet=${w}${balanceRefreshNonce > 0 ? "&fresh=1" : ""}`, { signal: ctrl.signal })
         .then(async (r) => {
           const d = await r.json();
           if (cancelled) return;
@@ -1032,8 +1084,8 @@ export default function StockMaxxingDashboard() {
           else if (d?.loading && attempt < 4) retry = setTimeout(() => load(attempt + 1), 8000);
           else setPnl({ for: w, data: d?.ok ? d : null, error: d?.ok ? "" : d?.error || "P/L unavailable" });
         })
-        .catch(() => {
-          if (cancelled) return;
+        .catch((err) => {
+          if (cancelled || (err as { name?: string })?.name === "AbortError") return;
           // A first scan of a long history can hit the host's time limit; the work done so far is cached
           // server-side, so one more try usually completes
           if (attempt === 0) retry = setTimeout(() => load(1), 3000);
@@ -1042,9 +1094,10 @@ export default function StockMaxxingDashboard() {
     load(0);
     return () => {
       cancelled = true;
+      ctrl.abort();
       if (retry) clearTimeout(retry);
     };
-  }, [walletAddress, balancesFor, walletBalances, balanceRefreshNonce]);
+  }, [walletAddress, balancesFor, balanceRefreshNonce]);
 
   // First visit: one proposal from the default request, started once. A run that fails (e.g. rate limited) must not
   // start another by itself, and asking from the hero must not add a duplicate run.
@@ -1055,10 +1108,12 @@ export default function StockMaxxingDashboard() {
     triggerStockAgent(stocks);
   }, [stocks, agentReport, runningAgent, triggerStockAgent]);
 
-  const copyToClipboard = (text: string, key: string) => {
-    navigator.clipboard.writeText(text);
-    setCopiedKey(key);
-    setTimeout(() => setCopiedKey(""), 2200);
+  const copyToClipboard = async (text: string, key: string) => {
+    try {
+      await navigator.clipboard?.writeText(text);
+      setCopiedKey(key);
+      setTimeout(() => setCopiedKey(""), 2200);
+    } catch {}
   };
 
 
@@ -1111,13 +1166,18 @@ export default function StockMaxxingDashboard() {
       setReview(null);
       setBasketError("");
       setBasketResult(null);
+      setRebalanceUsdcBaseline(null);
       setPnl({ for: "", error: "", data: null });
       if (next) fetchLiveStocks(next);
       else {
         setChainIdHex("");
         setConnectedWalletName("");
         walletMetaRef.current = undefined;
-        if (!inMiniApp) providerRef.current = null;
+        if (!inMiniAppRef.current) {
+          providerRef.current = null;
+          // Clear WalletConnect/Coinbase SDK handles when the wallet closes the session remotely (`session_delete`)
+          void disconnectExternalWallets();
+        }
         saveWallet(null); // disconnected from inside the wallet: don't auto-reconnect
       }
     };
@@ -1133,6 +1193,28 @@ export default function StockMaxxingDashboard() {
     };
   };
   attachWalletRef.current = attachWallet;
+  syncAutoWalletRef.current = (eth: EthereumProvider, sender: string, chainId?: unknown) => {
+    providerRef.current = eth;
+    if (!walletMetaRef.current) {
+      if (inMiniAppRef.current) {
+        walletMetaRef.current = { name: "Mini app wallet" };
+        setConnectedWalletName("Mini app wallet");
+      } else {
+        const eipMatch = walletProviders.find((p) => p.provider === eth);
+        if (eipMatch) {
+          walletMetaRef.current = { name: eipMatch.info.name, rdns: eipMatch.info.rdns };
+          setConnectedWalletName(eipMatch.info.name);
+          saveWallet({ kind: "injected", rdns: eipMatch.info.rdns, name: eipMatch.info.name });
+        } else {
+          const name = detectInjectedName(eth);
+          walletMetaRef.current = { name, external: "browser" };
+          setConnectedWalletName(name);
+          saveWallet({ kind: "browser", name });
+        }
+      }
+    }
+    attachWallet(eth, sender, chainId);
+  };
 
   const disconnectWallet = async () => {
     setAccountMenuOpen(false);
@@ -1145,7 +1227,7 @@ export default function StockMaxxingDashboard() {
       localStorage.removeItem("maxxagent_wallet");
     } catch {}
     await disconnectExternalWallets();
-    if (!inMiniApp) providerRef.current = null; // in a mini app the host wallet stays the provider
+    if (!inMiniAppRef.current) providerRef.current = null; // in a mini app the host wallet stays the provider
     walletMetaRef.current = undefined;
     setWalletAddress("");
     setInspectAddress("");
@@ -1158,82 +1240,86 @@ export default function StockMaxxingDashboard() {
     setReview(null);
     setBasketError("");
     setBasketResult(null);
+    setRebalanceUsdcBaseline(null);
     setPnl({ for: "", error: "", data: null });
     setConnectedWalletName("");
   };
 
   // Connect EVM Wallet & switch to Base Mainnet (8453)
   const connectWallet = async (picked?: Eip6963ProviderDetail, external?: ExternalWalletKind) => {
+    if (connectingWalletRef.current) return;
+    connectingWalletRef.current = true;
+    setConnectingWallet(true);
     setTxError("");
     setShowWalletMenu(false);
-    let candidateEth: EthereumProvider | null = picked?.provider ?? null;
-    let candidateName = picked?.info.name ?? "";
-    let candidateMeta: WalletHint | undefined = picked
-      ? { name: picked.info.name, rdns: picked.info.rdns }
-      : undefined;
-    if (external) {
-      // Coinbase Smart Wallet (passkey popup) or WalletConnect (QR / mobile deep link)
-      setConnectingWallet(true);
-      try {
-        candidateEth = (await connectExternalWallet(external)) as EthereumProvider;
-        candidateName = external === "coinbase" ? "Coinbase Smart Wallet" : "WalletConnect";
-        candidateMeta = { name: candidateName, external };
-      } catch (err: unknown) {
-        setConnectingWallet(false);
-        const msg = err instanceof Error ? err.message : "";
+    try {
+      let candidateEth: EthereumProvider | null = picked?.provider ?? null;
+      let candidateName = picked?.info.name ?? "";
+      let candidateMeta: WalletHint | undefined = picked
+        ? { name: picked.info.name, rdns: picked.info.rdns }
+        : undefined;
+      if (external) {
+        // Coinbase Smart Wallet (passkey popup) or WalletConnect (QR / mobile deep link)
+        try {
+          candidateEth = (await connectExternalWallet(external)) as EthereumProvider;
+          candidateName = external === "coinbase" ? "Coinbase Smart Wallet" : "WalletConnect";
+          candidateMeta = { name: candidateName, external };
+        } catch (err: unknown) {
+          const msg = errMsg(err, "");
+          setTxError(
+            /request reset|reject|closed|cancel|dibatalkan|ditolak|batal/i.test(msg)
+              ? "Wallet connection cancelled."
+              : "Could not connect the wallet. Please try again."
+          );
+          return;
+        }
+      }
+      const eth = candidateEth ?? getEthProvider();
+      if (!eth) {
         setTxError(
-          /request reset|reject|closed|cancel/i.test(msg)
-            ? "Wallet connection cancelled."
-            : "Could not connect the wallet. Please try again."
+          "No wallet found in this browser. Choose Coinbase Smart Wallet or WalletConnect from the Connect menu."
         );
         return;
       }
-    }
-    const eth = candidateEth ?? getEthProvider();
-    if (!eth) {
-      setConnectingWallet(false);
-      setTxError(
-        "No wallet found in this browser. Choose Coinbase Smart Wallet or WalletConnect from the Connect menu."
-      );
-      return;
-    }
-    if (!candidateMeta) {
-      if (inMiniApp) {
-        candidateMeta = { name: "Mini app wallet" };
-      } else {
-        candidateName = candidateName || detectInjectedName(eth);
-        candidateMeta = { name: candidateName, external: "browser" };
-      }
-    }
-    try {
-      const accounts = (await eth.request({
-        method: "eth_requestAccounts",
-      })) as string[];
-      let chainId = normalizeChainHex(await eth.request({ method: "eth_chainId" }).catch(() => ""));
-      if (accounts && accounts[0]) {
-        providerRef.current = eth;
-        walletMetaRef.current = candidateMeta;
-        if (candidateName) setConnectedWalletName(candidateName);
-        if (chainId && chainId !== "0x2105") {
-          try {
-            chainId = await switchOrAddBaseChain(eth, "mainnet");
-          } catch {
-            // Keep connected even if user postpones switching until trade time
-          }
+      if (!candidateMeta) {
+        if (inMiniAppRef.current) {
+          candidateMeta = { name: "Mini app wallet" };
+        } else {
+          candidateName = candidateName || detectInjectedName(eth);
+          candidateMeta = { name: candidateName, external: "browser" };
         }
-        attachWallet(eth, accounts[0], chainId || "0x2105");
-        if (external) saveWallet({ kind: external });
-        else if (picked) saveWallet({ kind: "injected", rdns: picked.info.rdns, name: picked.info.name });
-        else if (!inMiniApp) saveWallet({ kind: "browser", name: candidateName || detectInjectedName(eth) });
       }
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "";
-      setTxError(
-        /request reset|reject|closed|cancel/i.test(msg)
-          ? "Wallet connection cancelled."
-          : msg || "Wallet connection rejected"
-      );
+      try {
+        const accounts = (await eth.request({
+          method: "eth_requestAccounts",
+        })) as string[];
+        let chainId = normalizeChainHex(await eth.request({ method: "eth_chainId" }).catch(() => ""));
+        if (accounts && accounts[0]) {
+          providerRef.current = eth;
+          walletMetaRef.current = candidateMeta;
+          if (candidateName) setConnectedWalletName(candidateName);
+          if (chainId && chainId !== "0x2105") {
+            try {
+              chainId = await switchOrAddBaseChain(eth, "mainnet");
+            } catch {
+              // Keep connected even if user postpones switching until trade time
+            }
+          }
+          attachWallet(eth, accounts[0], chainId || "0x2105");
+          if (external) saveWallet({ kind: external });
+          else if (picked) saveWallet({ kind: "injected", rdns: picked.info.rdns, name: picked.info.name });
+          else if (!inMiniAppRef.current) saveWallet({ kind: "browser", name: candidateName || detectInjectedName(eth) });
+        }
+      } catch (err: unknown) {
+        const msg = errMsg(err, "Wallet connection rejected");
+        setTxError(
+          /request reset|reject|closed|cancel|dibatalkan|ditolak|batal/i.test(msg)
+            ? "Wallet connection cancelled."
+            : msg
+        );
+      }
     } finally {
+      connectingWalletRef.current = false;
       setConnectingWallet(false);
     }
   };
@@ -1241,95 +1327,112 @@ export default function StockMaxxingDashboard() {
   // Opened as a mini app (Farcaster / Base App): use the host's wallet, already authorised by the user there
   const restoreTried = useRef(false);
   const [inMiniApp, setInMiniApp] = useState(false);
+
+  // Detect mini app host first so saved browser/external sessions never race or overwrite it;
+  // also restore browser/external sessions independently of asynchronous EIP-6963 announcements.
   useEffect(() => {
     if (termsAccepted !== true) return;
     let cancelled = false;
-    detectMiniApp().then(async (found) => {
-      if (!found || cancelled) return;
-      restoreTried.current = true; // the host wallet replaces any saved browser wallet
-      const eth = found.provider as EthereumProvider;
+    let browserRetryTimer: number | undefined;
+    const finish = async (eth: EthereumProvider, name: string, meta: WalletHint) => {
+      const accounts = (await eth.request({ method: "eth_accounts" }).catch(() => [])) as string[];
+      if (cancelled || inMiniAppRef.current || walletRef.current || !accounts?.[0]) return;
+      const chainId = (await eth.request({ method: "eth_chainId" }).catch(() => "")) as string;
+      if (cancelled || inMiniAppRef.current || walletRef.current) return;
       providerRef.current = eth;
-      walletMetaRef.current = { name: "Mini app wallet" };
-      setInMiniApp(true);
-      setConnectedWalletName("Mini app wallet");
-      try {
-        const accounts = (await eth.request({ method: "eth_requestAccounts" })) as string[];
-        const chainId = (await eth.request({ method: "eth_chainId" }).catch(() => "")) as string;
-        if (!cancelled && accounts?.[0]) attachWallet(eth, accounts[0], chainId);
-      } catch {
-        // The user can still connect from the Connect button (it uses the host wallet)
+      walletMetaRef.current = meta;
+      setConnectedWalletName(name);
+      attachWalletRef.current(eth, accounts[0], chainId);
+    };
+    (async () => {
+      const found = await detectMiniApp();
+      if (cancelled) return;
+      if (found) {
+        inMiniAppRef.current = true;
+        restoreTried.current = true; // the host wallet replaces any saved browser wallet
+        const eth = found.provider as EthereumProvider;
+        providerRef.current = eth;
+        walletMetaRef.current = { name: "Mini app wallet" };
+        setInMiniApp(true);
+        setConnectedWalletName("Mini app wallet");
+        try {
+          const accounts = (await eth.request({ method: "eth_requestAccounts" })) as string[];
+          const chainId = (await eth.request({ method: "eth_chainId" }).catch(() => "")) as string;
+          if (!cancelled && accounts?.[0]) attachWalletRef.current(eth, accounts[0], chainId);
+        } catch {
+          // The user can still connect from the Connect button (it uses the host wallet)
+        }
+        return;
       }
-    });
+      if (restoreTried.current || walletRef.current) return;
+      let saved: SavedWallet | null = null;
+      try {
+        saved = JSON.parse(localStorage.getItem(WALLET_STORAGE_KEY) || "null");
+      } catch {}
+      if (!saved) {
+        restoreTried.current = true;
+        return;
+      }
+      if (saved.kind === "injected") return; // handled by the EIP-6963 effect below
+      if (saved.kind === "browser") {
+        const savedName = (saved as { name?: string }).name || "";
+        const tryBrowser = (): boolean => {
+          const eth = getInjectedFallback();
+          if (!eth) return false;
+          restoreTried.current = true;
+          const resolvedName = savedName && savedName !== "Browser wallet" ? savedName : detectInjectedName(eth);
+          void finish(eth, resolvedName, { name: resolvedName, external: "browser" });
+          return true;
+        };
+        if (tryBrowser()) return;
+        // Mobile WebViews may finish injecting window.ethereum / window.binancew3w slightly after hydration
+        browserRetryTimer = window.setTimeout(() => {
+          if (cancelled || restoreTried.current) return;
+          restoreTried.current = true;
+          tryBrowser();
+        }, 450);
+        return;
+      }
+      const kind = saved.kind;
+      const externalName = kind === "coinbase" ? "Coinbase Smart Wallet" : "WalletConnect";
+      const extEth = await restoreExternalWallet(kind);
+      if (cancelled) return;
+      restoreTried.current = true;
+      if (extEth) await finish(extEth as EthereumProvider, externalName, { name: externalName, external: kind });
+    })();
     return () => {
       cancelled = true;
+      if (browserRetryTimer !== undefined) window.clearTimeout(browserRetryTimer);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [termsAccepted]);
 
-  // Silent reconnect after a refresh. Never opens a popup: eth_accounts / stored SDK sessions only.
+  // Silent reconnect for EIP-6963 extensions once they announce themselves.
   useEffect(() => {
-    if (termsAccepted !== true || restoreTried.current || walletAddress) return;
+    if (termsAccepted !== true || inMiniAppRef.current || restoreTried.current || walletAddress) return;
     let saved: SavedWallet | null = null;
     try {
       saved = JSON.parse(localStorage.getItem(WALLET_STORAGE_KEY) || "null");
     } catch {}
-    if (!saved) {
-      restoreTried.current = true;
-      return;
-    }
+    if (!saved || saved.kind !== "injected") return;
+    const match = walletProviders.find((p) => p.info.rdns === (saved as { rdns: string }).rdns);
+    if (!match) return;
     let cancelled = false;
-    const finish = async (eth: EthereumProvider, name: string, meta: WalletHint) => {
+    const eth = match.provider as EthereumProvider;
+    (async () => {
       const accounts = (await eth.request({ method: "eth_accounts" }).catch(() => [])) as string[];
-      if (cancelled || !accounts?.[0]) return; // the wallet no longer authorizes this site: stay disconnected
-      const chainId = (await eth.request({ method: "eth_chainId" }).catch(() => "")) as string;
-      providerRef.current = eth;
-      walletMetaRef.current = meta;
-      setConnectedWalletName(name);
-      attachWallet(eth, accounts[0], chainId);
-    };
-    if (saved.kind === "injected") {
-      // Wait for the extension to announce itself (EIP-6963); give up quietly if it never does
-      const match = walletProviders.find((p) => p.info.rdns === (saved as { rdns: string }).rdns);
-      if (!match) return; // re-runs when walletProviders updates
+      if (cancelled || inMiniAppRef.current || walletRef.current) return;
       restoreTried.current = true;
-      finish(match.provider as EthereumProvider, match.info.name, {
-        name: match.info.name,
-        rdns: match.info.rdns,
-      });
-      return;
-    }
-    if (saved.kind === "browser") {
-      const savedName = (saved as { name?: string }).name || "";
-      const tryBrowser = (): boolean => {
-        const eth = getInjectedFallback();
-        if (!eth) return false;
-        restoreTried.current = true;
-        const resolvedName = savedName && savedName !== "Browser wallet" ? savedName : detectInjectedName(eth);
-        finish(eth, resolvedName, { name: resolvedName, external: "browser" });
-        return true;
-      };
-      if (tryBrowser()) return;
-      // Mobile WebViews may finish injecting window.ethereum / window.binancew3w slightly after hydration
-      const timer = window.setTimeout(() => {
-        if (cancelled || restoreTried.current) return;
-        restoreTried.current = true;
-        tryBrowser();
-      }, 450);
-      return () => {
-        cancelled = true;
-        window.clearTimeout(timer);
-      };
-    }
-    restoreTried.current = true;
-    const kind = saved.kind;
-    const externalName = kind === "coinbase" ? "Coinbase Smart Wallet" : "WalletConnect";
-    restoreExternalWallet(kind).then((p) => {
-      if (p) finish(p as EthereumProvider, externalName, { name: externalName, external: kind });
-    });
+      if (!accounts?.[0]) return;
+      const chainId = (await eth.request({ method: "eth_chainId" }).catch(() => "")) as string;
+      if (cancelled || inMiniAppRef.current || walletRef.current) return;
+      providerRef.current = eth;
+      walletMetaRef.current = { name: match.info.name, rdns: match.info.rdns };
+      setConnectedWalletName(match.info.name);
+      attachWalletRef.current(eth, accounts[0], chainId);
+    })();
     return () => {
       cancelled = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [walletProviders, walletAddress, termsAccepted]);
 
   const switchToBaseMainnet = async (modeOverride?: "sepolia" | "mainnet") => {
@@ -1340,7 +1443,7 @@ export default function StockMaxxingDashboard() {
       const switchedHex = await switchOrAddBaseChain(eth, mode);
       setChainIdHex(switchedHex);
     } catch (err: unknown) {
-      setTxError(err instanceof Error ? err.message : "Failed to switch to Base network");
+      setTxError(errMsg(err, "Failed to switch to Base network"));
       throw err;
     }
   };
@@ -1394,7 +1497,10 @@ export default function StockMaxxingDashboard() {
       // The account that will actually sign (never a stale one from before an account switch)
       const sender = walletAddress ? await resolveSender(eth) : ((await eth.request({ method: "eth_requestAccounts" })) as string[])?.[0];
       if (!sender) throw new Error("No wallet account connected.");
-      if (sender.toLowerCase() !== walletAddress.toLowerCase()) setWalletAddress(sender);
+      if (!walletAddress || sender.toLowerCase() !== walletAddress.toLowerCase()) {
+        const cid = normalizeChainHex(await eth.request({ method: "eth_chainId" }).catch(() => "")) || "0x2105";
+        syncAutoWalletRef.current(eth, sender, cid);
+      }
       // The dry run must hit Base (on another chain the registry address has no code and would "pass")
       const currentChain = normalizeChainHex(await eth.request({ method: "eth_chainId" }).catch(() => ""));
       if (currentChain && currentChain !== "0x2105") await switchToBaseMainnet("mainnet");
@@ -1427,7 +1533,11 @@ export default function StockMaxxingDashboard() {
           ZeroWeight: "every stock needs a weight above 0",
           InvalidConstituentCount: "an index needs 1–10 stocks",
         };
-        throw new Error(`The registry would reject this index${reason ? `: ${nice[reason] || reason}` : ""}. Nothing was sent.`);
+        const simMsg = errMsg(simErr, "");
+        if (reason || /^0x[0-9a-fA-F]{8}/.test(raw) || /revert|execution/i.test(simMsg)) {
+          throw new Error(`The registry would reject this index${reason ? `: ${nice[reason] || reason}` : ""}. Nothing was sent.`);
+        }
+        throw new Error(simMsg ? `Could not check the index against Base RPC (${simMsg}). Please retry.` : "Could not check the index against Base RPC. Please retry.");
       }
       const hash = await sendContractCall({
         eth,
@@ -1486,15 +1596,25 @@ export default function StockMaxxingDashboard() {
   useEffect(() => {
     if (activeTab !== "indexes" || indexBuys) return;
     let cancelled = false;
-    fetch("/api/stats")
-      .then((r) => r.json())
-      .then((d) => {
-        if (cancelled || !d?.ok || !Array.isArray(d.indexBuys)) return;
-        setIndexBuys(Object.fromEntries((d.indexBuys as { id: number; buys: number; volumeUsd: number; wallets: number }[]).map((x) => [x.id, x])));
-      })
-      .catch(() => {});
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const load = (attempt: number) => {
+      fetch("/api/stats")
+        .then((r) => r.json())
+        .then((d) => {
+          if (cancelled) return;
+          if (d?.loading && attempt < 3) {
+            timer = setTimeout(() => load(attempt + 1), 10_000);
+            return;
+          }
+          if (!d?.ok || !Array.isArray(d.indexBuys)) return;
+          setIndexBuys(Object.fromEntries((d.indexBuys as { id: number; buys: number; volumeUsd: number; wallets: number }[]).map((x) => [x.id, x])));
+        })
+        .catch(() => {});
+    };
+    load(0);
     return () => {
       cancelled = true;
+      if (timer) clearTimeout(timer);
     };
   }, [activeTab, indexBuys]);
   // Most bought first (by volume), then newest
@@ -1542,15 +1662,15 @@ export default function StockMaxxingDashboard() {
     setActiveTab("indexes");
     setSharedBasketLoaded(true);
     setTimeout(() => document.getElementById("index-builder")?.scrollIntoView({ behavior: "smooth", block: "start" }), 400);
-    // Mark URL ready only after initial ?tab= / ?basket= parsing so we don't push a duplicate history entry
-    queueMicrotask(() => {
+    // Mark URL ready on the next animation frame (after React commits activeTab = "indexes") so initial load doesn't push duplicate history
+    requestAnimationFrame(() => {
       tabUrlReady.current = true;
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   useEffect(() => {
     if (!tabUrlReady.current) {
-      queueMicrotask(() => {
+      requestAnimationFrame(() => {
         tabUrlReady.current = true;
       });
     }
@@ -1601,7 +1721,7 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
 @buildonbase`;
 
   return (
-    <div className="min-h-screen flex flex-col bg-[#03060e] text-slate-100 relative overflow-x-hidden bg-cyber-grid">
+    <div className="min-h-screen flex flex-col bg-[#03060e] text-slate-100 relative overflow-x-clip bg-cyber-grid">
       {/* Ambient Base Blue & Cyan Aurora Lighting */}
       <div className="pointer-events-none fixed inset-0 z-0 overflow-hidden">
         <div className="absolute -top-44 left-1/4 h-[460px] w-[680px] rounded-full bg-[#4C6FFF]/15 blur-[140px]" />
@@ -1821,7 +1941,8 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                 <button
                   // Inside a mini app the host wallet is the only option: connect to it directly
                   onClick={() => (inMiniApp ? connectWallet() : setShowWalletMenu((v) => !v))}
-                  className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-[#4C6FFF] to-[#2563eb] px-4 py-2.5 text-xs font-bold text-white shadow-lg shadow-[#4C6FFF]/35 hover:brightness-110 transition cursor-pointer border border-blue-400/30"
+                  disabled={connectingWallet}
+                  className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-[#4C6FFF] to-[#2563eb] px-4 py-2.5 text-xs font-bold text-white shadow-lg shadow-[#4C6FFF]/35 hover:brightness-110 disabled:opacity-60 transition cursor-pointer border border-blue-400/30"
                 >
                   <Wallet className="h-3.5 w-3.5" />
                   <span className="hidden sm:inline">{connectingWallet ? "Connecting…" : "Connect wallet"}</span>
@@ -1836,7 +1957,8 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                       <button
                         key={p.info.uuid}
                         onClick={() => connectWallet(p)}
-                        className="w-full flex items-center gap-2.5 rounded-xl px-2.5 py-2 text-left text-xs font-semibold text-slate-200 hover:bg-slate-800 cursor-pointer"
+                        disabled={connectingWallet}
+                        className="w-full flex items-center gap-2.5 rounded-xl px-2.5 py-2 text-left text-xs font-semibold text-slate-200 hover:bg-slate-800 disabled:opacity-60 cursor-pointer"
                       >
                         {/^https:\/\//i.test(p.info.icon || "") || /^data:image\/(png|jpeg|webp|gif|svg\+xml)[,;]/i.test(p.info.icon || "") ? (
                           <img src={p.info.icon} alt="" className="h-5 w-5 rounded" />
@@ -1852,7 +1974,8 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                       return (
                         <button
                           onClick={() => connectWallet()}
-                          className="w-full flex items-center gap-2.5 rounded-xl px-2.5 py-2 text-left text-xs font-semibold text-slate-200 hover:bg-slate-800 cursor-pointer"
+                          disabled={connectingWallet}
+                          className="w-full flex items-center gap-2.5 rounded-xl px-2.5 py-2 text-left text-xs font-semibold text-slate-200 hover:bg-slate-800 disabled:opacity-60 cursor-pointer"
                         >
                           <Wallet className="h-4 w-4 text-cyan-300" />
                           {detectInjectedName(fallbackEth)}
@@ -1866,7 +1989,8 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                     )}
                     <button
                       onClick={() => connectWallet(undefined, "coinbase")}
-                      className="w-full flex items-start gap-2.5 rounded-xl px-2.5 py-2 text-left hover:bg-slate-800 cursor-pointer"
+                      disabled={connectingWallet}
+                      className="w-full flex items-start gap-2.5 rounded-xl px-2.5 py-2 text-left hover:bg-slate-800 disabled:opacity-60 cursor-pointer"
                     >
                       <img src="/logos/brands/coinbase-wordmark.svg" alt="" className="mt-1 h-3 w-auto" />
                       <span>
@@ -1877,7 +2001,8 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                     {walletConnectConfigured() && (
                       <button
                         onClick={() => connectWallet(undefined, "walletconnect")}
-                        className="w-full flex items-start gap-2.5 rounded-xl px-2.5 py-2 text-left hover:bg-slate-800 cursor-pointer"
+                        disabled={connectingWallet}
+                        className="w-full flex items-start gap-2.5 rounded-xl px-2.5 py-2 text-left hover:bg-slate-800 disabled:opacity-60 cursor-pointer"
                       >
                         <Wallet className="mt-0.5 h-4 w-4 text-blue-300" />
                         <span>
@@ -1942,6 +2067,7 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                 <button
                   key={tab.id}
                   onClick={() => setActiveTab(tab.id as ActiveTab)}
+                  aria-current={isActive ? "page" : undefined}
                   className={`flex items-center gap-2 whitespace-nowrap rounded-xl px-4 py-2.5 text-xs font-semibold transition-all cursor-pointer ${
                     isActive
                       ? "bg-gradient-to-r from-[#4C6FFF] to-[#1d4ed8] text-white shadow-lg shadow-[#4C6FFF]/30 border border-blue-400/30"
@@ -2939,14 +3065,16 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                   </div>
 
                   <div>
-                    <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
+                    <label htmlFor="agent-capital-usd" className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
                       Amount to invest (USD)
                     </label>
-                    <input
-                      type="number"
+                    <UsdAmountInput
+                      id="agent-capital-usd"
                       value={capitalUsd}
-                      onChange={(e) => setCapitalUsd(Math.max(0, Number(e.target.value) || 0))}
+                      onChange={setCapitalUsd}
+                      min={0}
                       className="w-full rounded-xl border border-slate-700 bg-[#050811] px-3 py-2 font-mono text-xs text-white focus:border-[#4C6FFF] focus:outline-none"
+                      ariaLabel="Amount to invest in USD"
                     />
                   </div>
                 </div>
@@ -2974,6 +3102,11 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
 
             {/* Right column: the agent's proposed basket */}
             <div className="lg:col-span-7 space-y-5">
+              {agentError && !runningAgent && (
+                <div className="rounded-2xl border border-rose-500/40 bg-rose-500/10 px-4 py-3 text-xs text-rose-200" role="alert">
+                  {agentError}
+                </div>
+              )}
               {!agentReport && !runningAgent && (
                 <div className="rounded-2xl border border-dashed border-slate-700 bg-[#0b1120] p-8 text-center text-sm text-slate-400">
                   Run the agent to get a proposed basket from live NAV, DEX prices and liquidity.
@@ -3272,6 +3405,8 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                       onSell={(legs, label) => sellStocks(legs, label)}
                       onBuy={(legs, label) => buyStocks(legs, label)}
                       maxWeightPct={agentReport.maxWeightOfStocksPct}
+                      rebalanceBuyDoneNonce={rebalanceBuyDoneNonce}
+                      usdcBaseline={rebalanceUsdcBaseline}
                     />
                   )}
 
@@ -3724,18 +3859,25 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                   </span>
                   <div className="flex flex-wrap items-center gap-2">
                     <a
-                      href={`https://x.com/intent/tweet?text=${encodeURIComponent(
-                        `My tokenized stock index [${customIndexTicker}] (${customIndexName}) on @base, built with MAXXAGENT:\n${Object.entries(
-                          customWeights
-                        )
-                          .filter(([, w]) => w > 0)
-                          .slice(0, 5)
-                          .map(([s, w]) => `• $${s}: ${(w / 100).toFixed(0)}%`)
-                          .join("\n")}\n\nBuy the same index: ${PUBLIC_SITE_URL}/?${basketToQuery(customWeights)}\n\nNot financial advice. #StocksMaxxing @buildonbase`
-                      )}`}
+                      href={
+                        totalCustomWeightBps === 10000
+                          ? `https://x.com/intent/tweet?text=${encodeURIComponent(
+                              `My tokenized stock index [${customIndexTicker}] (${customIndexName}) on @base, built with MAXXAGENT:\n${Object.entries(
+                                customWeights
+                              )
+                                .filter(([, w]) => w > 0)
+                                .slice(0, 5)
+                                .map(([s, w]) => `• $${s}: ${(w / 100).toFixed(0)}%`)
+                                .join("\n")}\n\nBuy the same index: ${PUBLIC_SITE_URL}/?${basketToQuery(customWeights)}\n\nNot financial advice. #StocksMaxxing @buildonbase`
+                            )}`
+                          : undefined
+                      }
+                      aria-disabled={totalCustomWeightBps !== 10000}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="inline-flex items-center gap-1.5 rounded-xl border border-slate-700 bg-slate-800/90 px-3 py-2.5 text-xs font-bold text-slate-200 hover:border-blue-400 hover:text-white transition"
+                      className={`inline-flex items-center gap-1.5 rounded-xl border border-slate-700 bg-slate-800/90 px-3 py-2.5 text-xs font-bold text-slate-200 transition ${
+                        totalCustomWeightBps === 10000 ? "hover:border-blue-400 hover:text-white" : "opacity-50 pointer-events-none"
+                      }`}
                     >
                       <img src="/logos/brands/x.svg" alt="X" className="h-3.5 w-3.5" />
                       Share Index on X
@@ -4038,6 +4180,7 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                   walletAddress={walletAddress}
                   history={rebalanceLog}
                   rebalanceBuyDoneNonce={rebalanceBuyDoneNonce}
+                  rebalanceUsdcBaseline={rebalanceUsdcBaseline}
                 />
               )}
 
@@ -4297,8 +4440,14 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
               <div className="lg:col-span-12">
                 <TradeHistoryPanel
                   entries={pnl.for === walletAddress.toLowerCase() ? pnl.data?.activity ?? [] : []}
-                  loading={pnl.for !== walletAddress.toLowerCase()}
-                  error={pnl.for === walletAddress.toLowerCase() ? pnl.error : ""}
+                  loading={pnl.for !== walletAddress.toLowerCase() && (!balancesError || loadingStocks)}
+                  error={
+                    pnl.for === walletAddress.toLowerCase()
+                      ? pnl.error
+                      : balancesError && !loadingStocks
+                      ? balancesError
+                      : ""
+                  }
                   since={pnl.for === walletAddress.toLowerCase() ? pnl.data?.since ?? null : null}
                 />
               </div>
@@ -4884,7 +5033,7 @@ const walletClient = createWalletClient({
       {/* Mobile bottom navigation */}
       <nav
         className="md:hidden fixed bottom-0 inset-x-0 z-40 border-t border-slate-800 bg-[#050a18]/95 backdrop-blur-xl pb-[env(safe-area-inset-bottom)]"
-        aria-label="Sections"
+        aria-label="Mobile sections"
       >
         <div className="grid grid-cols-5">
           {(
@@ -4906,7 +5055,7 @@ const walletClient = createWalletClient({
                   window.scrollTo({ top: 0, behavior: "smooth" });
                 }}
                 className={`flex flex-col items-center justify-center gap-1 py-2.5 text-[11px] font-semibold cursor-pointer ${
-                  active ? "text-white" : "text-slate-500"
+                  active ? "text-white" : "text-slate-400"
                 }`}
                 aria-current={active ? "page" : undefined}
               >

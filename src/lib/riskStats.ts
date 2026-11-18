@@ -64,10 +64,10 @@ async function dailyCloses(feed: `0x${string}`, sinceSec: number): Promise<[stri
       const prev = byDay.get(day);
       if (!prev || t > prev.t) byDay.set(day, { t, v: Number(answer) });
     }
-    if (res.length > 0 && failedCount > res.length / 2 && byDay.size < MIN_DAYS + 1) {
+    if (res.length > 0 && failedCount > res.length / 2) {
       throw new Error("Chainlink multicall failed");
     }
-    if (oldest < sinceSec) break;
+    if (oldest < sinceSec || oldest === Infinity) break;
   }
   return [...byDay.entries()].sort(([a], [b]) => (a < b ? -1 : 1)).map(([d, x]) => [d, x.v]);
 }

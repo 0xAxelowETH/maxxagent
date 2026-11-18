@@ -58,7 +58,8 @@ export async function GET() {
           });
           if (r[1] <= 0n || r[4] < r[0]) throw new Error("Invalid Chainlink round");
           const ageMinutes = Math.round((Date.now() / 1000 - Number(r[3])) / 60);
-          if (ageMinutes < -5 || ageMinutes > 26 * 60) throw new Error(`Stale Chainlink oracle (${ageMinutes}m)`);
+          // Tokenized US stock feeds are 24/5 (paused across 48h weekends and 72h holiday weekends)
+          if (ageMinutes < -5 || ageMinutes > 4 * 24 * 60) throw new Error(`Stale Chainlink oracle (${ageMinutes}m)`);
           return ageMinutes;
         }),
         timed(() => fetchOk(`https://api.dexscreener.com/tokens/v1/base/${NVDA}`)),

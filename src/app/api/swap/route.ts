@@ -50,9 +50,9 @@ const client = createPublicClient({ chain: base, transport: baseTransport({ time
 
 async function readNav(feed: `0x${string}`): Promise<number | null> {
   try {
-    const [, answer, , updatedAt] = await client.readContract({ address: feed, abi: FEED_ABI, functionName: "latestRoundData" });
+    const [roundId, answer, , updatedAt, answeredInRound] = await client.readContract({ address: feed, abi: FEED_ABI, functionName: "latestRoundData" });
     const age = Date.now() / 1000 - Number(updatedAt);
-    return answer > 0n && age >= -60 && age < MAX_NAV_AGE_SEC ? Number(answer) / 1e8 : null;
+    return answer > 0n && answeredInRound >= roundId && age >= -60 && age < MAX_NAV_AGE_SEC ? Number(answer) / 1e8 : null;
   } catch {
     return null;
   }
@@ -231,6 +231,23 @@ export async function POST(request: NextRequest) {
     const amountOutRaw = BigInt(build.data.amountOut ?? routeSummary.amountOut ?? "0");
     if (amountOutRaw <= 0n) {
       return NextResponse.json({ ok: false, symbol: stock.symbol, error: `Swap quote returned zero output for ${stock.symbol}. Please retry.` }, { status: 502 });
+    }
+    // Re-check costPct against the actual executable build.data.amountOut in case /route/build requoted lower
+    const summaryOutRaw = BigInt(routeSummary.amountOut ?? "0");
+    const effectiveCostPct =
+      summaryOutRaw > 0n && amountOutRaw < summaryOutRaw && Number(amountInUsd) > 0
+        ? ((amountInUsd - amountOutUsd * (Number(amountOutRaw) / Number(summaryOutRaw))) / amountInUsd) * 100
+        : costPct;
+    if (effectiveCostPct > MAX_COST_PCT) {
+      return NextResponse.json(
+        {
+          ok: false,
+          symbol: stock.symbol,
+          costPct: effectiveCostPct,
+          error: `${stock.symbol} route costs ${effectiveCostPct.toFixed(2)}% (limit ${MAX_COST_PCT}%). Skipped to protect you from low liquidity.`,
+        },
+        { status: 422 }
+      );
     }
 
     // NAV guard: effective price per stock token vs Chainlink NAV (per token, multiplier-adjusted)

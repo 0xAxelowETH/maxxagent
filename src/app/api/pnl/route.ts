@@ -28,7 +28,7 @@ const ETH_USD_FEED = "0x71041dddad3595F9CEd3DcCFBe3D1F4b0a16Bb70" as const; // C
 // First Coinbase B20 stock supply on Base (NVDAc, 2026-08-12): nothing exists before this
 const START_BLOCK = 49_870_000n;
 // Dedicated RPCs (CDP) accept 100k-block getLogs ranges; the public fallback caps at 50k
-const CHUNK = process.env.BASE_RPC_URL ? 100_000n : 45_000n;
+const CHUNK = process.env.BASE_RPC_URL || process.env.NEXT_PUBLIC_BASE_RPC_URL ? 100_000n : 45_000n;
 // ~3 days at Base's 0.2s block time (it was 2s until late Oct 2026, so older ranges cover more time)
 const FIRST_WINDOW = 1_300_000n;
 const CONCURRENCY = 4; // more triggers the RPC's rate limit
@@ -54,7 +54,7 @@ const STOCK_ADDRESSES = BASE_TOKENIZED_STOCKS.map((s) => s.b20Address);
 
 type Move = { token: string; amount: bigint; dir: 1 | -1; logIndex: number };
 /** ethValue: ETH the wallet itself sent with the tx (a buy paid in ETH has no USDC transfer) */
-type TxSummary = { hash: string; block: bigint; moves: Move[]; ethValue?: bigint };
+type TxSummary = { hash: string; block: bigint; txIndex: number; moves: Move[]; ethValue?: bigint };
 interface WalletHistory {
   /** history is complete from this block (inclusive) to scannedTo */
   scannedFrom: bigint;
@@ -62,6 +62,7 @@ interface WalletHistory {
   /** raw balances held at scannedFrom - 1 (non-zero = position opened before the window) */
   opening: Map<string, bigint>;
   openingPartial?: boolean;
+  incrementalPartial?: boolean;
   txs: Map<string, TxSummary>;
   at: number;
 }
@@ -97,14 +98,51 @@ async function withRetry<T>(fn: () => Promise<T>, tries = 4, deadline = Infinity
   throw last;
 }
 
+async function fetchTransferLogs(
+  wallet: `0x${string}`,
+  dir: "to" | "from",
+  a: bigint,
+  b: bigint,
+  deadline: number
+) {
+  const args = dir === "to" ? { to: wallet } : { from: wallet };
+  return withRetry(() => client.getLogs({ address: STOCK_ADDRESSES, event: TRANSFER, args, fromBlock: a, toBlock: b }), 3, deadline);
+}
+
+type TransferLogList = Awaited<ReturnType<typeof fetchTransferLogs>>;
+
+async function getTransferLogsAdaptive(
+  wallet: `0x${string}`,
+  dir: "to" | "from",
+  a: bigint,
+  b: bigint,
+  deadline: number
+): Promise<TransferLogList> {
+  try {
+    return await fetchTransferLogs(wallet, dir, a, b, deadline);
+  } catch (e) {
+    if (b - a <= 10_000n || Date.now() >= deadline) throw e;
+    const mid = a + (b - a) / 2n;
+    const [left, right] = await Promise.all([
+      getTransferLogsAdaptive(wallet, dir, a, mid, deadline),
+      getTransferLogsAdaptive(wallet, dir, mid + 1n, b, deadline),
+    ]);
+    return [...left, ...right];
+  }
+}
+
 /**
- * Stock Transfer logs in/out of the wallet for [from, to], scanned in chunks NEWEST FIRST.
- * Stops starting new chunks after `deadline`. Only the contiguous run of completed chunks from `to`
- * backwards counts, so the history it returns has no gaps: [coveredFrom, to].
+ * Stock Transfer logs in/out of the wallet for [from, to].
+ * Scans newest-first by default (`forward = false`) so partial scans yield a gap-free tail [coveredFrom, to],
+ * or oldest-first (`forward = true`) for incremental catch-up so completed chunks extend [from, coveredTo] gap-free.
  */
-async function scanRange(wallet: `0x${string}`, from: bigint, to: bigint, deadline = Infinity) {
+async function scanRange(wallet: `0x${string}`, from: bigint, to: bigint, deadline = Infinity, forward = false) {
   const chunks: [bigint, bigint][] = [];
-  for (let e = to; e >= from; e -= CHUNK) chunks.push([e - CHUNK + 1n < from ? from : e - CHUNK + 1n, e]);
+  if (forward) {
+    for (let a = from; a <= to; a += CHUNK) chunks.push([a, a + CHUNK - 1n > to ? to : a + CHUNK - 1n]);
+  } else {
+    for (let e = to; e >= from; e -= CHUNK) chunks.push([e - CHUNK + 1n < from ? from : e - CHUNK + 1n, e]);
+  }
   const found: (`0x${string}`[] | null)[] = chunks.map(() => null);
   let next = 0;
   await Promise.all(
@@ -112,11 +150,10 @@ async function scanRange(wallet: `0x${string}`, from: bigint, to: bigint, deadli
       while (next < chunks.length && Date.now() < deadline) {
         const i = next++;
         const [a, b] = chunks[i];
-        const [ins, outs] = await Promise.all(
-          [{ to: wallet }, { from: wallet }].map((args) =>
-            withRetry(() => client.getLogs({ address: STOCK_ADDRESSES, event: TRANSFER, args, fromBlock: a, toBlock: b }))
-          )
-        );
+        const [ins, outs] = await Promise.all([
+          getTransferLogsAdaptive(wallet, "to", a, b, deadline),
+          getTransferLogsAdaptive(wallet, "from", a, b, deadline),
+        ]);
         found[i] = [...ins, ...outs].map((l) => l.transactionHash);
       }
     })
@@ -125,18 +162,22 @@ async function scanRange(wallet: `0x${string}`, from: bigint, to: bigint, deadli
   while (done < chunks.length && found[done] !== null) done++;
   return {
     hashes: [...new Set(found.slice(0, done).flat() as `0x${string}`[])],
-    coveredFrom: done > 0 ? chunks[done - 1][0] : null,
+    coveredFrom: done > 0 ? (forward ? chunks[0][0] : chunks[done - 1][0]) : null,
+    coveredTo: done > 0 ? (forward ? chunks[done - 1][1] : chunks[0][1]) : null,
     partial: done < chunks.length,
   };
 }
 
-async function balancesAt(wallet: `0x${string}`, block: bigint): Promise<{ map: Map<string, bigint>; anyFailed: boolean }> {
-  const res = await withRetry(() =>
-    client.multicall({
-      allowFailure: true,
-      blockNumber: block,
-      contracts: STOCK_ADDRESSES.map((address) => ({ address, abi: ABI, functionName: "balanceOf" as const, args: [wallet] as const })),
-    })
+async function balancesAt(wallet: `0x${string}`, block: bigint, deadline = Infinity): Promise<{ map: Map<string, bigint>; anyFailed: boolean }> {
+  const res = await withRetry(
+    () =>
+      client.multicall({
+        allowFailure: true,
+        blockNumber: block,
+        contracts: STOCK_ADDRESSES.map((address) => ({ address, abi: ABI, functionName: "balanceOf" as const, args: [wallet] as const })),
+      }),
+    4,
+    deadline
   );
   const map = new Map<string, bigint>();
   let anyFailed = false;
@@ -148,8 +189,8 @@ async function balancesAt(wallet: `0x${string}`, block: bigint): Promise<{ map: 
   return { map, anyFailed };
 }
 
-async function summarize(hash: `0x${string}`, wallet: string): Promise<TxSummary> {
-  const r = await withRetry(() => client.getTransactionReceipt({ hash }));
+async function summarize(hash: `0x${string}`, wallet: string, deadline = Infinity): Promise<TxSummary> {
+  const r = await withRetry(() => client.getTransactionReceipt({ hash }), 4, deadline);
   const rawMoves: Move[] = [];
   for (const log of r.logs) {
     const token = log.address.toLowerCase();
@@ -180,7 +221,7 @@ async function summarize(hash: `0x${string}`, wallet: string): Promise<TxSummary
   const stockInMoves = moves.filter((m) => m.dir === 1 && m.token !== USDC);
   const usdcOutCount = moves.filter((m) => m.token === USDC && m.dir === -1).length;
   if (stockInMoves.length > usdcOutCount) {
-    const tx = await withRetry(() => client.getTransaction({ hash })).catch(() => null);
+    const tx = await withRetry(() => client.getTransaction({ hash }), 4, deadline).catch(() => null);
     if (tx && tx.from.toLowerCase() === wallet && tx.value > 0n && usdcOutCount === 0) {
       ethValue = tx.value;
     } else {
@@ -214,7 +255,7 @@ async function summarize(hash: `0x${string}`, wallet: string): Promise<TxSummary
       if (detected > 0n) ethValue = detected;
     }
   }
-  return { hash, block: r.blockNumber, moves, ethValue };
+  return { hash, block: r.blockNumber, txIndex: Number(r.transactionIndex ?? 0), moves, ethValue };
 }
 
 const anyHeld = (m: Map<string, bigint>) => [...m.values()].some((v) => v > 0n);
@@ -231,19 +272,34 @@ async function loadHistory(wallet: `0x${string}`): Promise<WalletHistory> {
   const addTxs = async (hashes: `0x${string}`[]) => {
     const fresh = hashes.filter((h) => !txs.has(h));
     if (txs.size + fresh.length > MAX_TXS) throw new Error("TOO_MANY");
-    for (const s of await pool(fresh, CONCURRENCY, (h) => summarize(h, key))) txs.set(s.hash, s);
+    for (const s of await pool(fresh, CONCURRENCY, (h) => summarize(h, key, deadline))) txs.set(s.hash, s);
   };
 
   let scannedFrom: bigint;
+  let scannedTo: bigint;
   let opening: Map<string, bigint>;
   let openingPartial = false;
+  let incrementalPartial = false;
   let shouldCache = true;
   if (prev) {
-    // New blocks since the last scan (small, always completed)
-    if (latest > prev.scannedTo) await addTxs((await scanRange(wallet, prev.scannedTo + 1n, latest, deadline)).hashes);
+    scannedTo = prev.scannedTo;
+    if (latest > prev.scannedTo) {
+      // Scan chronologically from prev.scannedTo + 1n forward so partial scans never leave a gap before `scannedTo`
+      const inc = await scanRange(wallet, prev.scannedTo + 1n, latest, deadline, true);
+      await addTxs(inc.hashes);
+      if (inc.coveredTo !== null && inc.coveredTo > scannedTo) scannedTo = inc.coveredTo;
+      incrementalPartial = inc.partial;
+    }
     scannedFrom = prev.scannedFrom;
     opening = prev.opening;
     openingPartial = Boolean(prev.openingPartial);
+    if (openingPartial && scannedFrom > START_BLOCK && Date.now() < deadline) {
+      const ob = await balancesAt(wallet, scannedFrom - 1n, deadline).catch(() => null);
+      if (ob) {
+        opening = ob.map;
+        openingPartial = ob.anyFailed;
+      }
+    }
   } else {
     // Recent window first: fast, and enough for most wallets. Also within the time budget: when the RPC is
     // slow, only the gap-free newest part counts and the rest is valued from the balances at its start.
@@ -252,9 +308,11 @@ async function loadHistory(wallet: `0x${string}`): Promise<WalletHistory> {
     await addTxs(first.hashes);
     if (first.coveredFrom === null) shouldCache = false;
     scannedFrom = first.coveredFrom ?? latest;
-    const ob = scannedFrom > START_BLOCK ? await balancesAt(wallet, scannedFrom - 1n) : { map: new Map(), anyFailed: false };
+    scannedTo = latest;
+    const ob = scannedFrom > START_BLOCK ? await balancesAt(wallet, scannedFrom - 1n, deadline) : { map: new Map(), anyFailed: false };
     opening = ob.map;
     openingPartial = ob.anyFailed;
+    if (openingPartial && !anyHeld(opening)) shouldCache = false;
   }
 
   // Positions were already open at the window start: extend backwards (doubling) within the time budget.
@@ -262,11 +320,11 @@ async function loadHistory(wallet: `0x${string}`): Promise<WalletHistory> {
   while (anyHeld(opening) && scannedFrom > START_BLOCK && Date.now() < deadline) {
     const span = latest - scannedFrom > FIRST_WINDOW ? latest - scannedFrom : FIRST_WINDOW;
     const nextFrom = scannedFrom - span > START_BLOCK ? scannedFrom - span : START_BLOCK;
-    const r = await scanRange(wallet, nextFrom, scannedFrom - 1n, deadline);
-    if (r.coveredFrom === null) break;
+    const r = await scanRange(wallet, nextFrom, scannedFrom - 1n, deadline).catch(() => null);
+    if (!r || r.coveredFrom === null) break;
     await addTxs(r.hashes);
     scannedFrom = r.coveredFrom;
-    const ob = scannedFrom > START_BLOCK ? await balancesAt(wallet, scannedFrom - 1n).catch(() => null) : { map: new Map(), anyFailed: false };
+    const ob = scannedFrom > START_BLOCK ? await balancesAt(wallet, scannedFrom - 1n, deadline).catch(() => null) : { map: new Map(), anyFailed: false };
     if (!ob) {
       openingPartial = true;
       break;
@@ -276,7 +334,7 @@ async function loadHistory(wallet: `0x${string}`): Promise<WalletHistory> {
     if (r.partial) break;
   }
 
-  const history = { scannedFrom, scannedTo: latest, opening, openingPartial, txs, at: Date.now() };
+  const history: WalletHistory = { scannedFrom, scannedTo, opening, openingPartial, incrementalPartial, txs, at: Date.now() };
   if (shouldCache) {
     cache.set(key, history);
     if (cache.size > 500) {
@@ -377,22 +435,35 @@ async function computePositions(history: WalletHistory) {
     p.estimated = true;
   }
 
-  const ordered = [...history.txs.values()].sort((a, b) => (a.block < b.block ? -1 : a.block > b.block ? 1 : 0));
+  const ordered = [...history.txs.values()].sort((a, b) =>
+    a.block < b.block ? -1 : a.block > b.block ? 1 : a.txIndex - b.txIndex
+  );
   for (const tx of ordered) {
     let usdcOut = 0n; // paid but not yet matched to a stock received
     const ethPaid = tx.ethValue ?? 0n;
-    const stockBuyMoves = tx.moves.filter((m) => m.token !== USDC && m.dir === 1);
+    // Identify only the stock buys not already covered by a preceding USDC outflow in this tx
+    let simUsdcOut = 0n;
+    const ethStockBuys: Move[] = [];
+    for (const m of tx.moves) {
+      if (m.token === USDC) {
+        if (m.dir === -1) simUsdcOut += m.amount;
+      } else if (m.dir === 1) {
+        if (simUsdcOut > 0n) simUsdcOut = 0n;
+        else ethStockBuys.push(m);
+      }
+    }
     let ethLegValues: number[] | null = null;
-    if (ethPaid > 0n && stockBuyMoves.length > 1) {
-      const ethUsdPrice = await navAt(ETH_USD_FEED, tx.block);
-      if (ethUsdPrice) {
+    let ethUsdPrice: number | null = null;
+    if (ethPaid > 0n && ethStockBuys.length > 0) {
+      ethUsdPrice = await navAt(ETH_USD_FEED, tx.block);
+      if (ethUsdPrice && ethStockBuys.length > 1) {
         const totalEthUsd = (Number(ethPaid) / 1e18) * ethUsdPrice;
         const navs = await Promise.all(
-          stockBuyMoves.map((m) => navAt(STOCKS.get(m.token)!.chainlinkFeed, tx.block))
+          ethStockBuys.map((m) => navAt(STOCKS.get(m.token)!.chainlinkFeed, tx.block))
         );
-        // Require every leg's NAV to split ETH proportionally; otherwise mark affected legs unpriced rather than skewed
+        // Require every ETH-funded leg's NAV to split ETH proportionally; otherwise mark affected legs unpriced
         if (navs.every((n) => n !== null && n > 0)) {
-          const navEsts = stockBuyMoves.map((m, idx) => navs[idx]! * tokensOf(m.amount, m.token));
+          const navEsts = ethStockBuys.map((m, idx) => navs[idx]! * tokensOf(m.amount, m.token));
           const sumEst = navEsts.reduce((a, b) => a + b, 0);
           if (sumEst > 0) ethLegValues = navEsts.map((v) => (v / sumEst) * totalEthUsd);
         }
@@ -418,9 +489,9 @@ async function computePositions(history: WalletHistory) {
         } else if (ethLegValues && ethLegValues[ethIdx] !== undefined) {
           cost = ethLegValues[ethIdx++];
           via = "eth";
-        } else if (ethPaidLeft > 0n && stockBuyMoves.length === 1 && (await navAt(ETH_USD_FEED, tx.block))) {
-          // Single-stock ETH buy: exact ETH paid x Chainlink ETH/USD at that block
-          cost = (Number(ethPaidLeft) / 1e18) * (await navAt(ETH_USD_FEED, tx.block))!;
+        } else if (ethPaidLeft > 0n && ethStockBuys.length === 1 && ethUsdPrice) {
+          // Single ETH-funded leg (even in a mixed USDC + ETH batch): exact ETH paid x Chainlink ETH/USD
+          cost = (Number(ethPaidLeft) / 1e18) * ethUsdPrice;
           ethPaidLeft = 0n;
           via = "eth";
         } else {
@@ -518,13 +589,13 @@ export async function GET(request: NextRequest) {
       history = done;
     }
     const { positions, activity } = await computePositions(history);
-    const fromBlock = await client.getBlock({ blockNumber: history.scannedFrom }).catch(() => null);
+    const fromTimeSec = await blockTime(history.scannedFrom);
     return NextResponse.json({
       ok: true,
       wallet,
       // realized P/L and exact cost basis cover trades since this date
-      since: fromBlock ? new Date(Number(fromBlock.timestamp) * 1000).toISOString() : null,
-      complete: !anyHeld(history.opening) && !history.openingPartial,
+      since: fromTimeSec !== null ? new Date(fromTimeSec * 1000).toISOString() : null,
+      complete: !anyHeld(history.opening) && !history.openingPartial && !history.incrementalPartial,
       trades: history.txs.size,
       positions,
       activity,

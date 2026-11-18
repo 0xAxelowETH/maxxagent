@@ -141,12 +141,16 @@ async function fetchLiveBaseDexPools(): Promise<Record<string, DexScreenerPair>>
     const allAddresses = BASE_TOKENIZED_STOCKS.map((s) => s.b20Address).join(",");
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 3500);
-    const res = await fetch(`https://api.dexscreener.com/tokens/v1/base/${allAddresses}`, {
-      signal: ctrl.signal,
-      headers: { Accept: "application/json" },
-      next: { revalidate: 15 },
-    });
-    clearTimeout(timer);
+    let res: Response;
+    try {
+      res = await fetch(`https://api.dexscreener.com/tokens/v1/base/${allAddresses}`, {
+        signal: ctrl.signal,
+        headers: { Accept: "application/json" },
+        next: { revalidate: 15 },
+      });
+    } finally {
+      clearTimeout(timer);
+    }
     if (res.ok) {
       const pairs = (await res.json()) as DexScreenerPair[];
       if (Array.isArray(pairs)) {
@@ -220,8 +224,11 @@ async function getEthUsd(): Promise<number | null> {
     const nowSec = Math.floor(Date.now() / 1000);
     const valid = Number(answer) > 0 && Number(updatedAt) > 0 && answeredInRound >= roundId && nowSec - Number(updatedAt) <= 3600;
     const v = valid ? Number(answer) / 1e8 : null;
-    if (v !== null) ethUsdCache = { at: Date.now(), v };
-    return v;
+    if (v !== null) {
+      ethUsdCache = { at: Date.now(), v };
+      return v;
+    }
+    return ethUsdCache && Date.now() - ethUsdCache.at < 300_000 ? ethUsdCache.v : null;
   } catch {
     return ethUsdCache && Date.now() - ethUsdCache.at < 300_000 ? ethUsdCache.v : null;
   }
@@ -304,12 +311,16 @@ async function buildMarket(): Promise<LiveTokenizedStock[]> {
         weekendGapPct,
         weekendSignal,
         dexPairAddress: liveDexPool?.pairAddress,
-        dexId: liveDexPool?.dexId === "aero" ? "Aerodrome Finance" : liveDexPool?.dexId,
+        dexId: liveDexPool?.dexId === "aerodrome" || liveDexPool?.dexId === "aero" ? "Aerodrome Finance" : liveDexPool?.dexId,
         dexLiquidityUsd: liveDexPool?.liquidity?.usd,
         dexVolume24hUsd: liveDexPool?.volume?.h24,
         dexTxns24h: dexTxns24h > 0 ? dexTxns24h : undefined,
         dexUrl: safeDexUrl,
-        dexPriceSource: hasLiveDex ? "aerodrome-base-live" : "onchain-nav-model",
+        dexPriceSource: !hasLiveDex
+          ? "onchain-nav-model"
+          : liveDexPool?.dexId === "aerodrome" || liveDexPool?.dexId === "aero"
+          ? "aerodrome-base-live"
+          : "dexscreener-base-live",
         navPriceUpdatedAt: isRoundValid ? new Date(updatedAtNum * 1000).toISOString() : new Date(0).toISOString(),
         navPriceTimestamp: updatedAtNum,
         oracleAgeMinutes,
@@ -346,11 +357,15 @@ async function buildMarket(): Promise<LiveTokenizedStock[]> {
       weekendGapPct,
       weekendSignal,
       dexPairAddress: liveDexPool?.pairAddress,
-      dexId: liveDexPool?.dexId === "aero" ? "Aerodrome Finance" : liveDexPool?.dexId,
+      dexId: liveDexPool?.dexId === "aerodrome" || liveDexPool?.dexId === "aero" ? "Aerodrome Finance" : liveDexPool?.dexId,
       dexLiquidityUsd: liveDexPool?.liquidity?.usd,
       dexVolume24hUsd: liveDexPool?.volume?.h24,
       dexUrl: safeDexUrl,
-      dexPriceSource: hasLiveDex ? "aerodrome-base-live" : "onchain-nav-model",
+      dexPriceSource: !hasLiveDex
+        ? "onchain-nav-model"
+        : liveDexPool?.dexId === "aerodrome" || liveDexPool?.dexId === "aero"
+        ? "aerodrome-base-live"
+        : "dexscreener-base-live",
       // RPC unreachable: static snapshot, explicitly flagged as stale fallback (not live)
       navPriceUpdatedAt: new Date(0).toISOString(),
       navPriceTimestamp: 0,
@@ -399,7 +414,10 @@ export async function GET(request: NextRequest) {
         functionName: "balanceOf" as const,
         args: [walletAddr] as const,
       };
-      const results = await publicClient.multicall({ allowFailure: true, contracts: [...perStock, usdcCall] });
+      const [results, ethBalanceWei] = await Promise.all([
+        publicClient.multicall({ allowFailure: true, contracts: [...perStock, usdcCall] }),
+        publicClient.getBalance({ address: walletAddr }).catch(() => null),
+      ]);
       const val = (i: number) => (results[i]?.status === "success" ? (results[i].result as bigint) : null);
 
       // Policy checks only where a policy is set (second, usually empty, multicall)
@@ -425,17 +443,18 @@ export async function GET(request: NextRequest) {
         const rawBal = val(i * 3);
         if (rawBal === null) return; // unknown, not zero: the client keeps what it had
         const rawBalUI = val(i * 3 + 1);
+        const policyMissing = val(i * 3 + 2) === null;
         const rawTokens = Number(rawBal) / Math.pow(10, stock.decimals);
         walletBalances[stock.symbol] = {
           rawTokens,
           sharesUI: rawBalUI !== null ? Number(rawBalUI) / Math.pow(10, stock.decimals) : rawTokens * stock.uiMultiplier,
           usdValue: rawTokens * stock.navPrice,
-          b20Authorized: authorized.get(stock.symbol) ?? true,
+          b20Authorized: policyMissing ? false : (authorized.get(stock.symbol) ?? true),
         };
       });
       const usdcRaw = val(perStock.length);
       walletUsdc = usdcRaw !== null ? Number(usdcRaw) / 1e6 : undefined;
-      walletEth = await publicClient.getBalance({ address: walletAddr }).then((w) => Number(w) / 1e18).catch(() => undefined);
+      walletEth = ethBalanceWei !== null ? Number(ethBalanceWei) / 1e18 : undefined;
       if (Object.keys(walletBalances).length < liveStocks.length || usdcRaw === null) {
         walletError = "Some balances could not be read. Retry in a moment.";
       }

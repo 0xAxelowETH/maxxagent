@@ -17,11 +17,9 @@ const SITE = (process.env.NEXT_PUBLIC_SITE_URL || "https://maxxagent.xyz").repla
 const parseId = (v: string) => (/^\d{1,9}$/.test(v) ? Number(v) : -1);
 
 async function load(idParam: string) {
-  try {
-    return await readIndex(parseId(idParam));
-  } catch {
-    return null;
-  }
+  const id = parseId(idParam);
+  if (id < 0) return null;
+  return await readIndex(id);
 }
 
 export async function generateMetadata({ params }: { params: Promise<{ id: string }> }): Promise<Metadata> {

@@ -32,7 +32,8 @@ const notifyKey = (fid: number) => `notify2:${fid}`;
 const SET = "watch:fids";
 
 /** Notification URLs come from the client or the webhook: only send to known mini app hosts, over https */
-const NOTIFY_HOSTS = ["farcaster.xyz", "warpcast.com", "base.app", "base.org", "coinbase.com", "neynar.com"];
+const NOTIFY_HOSTS = ["farcaster.xyz", "warpcast.com", "base.app", "neynar.com"];
+const NOTIFY_EXACT_HOSTS = new Set(["notifications.coinbase.com", "api.coinbase.com"]);
 export function validNotifyDetails(d: unknown): NotifyDetails | null {
   if (!d || typeof d !== "object") return null;
   const { url, token } = d as Record<string, unknown>;
@@ -40,7 +41,8 @@ export function validNotifyDetails(d: unknown): NotifyDetails | null {
   try {
     const u = new URL(url);
     if (u.protocol !== "https:" || u.username || u.password || u.port !== "") return null;
-    if (!NOTIFY_HOSTS.some((h) => u.hostname === h || u.hostname.endsWith(`.${h}`))) return null;
+    const host = u.hostname.toLowerCase();
+    if (!NOTIFY_EXACT_HOSTS.has(host) && !NOTIFY_HOSTS.some((h) => host === h || host.endsWith(`.${h}`))) return null;
     return { url: u.toString(), token };
   } catch {
     return null;
@@ -57,7 +59,11 @@ export async function deleteWatch(fid: number) {
   await kv("DEL", notifyKey(fid));
   await kv("SREM", SET, fid);
 }
-export const listWatchFids = async () => ((await kv<string[]>("SMEMBERS", SET)) || []).map(Number).filter((n) => n > 0);
+export const listWatchFids = async () =>
+  ((await kv<string[]>("SMEMBERS", SET)) || [])
+    .map(Number)
+    .filter((n) => Number.isSafeInteger(n) && n > 0)
+    .sort((a, b) => a - b);
 
 /** Every client app's token for this FID */
 export async function getNotifies(fid: number): Promise<NotifyDetails[]> {
@@ -101,8 +107,18 @@ export async function isAppKeyOf(fid: number, keyHex: string): Promise<boolean> 
   const ok = data.state === 1 && data.keyType === 1; // 1 = ADDED, keyType 1 = Ed25519
   keyCache.set(id, { at: Date.now(), ok });
   if (keyCache.size > 2000) {
-    const oldest = keyCache.keys().next().value;
-    if (oldest) keyCache.delete(oldest);
+    const now = Date.now();
+    // Evict expired or negative entries first so unauthenticated callers can't thrash valid verified keys
+    for (const [k, v] of keyCache) {
+      if (!v.ok || now - v.at >= (v.ok ? 300_000 : 15_000)) {
+        keyCache.delete(k);
+        if (keyCache.size <= 2000) break;
+      }
+    }
+    if (keyCache.size > 2000) {
+      const oldest = keyCache.keys().next().value;
+      if (oldest) keyCache.delete(oldest);
+    }
   }
   return ok;
 }

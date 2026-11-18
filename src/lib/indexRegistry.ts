@@ -71,7 +71,7 @@ export async function readIndexes(ids: number[]): Promise<PublishedIndex[]> {
       contracts: chunk.map((id) => ({ address: REGISTRY as `0x${string}`, abi: INDEX_REGISTRY_ABI, functionName: "getIndex" as const, args: [BigInt(id)] })),
     });
     results.forEach((r, i) => {
-      if (r.status !== "success") return;
+      if (r.status !== "success") throw new Error(`Index registry multicall failed at id ${chunk[i]}`);
       const ix = toIndex(chunk[i], r.result as unknown as Raw);
       if (ix) out.push(ix);
     });

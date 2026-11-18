@@ -95,41 +95,27 @@ export function scoresToWeightsBps(scores: number[]): number[] {
   const max = Math.max(MAX_WEIGHT_BPS, Math.ceil(10000 / n));
   const strength = scores.map((s) => Math.pow(Math.max(1, s - 45), 1.65));
 
-  // Two-stage water-filling: first lock floors (raises small weights -> reduces remaining),
-  // then lock ceilings (lowers huge weights -> adds to remaining) so fixedTotal never exceeds 10,000.
+  // Two-stage water-filling: lock ceilings first so a dominant top stock redistributes excess
+  // cleanly to minor names before any minimum-weight floor locks them permanently.
   let weights = new Array(n).fill(0);
   const fixed = new Array(n).fill(false);
-  for (let iter = 0; iter < n + 1; iter++) {
-    const fixedTotal = weights.reduce((a, w, i) => (fixed[i] ? a + w : a), 0);
-    const freeStrength = strength.reduce((a, s, i) => (fixed[i] ? a : a + s), 0);
-    if (freeStrength <= 0) break;
-    const remaining = 10000 - fixedTotal;
-    let changed = false;
-    weights = weights.map((w, i) => (fixed[i] ? w : (strength[i] / freeStrength) * remaining));
-    weights.forEach((w, i) => {
-      if (!fixed[i] && w < min) {
-        weights[i] = min;
-        fixed[i] = true;
-        changed = true;
-      }
-    });
-    if (!changed) break;
-  }
-  for (let iter = 0; iter < n + 1; iter++) {
-    const fixedTotal = weights.reduce((a, w, i) => (fixed[i] ? a + w : a), 0);
-    const freeStrength = strength.reduce((a, s, i) => (fixed[i] ? a : a + s), 0);
-    if (freeStrength <= 0) break;
-    const remaining = 10000 - fixedTotal;
-    let changed = false;
-    weights = weights.map((w, i) => (fixed[i] ? w : (strength[i] / freeStrength) * remaining));
-    weights.forEach((w, i) => {
-      if (!fixed[i] && w > max) {
-        weights[i] = max;
-        fixed[i] = true;
-        changed = true;
-      }
-    });
-    if (!changed) break;
+  for (const pass of ["max", "min"] as const) {
+    for (let iter = 0; iter < n + 1; iter++) {
+      const fixedTotal = weights.reduce((a, w, i) => (fixed[i] ? a + w : a), 0);
+      const freeStrength = strength.reduce((a, s, i) => (fixed[i] ? a : a + s), 0);
+      if (freeStrength <= 0) break;
+      const remaining = 10000 - fixedTotal;
+      let changed = false;
+      weights = weights.map((w, i) => (fixed[i] ? w : (strength[i] / freeStrength) * remaining));
+      weights.forEach((w, i) => {
+        if (!fixed[i] && (pass === "max" ? w > max : w < min)) {
+          weights[i] = pass === "max" ? max : min;
+          fixed[i] = true;
+          changed = true;
+        }
+      });
+      if (!changed) break;
+    }
   }
 
   // Round to 50 bps and distribute the rounding difference step-by-step within [min, max]
@@ -206,6 +192,8 @@ export function runAutonomousStockAgent(params: {
     if (narrowed.length) {
       for (const st of pool) if (!narrowed.includes(st)) drop(st.symbol, "not one of the stocks or themes you limited the basket to");
       pool = narrowed;
+    } else {
+      interpretation.push("None of the candidates remained after exclusions under your \"only\" filter, so all non-excluded stocks stayed eligible.");
     }
   }
   // "Profitable": leave out companies whose last 10-K shows a net loss, or that have no 10-K yet.
@@ -215,12 +203,17 @@ export function runAutonomousStockAgent(params: {
   const profitLimit: AgentAnalysisReport["limits"] = [];
   if (mandate.prefersProfitable) {
     const dropped: string[] = [];
-    let unknown = 0;
+    let pendingCount = 0;
+    let missingProfitCount = 0;
     const kept = pool.filter((st) => {
       if (mandate.include.includes(st.symbol)) return true;
       const f = fundamentals[st.symbol];
-      if (f === undefined || (f && f.netIncomeUsd === null)) {
-        unknown++;
+      if (f === undefined) {
+        pendingCount++;
+        return true;
+      }
+      if (f !== null && f.netIncomeUsd === null) {
+        missingProfitCount++;
         return true;
       }
       if (f === null) {
@@ -240,12 +233,16 @@ export function runAutonomousStockAgent(params: {
         drop(st.symbol, f ? `net loss ${big(Math.abs(f.netIncomeUsd!))} in its last 10-K, and you asked for profitable companies` : "no annual report (10-K) with the SEC yet, so its profit can't be checked");
       }
       pool = kept;
+      const unknownNotes = [
+        pendingCount ? `${pendingCount} stock${pendingCount > 1 ? "s" : ""} couldn't be checked right now (SEC data still loading)` : "",
+        missingProfitCount ? `${missingProfitCount} stock${missingProfitCount > 1 ? "s" : ""} lacked a NetIncomeLoss line in the 10-K summary` : "",
+      ].filter(Boolean);
       profitLimit.push({
         label: "Profitable companies only",
-        status: unknown ? "adjusted" : "kept",
+        status: unknownNotes.length ? "adjusted" : "kept",
         detail:
           (dropped.length ? `Left out ${dropped.join(", ")}, from their SEC filings.` : "Every candidate reported a profit in its last 10-K.") +
-          (unknown ? ` ${unknown} stock${unknown > 1 ? "s" : ""} couldn't be checked right now (SEC data still loading), so ${unknown > 1 ? "they stay" : "it stays"} in.` : ""),
+          (unknownNotes.length ? ` ${unknownNotes.join("; ")}, so kept eligible.` : ""),
       });
     } else {
       profitLimit.push({
@@ -316,15 +313,17 @@ export function runAutonomousStockAgent(params: {
       score += 4;
       reasons.push(`dividends reinvested (multiplier ${stock.uiMultiplier.toFixed(4)}x)`);
     }
-    // C: liquidity depth (execution quality); unknown liquidity gets no bonus
-    const liq = stock.dexLiquidityUsd ?? 0;
-    if (liq > 500_000) {
-      score += 5;
-      reasons.push(`deep liquidity ($${(liq / 1e6).toFixed(1)}M)`);
-    } else if (liq > 200_000) score += 3;
-    else if (liq < 50_000) {
-      score -= 6;
-      reasons.push(`thin liquidity ($${(liq / 1e3).toFixed(0)}K): higher swap cost`);
+    // C: liquidity depth (execution quality); unknown liquidity stays neutral
+    if (typeof stock.dexLiquidityUsd === "number") {
+      const liq = stock.dexLiquidityUsd;
+      if (liq > 500_000) {
+        score += 5;
+        reasons.push(`deep liquidity ($${(liq / 1e6).toFixed(1)}M)`);
+      } else if (liq > 200_000) score += 3;
+      else if (liq < 50_000) {
+        score -= 6;
+        reasons.push(`thin liquidity ($${(liq / 1e3).toFixed(0)}K): higher swap cost`);
+      }
     }
 
     // 3. Risk profile vs live volatility (Chainlink NAV, ~2 months); the fixed beta estimate only as a fallback.
@@ -373,27 +372,36 @@ export function runAutonomousStockAgent(params: {
   const named = scored.filter((x) => mandate.include.includes(x.stock.symbol));
   const others = scored.filter((x) => !mandate.include.includes(x.stock.symbol));
   let selected = [...named, ...others].slice(0, Math.max(1, wanted)).sort((a, b) => b.rawScore - a.rawScore);
+  if (mandate.count && named.length > wanted) {
+    interpretation.push(`You asked for ${wanted} stocks, so only the ${wanted} highest-scoring named stocks were kept.`);
+  }
   // Weights the user set ("60% Apple 40% Microsoft") are shares of the money; convert to shares of the
   // invested part (after any cash reserve, and after a weight limit that leaves money in USDC). When they
   // already fill it, the basket is just those stocks; a remainder too small to spread (<5% per stock) is
   // spread over fewer stocks, or none.
   const fixedSyms = Object.keys(mandate.weightsPct).filter((s) => selected.some((x) => x.stock.symbol === s));
-  const investedFor = (n: number) => (capPct && n * capPct < investPct - 1e-9 ? n * capPct : investPct);
-  let fixedBase = investedFor(selected.length);
   const cappedFixedPct = (s: string) => (capPct ? Math.min(mandate.weightsPct[s], capPct) : mandate.weightsPct[s]);
-  const fixedOfStocks = (s: string) => (cappedFixedPct(s) / fixedBase) * 100;
+  const investedFor = (sel: typeof selected) => {
+    if (!capPct) return investPct;
+    const fMoney = sel.reduce((a, x) => (fixedSyms.includes(x.stock.symbol) ? a + cappedFixedPct(x.stock.symbol) : a), 0);
+    const rCount = sel.filter((x) => !fixedSyms.includes(x.stock.symbol)).length;
+    const capRoom = fixedSyms.length ? fMoney + rCount * capPct : sel.length * capPct;
+    return capRoom < investPct - 1e-9 ? capRoom : investPct;
+  };
+  let fixedBase = investedFor(selected);
+  const fixedOfStocks = (s: string) => (fixedBase > 0 ? (cappedFixedPct(s) / fixedBase) * 100 : 0);
   let fixedSum = fixedSyms.reduce((a, s) => a + fixedOfStocks(s), 0);
   if (fixedSyms.length) {
     const restIdx = selected.filter((x) => !fixedSyms.includes(x.stock.symbol));
     const fits = fixedSum >= 99.5 ? 0 : Math.min(restIdx.length, Math.floor((100 - fixedSum) / 5));
     const keepRest = new Set(restIdx.slice(0, fits));
     selected = selected.filter((x) => fixedSyms.includes(x.stock.symbol) || keepRest.has(x));
-    fixedBase = investedFor(selected.length);
+    fixedBase = investedFor(selected);
     fixedSum = fixedSyms.reduce((a, s) => a + fixedOfStocks(s), 0);
     // Recompute check: if shrinking selected made fixedSum >= 99.5, drop remaining non-fixed stocks so restPct is never negative
     if (fixedSum >= 99.5 && selected.some((x) => !fixedSyms.includes(x.stock.symbol))) {
       selected = selected.filter((x) => fixedSyms.includes(x.stock.symbol));
-      fixedBase = investedFor(selected.length);
+      fixedBase = investedFor(selected);
       fixedSum = fixedSyms.reduce((a, s) => a + fixedOfStocks(s), 0);
     }
   }
@@ -405,6 +413,20 @@ export function runAutonomousStockAgent(params: {
   }
   let weights: number[];
   const fixedLimits: AgentAnalysisReport["limits"] = [];
+  const limits: AgentAnalysisReport["limits"] = [];
+  let maxWeightOfStocksPct: number | undefined;
+  if (capPct) {
+    const n = selected.length;
+    if (fixedBase < investPct - 1e-9) {
+      const kept = 100 - fixedBase;
+      limits.push({
+        label: `Max ${capPct}% per stock`,
+        status: "kept",
+        detail: `${n} stock${n > 1 ? "s" : ""} under your limits can hold only ${fixedBase.toFixed(0)}% of your money, so I kept the limit and ${(kept - askedCashPct).toFixed(0)}% more stays in USDC.`,
+      });
+      investPct = fixedBase;
+    }
+  }
   if (fixedSyms.length) {
     const rest = selected.filter((x) => !fixedSyms.includes(x.stock.symbol));
     const setText = fixedSyms.map((s) => `${s} ${mandate.weightsPct[s]}%`).join(", ");
@@ -424,10 +446,15 @@ export function runAutonomousStockAgent(params: {
       else if (!overLimit) fixedLimits.push({ label: "Your weights", status: "kept", detail: `${setText}, as you set them.` });
     } else {
       const floor = Math.min(...rest.map((x) => x.rawScore)) - 20;
-      const restShares = scoresToWeightsBps(rest.map((x) => x.rawScore - floor + 45));
-      const restPct = 100 - fixedSum;
+      let restShares = scoresToWeightsBps(rest.map((x) => x.rawScore - floor + 45));
+      const restPct = Math.max(0, 100 - fixedSum);
+      if (capPct && restPct > 0) {
+        const restCapBps = Math.max(Math.floor(((capPct / investPct) * 1_000_000) / restPct), Math.ceil(10000 / rest.length));
+        restShares = capWeightsBps(restShares, restCapBps) ?? restShares;
+      }
       const raw = selected.map((x) => (fixedSyms.includes(x.stock.symbol) ? fixedOfStocks(x.stock.symbol) : (restShares[rest.indexOf(x)] / 10000) * restPct));
-      weights = roundWeightsBps(raw)!;
+      const allCapBps = capPct ? Math.max(Math.ceil((capPct / investPct) * 10000), Math.ceil(10000 / selected.length)) : 10000;
+      weights = roundWeightsBps(raw, allCapBps) ?? roundWeightsBps(raw)!;
       if (!overLimit) {
         fixedLimits.push({
           label: "Your weights",
@@ -446,7 +473,12 @@ export function runAutonomousStockAgent(params: {
   } else if (mandate.equalWeight) {
     const base = Math.floor(10000 / selected.length / 50) * 50;
     weights = selected.map(() => base);
-    weights[0] += 10000 - base * selected.length;
+    let rem = 10000 - base * selected.length;
+    for (let i = 0; rem >= 50; i++) {
+      weights[i % weights.length] += 50;
+      rem -= 50;
+    }
+    weights[0] += rem;
   } else {
     // Weight strength relative to the weakest selected stock keeps weights differentiated
     const floor = Math.min(...selected.map((x) => x.rawScore)) - 20;
@@ -455,22 +487,11 @@ export function runAutonomousStockAgent(params: {
 
   // The weight limit is never broken. When the stocks can't hold all the money under it, the rest stays
   // in USDC instead (e.g. 3 stocks x max 30% = 90% invested, 10% kept)
-  const limits: AgentAnalysisReport["limits"] = [];
-  let maxWeightOfStocksPct: number | undefined;
   if (capPct) {
     const n = selected.length;
-    if (n * capPct < investPct - 1e-9) {
-      const kept = 100 - n * capPct;
-      limits.push({
-        label: `Max ${capPct}% per stock`,
-        status: "kept",
-        detail: `${n} stock${n > 1 ? "s" : ""} at ${capPct}% each can hold only ${n * capPct}% of your money, so I kept the limit and ${(kept - askedCashPct).toFixed(0)}% more stays in USDC.`,
-      });
-      investPct = n * capPct;
-    }
     const capOfStocks = (capPct / investPct) * 10000;
     const capBps = Math.max(capOfStocks, Math.ceil(10000 / n));
-    weights = capWeightsBps(weights, capBps) ?? weights;
+    if (!fixedSyms.length) weights = capWeightsBps(weights, capBps) ?? weights;
     maxWeightOfStocksPct = Math.round(capOfStocks) / 100;
     if (!limits.length) {
       const top = Math.max(...weights) * (investPct / 10000);
@@ -600,7 +621,7 @@ export function runAutonomousStockAgent(params: {
   const facts: AgentAnalysisReport["facts"] = selected.map(({ stock: s }) => {
     const parts = [`NAV ${fmt(s.navPrice)} (Chainlink${age(s.oracleAgeMinutes ?? -1)})`];
     const links = [{ label: "Chainlink feed", url: `https://basescan.org/address/${s.chainlinkFeed}` }];
-    if (s.dexPairAddress && /^0x[0-9a-fA-F]{40}$/.test(s.dexPairAddress)) {
+    if (s.dexPairAddress && /^0x([0-9a-fA-F]{40}|[0-9a-fA-F]{64})$/.test(s.dexPairAddress)) {
       parts.push(`DEX ${fmt(s.dexPrice24_7)}, ${s.weekendGapPct >= 0 ? "+" : ""}${s.weekendGapPct.toFixed(2)}% vs NAV`);
       if (s.dexLiquidityUsd) parts.push(`pool liquidity ${s.dexLiquidityUsd >= 1e6 ? `$${(s.dexLiquidityUsd / 1e6).toFixed(1)}M` : `$${Math.round(s.dexLiquidityUsd / 1e3)}K`}`);
       links.push({ label: "DEX pool", url: `https://dexscreener.com/base/${s.dexPairAddress}` });

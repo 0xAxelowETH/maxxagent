@@ -87,6 +87,7 @@ export function DriftAlerts({ address, target, alertPct }: { address: string; ta
     ? `${status.alertPct ?? alertPct}|${JSON.stringify(status.target.weights)}|${status.target.maxWeightPct ?? ""}`
     : null;
   const synced = useRef<string | null>(null);
+  const opGenRef = useRef(0);
   useEffect(() => {
     if (!sdk || !watchingThis) return;
     if (synced.current === null) {
@@ -95,17 +96,28 @@ export function DriftAlerts({ address, target, alertPct }: { address: string; ta
     }
     if (synced.current === sig) return;
     const prevSig = synced.current;
+    const myGen = ++opGenRef.current;
     synced.current = sig;
+    let alive = true;
+    const nextTarget = { ...target, alertPct };
     call(sdk, "POST", { address, target, alertPct })
-      .then((st) => setStatus((p) => ({ ...p, ...st, address })))
+      .then((st) => {
+        if (!alive || opGenRef.current !== myGen) return;
+        setStatus((p) => (p?.watching ? { ...p, ...st, address, target: st.target ?? nextTarget } : p));
+      })
       .catch(() => {
+        if (!alive || opGenRef.current !== myGen) return;
         if (synced.current === sig) synced.current = prevSig;
       });
+    return () => {
+      alive = false;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sig, serverSig, sdk, watchingThis]);
 
   const turnOn = async () => {
     if (!sdk) return;
+    const myGen = ++opGenRef.current;
     setBusy(true);
     setError("");
     try {
@@ -118,27 +130,35 @@ export function DriftAlerts({ address, target, alertPct }: { address: string; ta
       }
       if (!notificationDetails) notificationDetails = (await sdk.context)?.client?.notificationDetails;
       const st = await call(sdk, "POST", { address, target, alertPct, notificationDetails });
+      if (opGenRef.current !== myGen) return;
       synced.current = sig;
-      setStatus({ ...st, address });
+      setStatus({
+        ...st,
+        address,
+        alertPct: st.alertPct ?? alertPct,
+        target: st.target ?? { weights: target.weights, maxWeightPct: target.maxWeightPct },
+      });
       if (!st.notifications) setError("Alerts are saved, but notifications are off. Turn on notifications for MAXXAGENT in your Farcaster app.");
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not turn on alerts.");
+      if (opGenRef.current === myGen) setError(e instanceof Error ? e.message : "Could not turn on alerts.");
     } finally {
-      setBusy(false);
+      if (opGenRef.current === myGen) setBusy(false);
     }
   };
 
   const turnOff = async () => {
     if (!sdk) return;
+    const myGen = ++opGenRef.current;
     setBusy(true);
     setError("");
     try {
       await call(sdk, "DELETE");
+      synced.current = null;
       setStatus((p) => ({ ...(p ?? { notifications: false }), watching: false }));
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not turn off alerts.");
+      if (opGenRef.current === myGen) setError(e instanceof Error ? e.message : "Could not turn off alerts.");
     } finally {
-      setBusy(false);
+      if (opGenRef.current === myGen) setBusy(false);
     }
   };
 

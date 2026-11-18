@@ -45,7 +45,8 @@ export function parseSharedBasket(search: string): { weightsBps: Record<string, 
 
 /** A user-given index name, safe to show: no control or direction-override characters, at most `max` chars */
 export function cleanIndexName(raw: string | null | undefined, max = 64): string {
-  return (raw || "").replace(/[\u0000-\u001f\u007f-\u009f​-‏‪-‮⁦-⁩]/g, "").trim().slice(0, max);
+  const cleaned = (raw || "").replace(/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2066-\u2069]/g, "").trim();
+  return Array.from(cleaned).slice(0, max).join("").trim();
 }
 
 /** Path of the share card image for a basket (see /api/og) */

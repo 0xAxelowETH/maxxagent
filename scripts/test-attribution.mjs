@@ -25,7 +25,7 @@ const env = (() => {
   try {
     return Object.fromEntries(
       fs.readFileSync(".env.local", "utf8").split(/\r?\n/).filter((l) => l.includes("=") && !l.trim().startsWith("#"))
-        .map((l) => [l.slice(0, l.indexOf("=")).trim(), l.slice(l.indexOf("=") + 1).trim()])
+        .map((l) => [l.slice(0, l.indexOf("=")).trim(), l.slice(l.indexOf("=") + 1).trim().replace(/^["']|["']$/g, "")])
     );
   } catch {
     return {};
@@ -33,11 +33,14 @@ const env = (() => {
 })();
 
 const URL_BASE = arg("url", "http://localhost:3000").replace(/\/$/, "");
-const CODE = env.NEXT_PUBLIC_BASE_BUILDER_CODE || "bc_ewm6gcvz";
+const CODE = env.NEXT_PUBLIC_BASE_BUILDER_CODE || process.env.NEXT_PUBLIC_BASE_BUILDER_CODE || "bc_ewm6gcvz";
 const SENDER = arg("sender", "0xD986C711F575C71dA22Bd08742b9DB2091Ba9e33"); // any address works for quotes
 const USDC = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
 const KYBER_ROUTER = "0x6131b5fae19ea4f9d964eac0408e4408b66337b5";
-const client = createPublicClient({ chain: base, transport: http(env.BASE_RPC_URL || "https://mainnet.base.org") });
+const client = createPublicClient({
+  chain: base,
+  transport: http(env.BASE_RPC_URL || process.env.BASE_RPC_URL || "https://mainnet.base.org"),
+});
 
 const CASES = [
   { label: "buy  NVDAc $5", body: { side: "buy", stockAddress: "0xb20000000000000000000078ee7ce2fE4908108C", amountUsd: 5 } },

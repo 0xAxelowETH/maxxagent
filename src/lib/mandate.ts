@@ -121,8 +121,33 @@ export const NOT_AVAILABLE: { name: string; words: string[]; theme?: string; sec
   { name: "defense", sector: true, words: ["defense", "defence", "military"] },
 ];
 
-const NEGATORS = ["no", "not", "without", "exclude", "excluding", "except", "avoid", "skip", "minus", "ex", "tanpa", "kecuali", "jangan", "selain", "bukan"];
+const NEGATORS = [
+  "don't include",
+  "dont include",
+  "do not include",
+  "does not include",
+  "don't",
+  "dont",
+  "do not",
+  "does not",
+  "no",
+  "not",
+  "without",
+  "exclude",
+  "excluding",
+  "except",
+  "avoid",
+  "skip",
+  "minus",
+  "ex",
+  "tanpa",
+  "kecuali",
+  "jangan",
+  "selain",
+  "bukan",
+];
 const ONLY_WORDS = ["only", "just", "purely", "exclusively", "hanya", "saja"];
+const CASH_WORDS = "(?:cash|usdc|stablecoins?|tunai|kas|reserve|cadangan)";
 
 const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const ALL_STOCK_ALIASES = Object.values(STOCK_ALIASES).flat().map(esc).join("|");
@@ -138,10 +163,14 @@ function mentions(text: string) {
   return { symbols, themes };
 }
 
-/** Words that make a percent a limit, not a weight ("max 30%", "no more than 25%") */
-const CAP_BEFORE = /(?:max(?:imum)?|cap(?:ped)?(?:\s+(?:each|every|any)\s+(?:stock|company|name|position))?(?:\s+at)?|at most|no more than|not more than|up to|limit(?:ed)?(?:\s+to)?|maks(?:imal|imum)?|paling banyak|tidak lebih dari|over|above|more than|lebih dari|di atas)\s*(?:of\s+|at\s+)?$/;
-/** Words that make a percent a cash amount or a per-stock rule ("20% in cash", "30% each") */
-const NOT_WEIGHT_AFTER = /^\s*(?:(?:in|as|of|di|dalam|sebagai)\s+)?(?:cash|usdc|stablecoins?|tunai|kas|reserve|cadangan)|^\s*(?:per|each|a piece|per saham|tiap|setiap|max|maks)/;
+/** Words that make a percent a limit or cash reserve, not a stock weight ("max 30%", "cap Apple at 25%", "cash 30%") */
+const CAP_BEFORE = new RegExp(
+  `(?:\\b(?:cap(?:ped)?|limit(?:ed)?)(?:\\s+(?:each|every|any|all))?(?:\\s+(?:[a-z0-9.&]+\\s+){0,2})?(?:at|to)?|\\b(?:max(?:imum)?|under|below|less than|at most|no more than|not more than|up to|kurang dari|di\\s*bawah|maks(?:imal|imum)?|paling banyak|tidak lebih dari|over|above|more than|lebih dari|di atas)\\s*(?:of\\s+|at\\s+)?|${CASH_WORDS}\\s*(?:reserve\\s*)?(?:of\\s+)?)$`
+);
+/** Words that make a percent a cash amount or a per-stock rule ("20% in cash", "30% each", "Apple 30% cap") */
+const NOT_WEIGHT_AFTER = new RegExp(
+  `^\\s*(?:(?:in|as|of|di|dalam|sebagai)\\s+)?${CASH_WORDS}|^\\s*(?:per|each|a piece|apiece|per saham|tiap|setiap|max(?:imum)?|cap|limit|maks(?:imal)?)`
+);
 const PCT_BEFORE_NAME = /^\s*(?:(?:in|of|on|into|to|for|di|ke|untuk)\s+)?(?:the\s+)?$/;
 const PCT_AFTER_NAME = /^\s*(?:at|:|=|-|sebesar)?\s*$/;
 
@@ -165,7 +194,10 @@ function explicitWeights(text: string): Record<string, number> {
   const tokens = names.filter((n, i) => !names.slice(0, i).some((p) => n.start < p.end && n.end > p.start));
   const pcts = [...t.matchAll(/(\d{1,3}(?:\.\d+)?)\s*(?:%|percent|persen)/g)]
     .map((m) => ({ val: Number(m[1]), start: m.index!, end: m.index! + m[0].length }))
-    .filter((p) => !CAP_BEFORE.test(t.slice(Math.max(0, p.start - 30), p.start)) && !NOT_WEIGHT_AFTER.test(t.slice(p.end, p.end + 30)));
+    .filter((p) => {
+      const preSlice = t.slice(Math.max(0, p.start - 36), p.start).replace(/^.*[,;.]\s*/, "");
+      return !CAP_BEFORE.test(preSlice) && !NOT_WEIGHT_AFTER.test(t.slice(p.end, p.end + 30));
+    });
   if (!pcts.length || !tokens.length) return {};
 
   const forwardFirst = pcts[0].start < tokens[0].start;
@@ -184,17 +216,25 @@ export function parseMandate(input: string): ParsedMandate {
   const text = ` ${(input || "").toLowerCase().replace(/\s+/g, " ")} `;
   const notes: string[] = [];
 
-  // 1) Exclusions: "no tesla", "without crypto", "except NVDA and META", "avoid big tech"
+  // 1) Exclusions: "no tesla", "without crypto", "except NVDA and META", "tanpa tesla dan meta", "no tesla, no meta"
   const exclude = new Set<string>();
   const excludedThemes = new Set<string>();
   const clauses: string[] = [];
-  const negRe = new RegExp(`(?:^|[^a-z0-9])(?:${NEGATORS.map(esc).join("|")})\\s+([^.;!?]*?)(?=[.;!?]|\\s(?:but|with|prefer|plus|and also|dan|tapi|dengan)\\s|$)`, "g");
-  // After a comma the negation only continues through bare names ("except nvda, meta and amzn");
-  // "no tesla, ai stocks" stops at the comma
-  const allNames = [...Object.values(STOCK_ALIASES).flat(), ...THEMES.flatMap((t) => t.words)];
-  const bareName = (seg: string) => {
-    const s = seg.trim().replace(/^(and|or|dan|atau)\s+/, "").trim();
-    return s.split(/\s+(?:and|or|dan|atau)\s+/).every((part) => allNames.includes(part.trim()));
+  const negAlt = NEGATORS.map(esc).join("|");
+  const negRe = new RegExp(
+    `(?:^|[^a-z0-9])(?:${negAlt})\\s+([^.;!?]*?)(?=[.;!?]|,\\s*(?:${negAlt})(?=$|[^a-z0-9])|\\s(?:but|with|prefer|plus|and also|tapi|dengan)\\s|\\s(?:and|dan)\\s+(?:buy|want|pick|get|include|prefer|beli|cari|pilih)\\s|$)`,
+    "g"
+  );
+  // After a comma the negation only continues through bare stock names ("except nvda, meta and amzn"),
+  // or themes if the first segment already excluded a theme ("without ai, ev and space").
+  const stockNames = Object.values(STOCK_ALIASES).flat();
+  const themeNames = THEMES.flatMap((t) => t.words);
+  const bareName = (seg: string, allowThemes: boolean) => {
+    const s = seg.trim().replace(/^(and|or|nor|dan|atau)\s+/, "").trim();
+    const parts = s.split(/\s+(?:and|or|nor|dan|atau)\s+/).map((x) => x.trim()).filter(Boolean);
+    if (parts.length === 0) return false;
+    const allowed = allowThemes ? [...stockNames, ...themeNames] : stockNames;
+    return parts.every((part) => allowed.includes(part));
   };
   const negatedText: string[] = [];
   for (const m of text.matchAll(negRe)) {
@@ -202,8 +242,9 @@ export function parseMandate(input: string): ParsedMandate {
     // Cap / quantifier phrases ("no more than 25%", "no single stock over 30%", "not only AI") are limits, not exclusions
     if (/^(?:more than|single\b|one\b|other\b|only\b|less than)/i.test(rawClause)) continue;
     const segs = m[1].split(",");
+    const allowThemesAfterComma = mentions(segs[0]).themes.length > 0;
     let end = 1;
-    while (end < segs.length && bareName(segs[end])) end++;
+    while (end < segs.length && bareName(segs[end], allowThemesAfterComma)) end++;
     const clause = segs.slice(0, end).join(",");
     negatedText.push(clause);
     const found = mentions(clause);
@@ -260,30 +301,30 @@ export function parseMandate(input: string): ParsedMandate {
 
   // 2c) Limits: "keep 20% in cash" and "max 30% per stock" (cash first, so "up to 20% in usdc" is a reserve)
   const pct = "(\\d{1,3}(?:\\.\\d+)?)\\s*(?:%|percent|persen)";
-  const cashWords = "(?:cash|usdc|stablecoins?|tunai|kas|reserve|cadangan)";
+  const cashText = text.replace(/\b(?:half|separuh|setengah)\b/g, "50%");
   let cashPct: number | undefined;
   const allThemeWords = THEMES.flatMap((t) => t.words).map(esc).join("|");
   const cashMatch =
-    text.match(new RegExp(`${pct}\\s*(?:in\\s+|as\\s+|of\\s+|di\\s+|dalam\\s+|sebagai\\s+)?${cashWords}`)) ||
+    cashText.match(new RegExp(`${pct}\\s*(?:(?:max(?:imum)?|up to|maks(?:imal)?)\\s+)?(?:in\\s+|as\\s+|of\\s+|di\\s+|dalam\\s+|sebagai\\s+)?${CASH_WORDS}`)) ||
     // "keep 20%" is cash, but "hold 40% nvidia" or "keep 25% max" or "hold 40% in big tech" is not cash
-    text.match(new RegExp(`(?:keep|hold|leave|reserve|set aside|sisakan|simpan|sisihkan)\\s+${pct}(?!\\s*(?:(?:in|of|on|into|di|ke)\\s+)?(?:the\\s+)?(?:${ALL_STOCK_ALIASES}|${allThemeWords}|max(?:imum)?|cap|limit|per\\b|each\\b)(?![a-z0-9]))`)) ||
-    text.match(new RegExp(`${cashWords}\\s*(?:reserve\\s*)?(?:of\\s+)?${pct}`));
+    cashText.match(new RegExp(`(?:keep|hold|leave|reserve|set aside|sisakan|simpan|sisihkan)\\s+${pct}(?!\\s*(?:(?:in|of|on|into|di|ke)\\s+)?(?:the\\s+)?(?:${ALL_STOCK_ALIASES}|${allThemeWords}|max(?:imum)?|cap|limit|per\\b|each\\b)(?![a-z0-9]))`)) ||
+    cashText.match(new RegExp(`${CASH_WORDS}\\s*(?:reserve\\s*)?(?:of\\s+)?${pct}`));
   if (cashMatch) {
     const v = Number(cashMatch[1]);
     if (v > 0 && v <= 90) cashPct = v;
   }
   let maxWeightPct: number | undefined;
   const maxMatch =
-    text.match(new RegExp(`(?:max(?:imum)?|cap(?:ped)?(?:\\s+at)?|at most|no more than|not more than|up to|limit(?:ed)?(?:\\s+to)?|maks(?:imal|imum)?|paling banyak|tidak lebih dari)\\s*(?:of\\s+)?${pct}(?!\\s*(?:in\\s+|as\\s+|of\\s+|di\\s+)?${cashWords})`)) ||
+    text.match(new RegExp(`(?:max(?:imum)?|cap(?:ped)?(?:\\s+at)?|at most|no more than|not more than|up to|limit(?:ed)?(?:\\s+to)?|maks(?:imal|imum)?|paling banyak|tidak lebih dari)\\s*(?:of\\s+)?${pct}(?!\\s*(?:in\\s+|as\\s+|of\\s+|di\\s+)?${CASH_WORDS})`)) ||
     text.match(new RegExp(`(?:no|not|tidak ada)\\s+(?:single\\s+|one\\s+)?(?:stock|company|name|position|holding|saham)s?\\s+(?:over|above|more than|bigger than|exceeding|di atas|lebih dari)\\s+${pct}`)) ||
     // "nothing above 25%", "none of them over 30%", "tidak ada yang lebih dari 30%"
-    text.match(new RegExp(`(?:nothing|none(?:\\s+of\\s+them)?|no\\s+one|(?:tidak|jangan)\\s+ada\\s+yang)\\s+(?:is\\s+|should\\s+be\\s+|goes\\s+)?(?:over|above|more than|bigger than|larger than|greater than|exceeding|beyond|di atas|lebih dari)\\s+${pct}(?!\\s*(?:in\\s+|as\\s+|di\\s+)?${cashWords})`)) ||
+    text.match(new RegExp(`(?:nothing|none(?:\\s+of\\s+them)?|no\\s+one|(?:tidak|jangan)\\s+ada\\s+yang)\\s+(?:is\\s+|should\\s+be\\s+|goes\\s+)?(?:over|above|more than|bigger than|larger than|greater than|exceeding|beyond|di atas|lebih dari)\\s+${pct}(?!\\s*(?:in\\s+|as\\s+|di\\s+)?${CASH_WORDS})`)) ||
     // "each at most 25%", "every stock under 30%", "any company below 20%"
-    text.match(new RegExp(`(?:each|every|any)\\s+(?:single\\s+)?(?:stock|company|name|position|holding|one)?\\s*(?:at most|no more than|max(?:imum)?|under|below|less than|capped at)\\s+${pct}(?!\\s*(?:in\\s+|as\\s+|di\\s+)?${cashWords})`)) ||
-    // "under 25% each", "below 30% per stock"
-    text.match(new RegExp(`(?:under|below|less than|at most|no more than)\\s+${pct}\\s+(?:each|apiece|per\\s+(?:stock|company|name|position)|for\\s+(?:each|any)\\s+(?:stock|company|one))`)) ||
+    text.match(new RegExp(`(?:each|every|any)\\s+(?:single\\s+)?(?:stock|company|name|position|holding|one)?\\s*(?:at most|no more than|max(?:imum)?|under|below|less than|capped at)\\s+${pct}(?!\\s*(?:in\\s+|as\\s+|di\\s+)?${CASH_WORDS})`)) ||
+    // "under 25% each", "below 30% per stock", "di bawah 25% per saham"
+    text.match(new RegExp(`(?:under|below|less than|at most|no more than|di\\s*bawah|kurang dari)\\s+${pct}\\s+(?:each|apiece|per\\s+(?:stock|company|name|position|saham)|tiap\\s+(?:saham|perusahaan)|for\\s+(?:each|any)\\s+(?:stock|company|one)|masing[- ]masing)`)) ||
     text.match(new RegExp(`(?:cap|limit|batasi)\\s+(?:each|every|any|one|single|per|tiap|setiap)?\\s*(?:stock|company|name|position|holding|saham)s?\\s+(?:at|to|di|ke)\\s+${pct}`)) ||
-    text.match(new RegExp(`${pct}\\s*(?:max(?:imum)?|cap|limit|maks(?:imal)?)(?:$|[^a-z])`));
+    text.match(new RegExp(`${pct}\\s*(?:max(?:imum)?|cap|limit|maks(?:imal)?)(?!\\s*(?:of\\s+|in\\s+)?${CASH_WORDS})(?:$|[^a-z])`));
   if (maxMatch) {
     const v = Number(maxMatch[1]);
     if (v > 0 && v < 100) maxWeightPct = Math.max(5, v);
@@ -291,7 +332,9 @@ export function parseMandate(input: string): ParsedMandate {
 
   // 3) Shape of the basket
   let count: number | undefined;
-  const countMatch = positive.match(/(?:^|[^a-z0-9])(?:top\s+)?(\d{1,2})\s*(?:stocks?|names?|picks?|tickers?|companies|saham)(?:$|[^a-z0-9])/) || positive.match(/(?:^|[^a-z0-9])top\s+(\d{1,2})(?:$|[^a-z0-9])/);
+  const countMatch =
+    positive.match(/(?:^|[^a-z0-9/])(?:top\s+)?(\d{1,2})\s*(?:stocks?|names?|picks?|tickers?|companies|saham)(?:$|[^a-z0-9])/) ||
+    positive.match(/(?:^|[^a-z0-9/])top\s+(\d{1,2})(?:$|[^a-z0-9])/);
   if (countMatch) count = Math.min(10, Math.max(1, Number(countMatch[1])));
   const equalWeight = has(positive, ["equal weight", "equal-weight", "equal weighted", "equal-weighted", "equally", "evenly", "same weight", "equal split", "sama rata", "rata rata", "bobot sama", "bobot rata", "sama besar"]);
 

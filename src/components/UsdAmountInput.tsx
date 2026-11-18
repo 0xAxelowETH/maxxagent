@@ -8,6 +8,7 @@ import { useEffect, useState } from "react";
  * React treats "04" and 4 as equal and never rewrites the field.
  */
 export function UsdAmountInput({
+  id,
   value,
   onChange,
   min,
@@ -15,6 +16,7 @@ export function UsdAmountInput({
   className,
   ariaLabel,
 }: {
+  id?: string;
   value: number;
   onChange: (usd: number) => void;
   min?: number;
@@ -31,6 +33,7 @@ export function UsdAmountInput({
 
   return (
     <input
+      id={id}
       type="text"
       inputMode="decimal"
       value={text}

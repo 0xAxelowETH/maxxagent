@@ -27,7 +27,11 @@ const USDC = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
 const TEST_USER = "0x000000000000000000000000000000000000dEaD";
 const BUILDER_CODE = process.env.NEXT_PUBLIC_BASE_BUILDER_CODE || "bc_ewm6gcvz";
 const KYBER = "https://aggregator-api.kyberswap.com/base/api/v1";
-const usd = Number(process.argv[2] || 25);
+const usd = Number(process.argv[2] ?? 25);
+if (!Number.isFinite(usd) || usd <= 0) {
+  console.error("Usage: node scripts/test-swap-route.mjs [usdAmount>0]");
+  process.exit(1);
+}
 const amountIn = BigInt(Math.round(usd * 1e6));
 
 const STOCKS = {
@@ -57,14 +61,13 @@ const nestedSlot = (owner, spender, slot) =>
 const kyberHeaders = { "x-client-id": "maxxagent", "content-type": "application/json" };
 
 async function testStock(symbol, tokenOut) {
-  const q = await fetch(
-    `${KYBER}/routes?tokenIn=${USDC}&tokenOut=${tokenOut}&amountIn=${amountIn}`,
-    { headers: kyberHeaders }
-  ).then((r) => r.json());
+  const qRes = await fetch(`${KYBER}/routes?tokenIn=${USDC}&tokenOut=${tokenOut}&amountIn=${amountIn}`, { headers: kyberHeaders });
+  if (!qRes.ok) return { symbol, ok: false, reason: `quote HTTP ${qRes.status}` };
+  const q = await qRes.json();
   if (q.code !== 0) return { symbol, ok: false, reason: `quote: ${q.message}` };
   const { routeSummary, routerAddress } = q.data;
 
-  const b = await fetch(`${KYBER}/route/build`, {
+  const bRes = await fetch(`${KYBER}/route/build`, {
     method: "POST",
     headers: kyberHeaders,
     body: JSON.stringify({
@@ -74,8 +77,14 @@ async function testStock(symbol, tokenOut) {
       slippageTolerance: 50, // 0.50% in bps
       source: "maxxagent",
     }),
-  }).then((r) => r.json());
+  });
+  if (!bRes.ok) return { symbol, ok: false, reason: `build HTTP ${bRes.status}` };
+  const b = await bRes.json();
   if (b.code !== 0) return { symbol, ok: false, reason: `build: ${b.message}` };
+  const resolvedRouter = String(b.data.routerAddress || routerAddress || "").toLowerCase();
+  if (resolvedRouter !== "0x6131b5fae19ea4f9d964eac0408e4408b66337b5") {
+    return { symbol, ok: false, reason: `unexpected router: ${resolvedRouter}` };
+  }
 
   const suffix = Attribution.toDataSuffix({ codes: [BUILDER_CODE] });
   const data = `${b.data.data}${suffix.slice(2)}`;

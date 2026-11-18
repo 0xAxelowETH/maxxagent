@@ -60,12 +60,14 @@ export function TargetWatch({
   walletAddress,
   history = [],
   rebalanceBuyDoneNonce = 0,
+  rebalanceUsdcBaseline,
 }: {
   target: SavedTarget;
   onChangeAlert: (pct: number) => void;
   walletAddress: string;
   history?: RebalanceLogEntry[];
   rebalanceBuyDoneNonce?: number;
+  rebalanceUsdcBaseline?: number | null;
   /** null when the wallet holds no stocks yet */
   drift: Drift | null;
   stocks: StockPrice[];
@@ -159,6 +161,7 @@ export function TargetWatch({
           onBuy={onBuy}
           maxWeightPct={target.maxWeightPct}
           rebalanceBuyDoneNonce={rebalanceBuyDoneNonce}
+          usdcBaseline={rebalanceUsdcBaseline}
         />
       )}
       <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-400" data-testid="alert-threshold">

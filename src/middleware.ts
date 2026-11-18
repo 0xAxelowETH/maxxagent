@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { miniappEmbedTags } from "@/lib/miniappEmbed";
+import { basketImagePath, cleanIndexName, parseBasketParam } from "@/lib/shareBasket";
 
 /**
  * Coinbase tokenized stocks are only available to persons in eligible jurisdictions
@@ -10,9 +11,9 @@ import { miniappEmbedTags } from "@/lib/miniappEmbed";
 const BLOCKED_COUNTRIES = new Set(["US", "PR", "GU", "VI", "AS", "MP", "UM"]);
 
 const STOCK_SYMBOLS = ["NVDAc", "AAPLc", "TSLAc", "MSFTc", "METAc", "GOOGLc", "AMZNc", "MSTRc", "SNDKc", "SPCXc"];
-// Server-to-server endpoints (Vercel Cron and Farcaster's webhook run in the US) also stay reachable: no trading there
+// Server-to-server endpoints (Vercel Cron and Farcaster's webhook run in the US) and public health monitors stay reachable
 // "/preview" is the read-only, no-trading page for reviewers anywhere (informational only, rendered on the server)
-const PUBLIC_EXACT = new Set(["/preview", "/agent-registration.json", "/api/og", "/api/miniapp/webhook", "/robots.txt", "/sitemap.xml", "/icon.svg", "/apple-icon.png", "/favicon.ico"]);
+const PUBLIC_EXACT = new Set(["/preview", "/agent-registration.json", "/api/og", "/api/miniapp/webhook", "/api/health", "/robots.txt", "/sitemap.xml", "/icon.svg", "/apple-icon.png", "/favicon.ico"]);
 const PUBLIC_PREFIXES = ["/.well-known/", "/api/cron/", "/brand/"];
 const SITE = (process.env.NEXT_PUBLIC_SITE_URL || "https://maxxagent.xyz").replace(/\/$/, "");
 const esc = (v: string) => v.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
@@ -23,22 +24,29 @@ const previewTags = (path: string, searchParams?: URLSearchParams) => {
   const asked = path.match(/^\/stock\/([A-Za-z]{2,8}c)$/)?.[1]?.toLowerCase();
   const stock = STOCK_SYMBOLS.find((s) => s.toLowerCase() === asked);
   const indexId = path.match(/^\/index\/(\d{1,9})$/)?.[1];
-  const basket = searchParams?.get("basket") || "";
-  const rawName = (searchParams?.get("name") || "").replace(/[^\w\s-]/g, "").trim().slice(0, 40);
+  const parsedBasket = parseBasketParam(searchParams?.get("basket"));
+  const rawName = parsedBasket ? cleanIndexName(searchParams?.get("name"), 40) : "";
   const title = stock
     ? `${stock} tokenized stock on Base — MAXXAGENT`
     : indexId
     ? `Onchain stock index #${indexId} — MAXXAGENT`
-    : basket && rawName
+    : parsedBasket && rawName
     ? `${rawName} — Custom stock index on Base | MAXXAGENT`
     : "MAXXAGENT — Tokenized stock indexes on Base";
-  const ogImage = basket
-    ? `${SITE}/api/og?basket=${encodeURIComponent(basket)}${rawName ? `&name=${encodeURIComponent(rawName)}` : ""}`
+  const ogImage = parsedBasket
+    ? `${SITE}${basketImagePath(parsedBasket, { name: rawName || undefined })}`
     : `${SITE}/brand/maxxagent-og.png`;
   const embed = stock
     ? { siteUrl: SITE, path: `/stock/${stock}`, buttonTitle: `Trade ${stock}` }
     : indexId
     ? { siteUrl: SITE, path: `/index/${indexId}`, buttonTitle: `Buy index #${indexId}` }
+    : parsedBasket
+    ? {
+        siteUrl: SITE,
+        path: `/?basket=${encodeURIComponent(searchParams?.get("basket") || "")}`,
+        buttonTitle: "Buy this basket",
+        imageUrl: `${SITE}${basketImagePath(parsedBasket, { name: rawName || undefined, tall: true })}`,
+      }
     : { siteUrl: SITE };
   const tags: [string, string][] = [
     ["description", PREVIEW_DESC],
@@ -91,6 +99,7 @@ function rateLimited(request: NextRequest): { limited: boolean; retryAfter: numb
   const xff = request.headers.get("x-forwarded-for");
   const lastHop = xff ? xff.split(",").at(-1)?.trim() : undefined;
   const ip =
+    request.headers.get("cf-connecting-ip")?.trim() ||
     request.headers.get("x-vercel-forwarded-for")?.split(",")[0]?.trim() ||
     request.headers.get("x-real-ip")?.trim() ||
     lastHop ||
@@ -103,11 +112,21 @@ function rateLimited(request: NextRequest): { limited: boolean; retryAfter: numb
     hits.set(key, { start: now, count: 1 });
     if (hits.size > 5000) {
       for (const [k, v] of hits) if (now - v.start > WINDOW_MS) hits.delete(k);
+      // Evict non-rate-limited entries before ever dropping active rate-limit blocks
       if (hits.size > 5000) {
         let drop = hits.size - 5000;
-        for (const k of hits.keys()) {
-          hits.delete(k);
-          if (--drop <= 0) break;
+        for (const [k, v] of hits) {
+          const rPath = k.split("|")[0];
+          if (v.count <= (LIMITS[rPath] ?? 60)) {
+            hits.delete(k);
+            if (--drop <= 0) break;
+          }
+        }
+        if (drop > 0) {
+          for (const k of hits.keys()) {
+            hits.delete(k);
+            if (--drop <= 0) break;
+          }
         }
       }
     }

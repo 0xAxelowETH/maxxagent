@@ -56,8 +56,11 @@ export function StockLive({ symbol, color }: { symbol: string; color: string }) 
       .catch(() => !off && setFailed(true));
     fetch(`/api/history?symbol=${encodeURIComponent(symbol)}&tf=7D`)
       .then((r) => r.json())
-      .then((d) => !off && d?.ok && setHist({ nav: d.nav || [], dex: d.dex || [] }))
-      .catch(() => {});
+      .then((d) => {
+        if (off) return;
+        setHist(d?.ok ? { nav: d.nav || [], dex: d.dex || [] } : { nav: [], dex: [] });
+      })
+      .catch(() => !off && setHist({ nav: [], dex: [] }));
     // News and filings to pin on the chart (the feed is cached; "loading" right after a deploy just means no dots yet)
     fetch(`/api/news?symbol=${encodeURIComponent(symbol)}`)
       .then((r) => r.json())

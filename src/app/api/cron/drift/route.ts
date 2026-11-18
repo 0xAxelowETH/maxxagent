@@ -6,7 +6,7 @@ import { baseTransport } from "@/lib/rpc";
 import { kv, kvEnabled } from "@/lib/kv";
 import { BASE_TOKENIZED_STOCKS } from "@/lib/tokenizedStocks";
 import { alertPctOf, computeDrift } from "@/lib/drift";
-import { deleteNotify, getNotifies, getWatch, listWatchFids, putWatch, type DriftWatch } from "@/lib/driftWatch";
+import { deleteNotify, getNotifies, getWatch, listWatchFids, putWatch, validNotifyDetails, type DriftWatch } from "@/lib/driftWatch";
 
 /**
  * Daily drift check (Vercel Cron, see vercel.json: 23:00 UTC Mon–Fri = 18:00/19:00 New York, after the close
@@ -82,7 +82,9 @@ async function notify(fid: number, today: string, title: string, body: string): 
   const targets = await getNotifies(fid);
   if (!targets.length) return false;
   const results = await Promise.allSettled(
-    targets.map(async (n) => {
+    targets.map(async (rawTarget) => {
+      const n = validNotifyDetails(rawTarget);
+      if (!n) return false;
       const res = await fetch(n.url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -114,7 +116,12 @@ export async function GET(req: NextRequest) {
   const auth = req.headers.get("authorization") || "";
   if (!secretsEqual(auth, `Bearer ${secret}`)) return NextResponse.json({ ok: false }, { status: 401, headers: NO_STORE });
   if (!kvEnabled()) return NextResponse.json({ ok: true, skipped: "storage not configured" }, { headers: NO_STORE });
-  const lock = await kv<string | null>("SET", "cron:drift:lock", "1", "NX", "EX", 55).catch(() => null);
+  let lock: string | null;
+  try {
+    lock = await kv<string | null>("SET", "cron:drift:lock", "1", "NX", "EX", 55);
+  } catch {
+    return NextResponse.json({ ok: false, error: "Storage error acquiring cron lock." }, { status: 502, headers: NO_STORE });
+  }
   if (lock !== "OK") return NextResponse.json({ ok: true, skipped: "already running" }, { headers: NO_STORE });
 
   const started = Date.now();
@@ -180,8 +187,8 @@ export async function GET(req: NextRequest) {
       processed += batch.length;
     }
     await kv("SET", "cron:drift:cursor", String((shift + processed) % all.length)).catch(() => {});
-    return NextResponse.json({ ok: true, ...counts }, { headers: { "Cache-Control": "no-store" } });
+    return NextResponse.json({ ok: true, ...counts }, { headers: NO_STORE });
   } catch {
-    return NextResponse.json({ ok: false, ...counts }, { status: 502 });
+    return NextResponse.json({ ok: false, ...counts }, { status: 502, headers: NO_STORE });
   }
 }

@@ -51,16 +51,16 @@ async function chainlinkHistory(feed: `0x${string}`, sinceSec: number, maxRounds
   const FIRST = 50;
   const results = [...(await read(idsFrom(latestId, Math.min(FIRST, maxRounds))))];
   const needMore = () => {
-    const last = results[results.length - 1];
-    return last?.status === "success" && Number((last.result as readonly bigint[])[3]) >= sinceSec;
+    const lastOk = [...results].reverse().find((r) => r.status === "success");
+    return lastOk !== undefined && Number((lastOk.result as readonly bigint[])[3]) >= sinceSec;
   };
   if (maxRounds > FIRST && results.length === FIRST && needMore()) {
     const restIds = idsFrom(latestId - BigInt(FIRST), maxRounds - FIRST);
     for (let i = 0; i < restIds.length; i += 200) {
       const batch = await read(restIds.slice(i, i + 200));
       results.push(...batch);
-      const last = batch[batch.length - 1];
-      if (!last || last.status !== "success" || Number((last.result as readonly bigint[])[3]) < sinceSec) break;
+      const lastOk = [...batch].reverse().find((r) => r.status === "success");
+      if (!lastOk || Number((lastOk.result as readonly bigint[])[3]) < sinceSec) break;
     }
   }
 
@@ -69,7 +69,7 @@ async function chainlinkHistory(feed: `0x${string}`, sinceSec: number, maxRounds
     if (r.status !== "success") {
       roundFailures++;
       if (points.length === 0 || roundFailures > 3) throw new Error("Chainlink history RPC failed");
-      break;
+      continue;
     }
     const [, answer, , updatedAt] = r.result as readonly [bigint, bigint, bigint, bigint, bigint];
     const t = Number(updatedAt);

@@ -9,12 +9,22 @@ const arg = (n, d) => process.argv.find((a) => a.startsWith(`--${n}=`))?.split("
 const BASE = arg("url", "http://localhost:3000").replace(/\/$/, "");
 const BROWSER =
   process.env.CHROME_PATH ||
-  ["C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe", "C:/Program Files/Google/Chrome/Application/chrome.exe", "/usr/bin/google-chrome"].find((p) => fs.existsSync(p));
+  [
+    "C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe",
+    "C:/Program Files/Google/Chrome/Application/chrome.exe",
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+    "/usr/bin/google-chrome",
+  ].find((p) => fs.existsSync(p));
+if (!BROWSER) {
+  console.error("Chrome/Edge browser binary not found. Set CHROME_PATH.");
+  process.exit(1);
+}
 const out = path.join(process.cwd(), "public", "brand", "screens");
 fs.mkdirSync(out, { recursive: true });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const browser = await puppeteer.launch({ executablePath: BROWSER, headless: "new" });
+try {
 const page = await browser.newPage();
 await page.setViewport({ width: 428, height: 926, deviceScaleFactor: 3, isMobile: true, hasTouch: true });
 await page.evaluateOnNewDocument(() =>
@@ -58,6 +68,9 @@ await page.goto(BASE + "/stock/NVDAc", { waitUntil: "networkidle2", timeout: 120
 await page.waitForSelector('[data-testid="stock-live"]', { timeout: 60000 });
 await sleep(2500);
 await page.screenshot({ path: path.join(out, "screen-3.png") });
+} finally {
+  await browser.close();
+}
 
 await browser.close();
 for (const f of fs.readdirSync(out)) console.log(f, fs.statSync(path.join(out, f)).size, "bytes");

@@ -61,7 +61,13 @@ export function planRebalance(
   const { minBuyUsd = 0.5 /* = MIN_BUY_USD in tokenizedStocks.ts (kept literal: this file has no imports) */, minSellUsd = 0.25, bandPct = 2, swapCostPct = 0.6 } = opts;
   const MAX_LEG_USD = 2500;
   const bySymbol = new Map<string, { symbol: string; b20Address: string; tokens: number; price: number; weightBps: number }>();
-  for (const h of holdings) if (h.tokens > 0 && h.price > 0) bySymbol.set(h.symbol, { ...h, weightBps: 0 });
+  for (const h of holdings) {
+    if (h.tokens > 0 && h.price > 0) {
+      const prev = bySymbol.get(h.symbol);
+      if (prev) prev.tokens += h.tokens;
+      else bySymbol.set(h.symbol, { ...h, weightBps: 0 });
+    }
+  }
   const totalTargetBps = targets.reduce((a, t) => a + (Number.isFinite(t.weightBps) ? Math.max(0, t.weightBps) : 0), 0) || 1;
   for (const t of targets) {
     const cur = bySymbol.get(t.symbol);
@@ -88,8 +94,8 @@ export function planRebalance(
       if (cappedSellUsd < minSellUsd) note = `below $${minSellUsd} minimum`;
       else {
         action = "sell";
-        // Selling everything: sell the exact holding so no dust is left (unless capped by $2,500 router limit)
-        const fullExit = (x.weightBps === 0 || targetUsd === 0 || (sellIsAll(deltaUsd, currentUsd) && targetUsd < minSellUsd)) && currentUsd <= MAX_LEG_USD;
+        // Selling everything or down to unsellable dust (< minSellUsd): sell the exact holding (unless capped by $2,500 router limit)
+        const fullExit = (x.weightBps === 0 || targetUsd < minSellUsd) && currentUsd <= MAX_LEG_USD;
         amount = fullExit ? x.tokens : cappedSellUsd / x.price;
         if (-deltaUsd > MAX_LEG_USD) note = `capped at $${MAX_LEG_USD} max per swap`;
       }
@@ -101,10 +107,6 @@ export function planRebalance(
     }
     return { symbol: x.symbol, b20Address: x.b20Address, currentUsd, targetUsd, deltaUsd, action, amount, note };
   });
-
-  function sellIsAll(deltaUsd: number, currentUsd: number) {
-    return -deltaUsd >= currentUsd * 0.99;
-  }
 
   const sellRows = rows.filter((r) => r.action === "sell");
   const sellUsd = sellRows.reduce((a, r) => a + (r.amount * (bySymbol.get(r.symbol)!.price || 0)), 0);
@@ -118,7 +120,7 @@ export function planRebalance(
     // Iteratively drop legs that scale below minBuyUsd so remaining active buy legs get full budget
     let active = [...buyRows];
     while (active.length > 0) {
-      const activeWanted = active.reduce((a, r) => a + Math.floor(r.deltaUsd * 100) / 100, 0) || 1;
+      const activeWanted = active.reduce((a, r) => a + Math.min(MAX_LEG_USD, Math.floor(r.deltaUsd * 100) / 100), 0) || 1;
       const k = Math.max(0, budget) / activeWanted;
       const dropped: RebalanceRow[] = [];
       const kept: RebalanceRow[] = [];

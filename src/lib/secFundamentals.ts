@@ -88,8 +88,12 @@ async function load(cik: number): Promise<SecFundamentals | null | undefined> {
   }
   if (!rev || !latestEnd) return null;
   const cur = rev.get(latestEnd)!;
-  // The year before: an end date roughly one year earlier (fiscal years can end on different weekdays)
-  const prior = [...rev.values()].find((f) => Math.abs(Date.parse(latestEnd) - Date.parse(f.end) - 365 * DAY) <= 10 * DAY);
+  // The year before: an end date roughly one year earlier across any reported revenue tag
+  let prior: Fact | undefined;
+  for (const r of revenues) {
+    const cand = [...annual(r).values()].find((f) => Math.abs(Date.parse(latestEnd) - Date.parse(f.end) - 365 * DAY) <= 10 * DAY);
+    if (cand && (!prior || cand.filed > prior.filed)) prior = cand;
+  }
   const ni = annual(netIncome).get(latestEnd);
   return {
     periodEnd: latestEnd,
