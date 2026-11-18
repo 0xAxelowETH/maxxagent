@@ -62,7 +62,12 @@ function sanitizeStocks(input: unknown): LiveTokenizedStock[] {
 }
 
 export async function POST(request: NextRequest) {
-  const raw = await request.text();
+  let raw: string;
+  try {
+    raw = await request.text();
+  } catch {
+    return NextResponse.json({ ok: false, error: "Could not read request body." }, { status: 400 });
+  }
   if (raw.length > MAX_BODY_BYTES) {
     return NextResponse.json({ ok: false, error: "Request too large." }, { status: 413 });
   }

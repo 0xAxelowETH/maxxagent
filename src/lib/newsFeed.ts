@@ -117,9 +117,10 @@ function safeFromCodePoint(cp: number): string {
 function htmlText(html: string, lines = false): string {
   return html
     .slice(0, 600_000)
-    .replace(/<(script|style)[\s\S]*?<\/\1>/gi, " ")
-    .replace(/<\/?(?:b|strong|i|em|u|s|sub|sup|small|span|font|a|abbr|cite|code|label|ix:[a-z0-9_:-]+)(?:\s[^>]*)?>/gi, "")
-    .replace(/<[^>]+>/g, lines ? "\n" : " ")
+    .replace(/<!--[\s\S]*?-->/g, " ")
+    .replace(/<(script|style)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, " ")
+    .replace(/<\/?(?:b|strong|i|em|u|s|sub|sup|small|span|font|a|abbr|cite|code|label|ix:[a-z0-9_:-]+)(?:\s(?:"[^"]*"|'[^']*'|[^>"'])*)?>/gi, "")
+    .replace(/<(?:[^>"']|"[^"]*"|'[^']*')+>/g, lines ? "\n" : " ")
     .replace(/&nbsp;|&#160;|&#xa0;/gi, " ")
     .replace(/&#8217;|&#8216;|&rsquo;|&lsquo;/gi, "'")
     .replace(/&#8220;|&#8221;|&ldquo;|&rdquo;/gi, '"')
@@ -405,7 +406,11 @@ const NEWSROOMS: { symbol: string; source: string; url: string; keep?: (it: { li
 const decode = (s: string) =>
   s
     .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, "$1")
-    .replace(/<[^>]+>/g, " ")
+    .replace(/<!--[\s\S]*?-->/g, " ")
+    .replace(/<(script|style|noscript|svg)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, " ")
+    .replace(/<(?:[^>"']|"[^"]*"|'[^']*')+>/g, " ")
+    // Unwrap XML-level double-encoded ampersands (&amp;amp; -> &amp;, &amp;rsquo; -> &rsquo;) before entity passes
+    .replace(/&amp;|&#0*38;|&#x0*26;/gi, "&")
     .replace(/&#(\d+);/g, (_, n) => safeFromCodePoint(Number(n)))
     .replace(/&#x([0-9a-f]+);/gi, (_, n) => safeFromCodePoint(parseInt(n, 16)))
     .replace(/&quot;/g, '"')
@@ -415,14 +420,23 @@ const decode = (s: string) =>
     .replace(/&mdash;/g, "—")
     .replace(/&ndash;/g, "–")
     .replace(/&hellip;|&#8230;/gi, "…")
+    .replace(/&bull;|&#8226;/gi, "•")
+    .replace(/&middot;|&#183;/gi, "·")
+    .replace(/&rarr;|&#8594;/gi, "→")
+    .replace(/&euro;|&#8364;/gi, "€")
     .replace(/&trade;|&#8482;/gi, "™")
     .replace(/&reg;|&#174;/gi, "®")
     .replace(/&copy;|&#169;/gi, "©")
     .replace(/&lt;/g, "<")
     .replace(/&gt;/g, ">")
     .replace(/&amp;/g, "&")
-    // Strip HTML tags that were entity-encoded inside RSS descriptions (e.g. &lt;img src="..."&gt; from blogs)
-    .replace(/<\/?(?:img|p|br|a|div|span|strong|em|b|i|u|ul|ol|li|h[1-6]|figure|figcaption|blockquote|iframe|table|tr|td|th)\b[^>]*>/gi, " ")
+    .replace(/<!--[\s\S]*?-->/g, " ")
+    .replace(/<(script|style|noscript|svg)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, " ")
+    .replace(
+      /<\/?(?:img|p|br|a|div|span|strong|em|b|i|u|s|ul|ol|li|dl|dt|dd|h[1-6]|figure|figcaption|blockquote|iframe|table|thead|tbody|tfoot|caption|colgroup|col|tr|td|th|hr|pre|code|small|sub|sup|time|mark|del|ins|cite|abbr|font|center|wbr|details|summary|svg|section|article|header|footer|aside|nav|main|video|audio|source|picture|object|embed)\b(?:"[^"]*"|'[^']*'|[^>"'])*>/gi,
+      " "
+    )
+    .replace(/&[a-z0-9]+;/gi, " ")
     .replace(/\s+/g, " ")
     .trim();
 const tag = (block: string, name: string) => block.match(new RegExp(`<${name}(?:\\s[^>]*)?>([\\s\\S]*?)</${name}>`, "i"))?.[1] ?? "";

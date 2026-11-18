@@ -1,17 +1,23 @@
 // Unit checks for the rebalance planner (src/lib/rebalance.ts). No network, no wallet.
 //   npm run test:rebalance
-import { readFileSync, writeFileSync, mkdtempSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import ts from "typescript";
 
-const js = ts.transpileModule(readFileSync("src/lib/rebalance.ts", "utf8"), {
-  compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
-}).outputText;
-const file = join(mkdtempSync(join(tmpdir(), "maxx-rebalance-")), "rebalance.mjs");
-writeFileSync(file, js);
-const { planRebalance } = await import(pathToFileURL(file).href);
+const dir = mkdtempSync(join(tmpdir(), "maxx-rebalance-"));
+let planRebalance;
+try {
+  const js = ts.transpileModule(readFileSync("src/lib/rebalance.ts", "utf8"), {
+    compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
+  }).outputText;
+  const file = join(dir, "rebalance.mjs");
+  writeFileSync(file, js);
+  ({ planRebalance } = await import(pathToFileURL(file).href));
+} finally {
+  rmSync(dir, { recursive: true, force: true });
+}
 
 let fail = 0;
 const ok = (c, m) => {
@@ -83,6 +89,52 @@ p = planRebalance([N(0.25), N(0.25)], T(5000, 5000));
 ok(
   p.sells.length === 1 && Math.abs(p.sells[0].tokens - 0.25) < 1e-9,
   `duplicate holding symbols merge before planning (sells=${JSON.stringify(p.sells)})`,
+);
+
+// Pass 9: dropping sub-minBuyUsd legs must never scale surviving legs past deltaUsd (k <= 1)
+p = planRebalance(
+  [],
+  [
+    { symbol: "NVDAc", b20Address: "0xn", weightBps: 3000 },
+    { symbol: "MSFTc", b20Address: "0xm", weightBps: 1000 },
+    { symbol: "AAPLc", b20Address: "0xa", weightBps: 1000 },
+    { symbol: "GOOGLc", b20Address: "0xg", weightBps: 1000 },
+    { symbol: "METAc", b20Address: "0xe", weightBps: 1000 },
+    { symbol: "AMZNc", b20Address: "0xz", weightBps: 1000 },
+    { symbol: "TSLAc", b20Address: "0xt", weightBps: 1000 },
+    { symbol: "SNDKc", b20Address: "0xs", weightBps: 1000 },
+  ],
+  { usdcAvailable: 3.5, addUsd: 10 },
+);
+ok(
+  p.buys.length === 1 && p.buys[0]?.symbol === "NVDAc" && p.buys[0]?.usd <= 3.0,
+  `k <= 1 prevents over-buying remaining legs past deltaUsd (buys=${JSON.stringify(p.buys)})`,
+);
+
+// Pass 10: cent-floored deltaUsd matches budget scaling so buyUsd never overshoots budget, and stale capped note clears
+p = planRebalance(
+  [],
+  [
+    { symbol: "NVDAc", b20Address: "0xn", weightBps: 5000 },
+    { symbol: "MSFTc", b20Address: "0xm", weightBps: 5000 },
+  ],
+  { usdcAvailable: 19.99, addUsd: 20.018 },
+);
+ok(
+  p.buyUsd <= 19.99 && p.buys.every((b) => b.usd <= 10.0),
+  `scaled buy total stays within budget (buyUsd=${p.buyUsd}, buys=${JSON.stringify(p.buys)})`,
+);
+p = planRebalance(
+  [],
+  [
+    { symbol: "NVDAc", b20Address: "0xn", weightBps: 9000 },
+    { symbol: "MSFTc", b20Address: "0xm", weightBps: 1000 },
+  ],
+  { usdcAvailable: 500, addUsd: 5000 },
+);
+ok(
+  p.buys.every((b) => b.usd >= 2500 || !b.note?.startsWith("capped")),
+  `stale capped note cleared when scaled below $2500 -> buys=${JSON.stringify(p.buys)}`,
 );
 
 console.log(fail ? `\n❌ ${fail} check(s) failed` : "\n✅ All rebalance checks passed");

@@ -15,7 +15,7 @@ const env = {};
 const envFile = new URL("../.env.local", import.meta.url);
 if (existsSync(envFile)) {
   for (const l of readFileSync(envFile, "utf8").split(/\r?\n/)) {
-    const m = l.match(/^([A-Z_]+)=(.*)$/);
+    const m = l.match(/^([A-Z0-9_]+)=(.*)$/);
     if (m) env[m[1]] = m[2].trim().replace(/^["']|["']$/g, "");
   }
 }
@@ -24,7 +24,7 @@ if (!key) throw new Error("DEPLOYER_PRIVATE_KEY missing in .env.local or environ
 const account = privateKeyToAccount(key.startsWith("0x") ? key : `0x${key}`);
 if (account.address.toLowerCase() !== EXPECTED_OWNER.toLowerCase()) throw new Error(`Key is for ${account.address}, expected the team wallet`);
 
-const rpc = env.BASE_RPC_URL || process.env.BASE_RPC_URL || "https://mainnet.base.org";
+const rpc = env.BASE_RPC_URL || process.env.BASE_RPC_URL || env.NEXT_PUBLIC_BASE_RPC_URL || process.env.NEXT_PUBLIC_BASE_RPC_URL || "https://mainnet.base.org";
 const pub = createPublicClient({ chain: base, transport: http(rpc) });
 const abi = parseAbi([
   "function register(string agentURI) returns (uint256 agentId)",

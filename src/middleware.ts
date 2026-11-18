@@ -98,8 +98,9 @@ function rateLimited(request: NextRequest): { limited: boolean; retryAfter: numb
   if (!route) return { limited: false, retryAfter: 0 };
   const xff = request.headers.get("x-forwarded-for");
   const lastHop = xff ? xff.split(",").at(-1)?.trim() : undefined;
+  const trustCf = process.env.TRUST_CF_HEADERS === "1";
   const ip =
-    request.headers.get("cf-connecting-ip")?.trim() ||
+    (trustCf ? request.headers.get("cf-connecting-ip")?.trim() : undefined) ||
     request.headers.get("x-vercel-forwarded-for")?.split(",")[0]?.trim() ||
     request.headers.get("x-real-ip")?.trim() ||
     lastHop ||

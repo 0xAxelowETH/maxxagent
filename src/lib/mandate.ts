@@ -165,7 +165,7 @@ function mentions(text: string) {
 
 /** Words that make a percent a limit or cash reserve, not a stock weight ("max 30%", "cap Apple at 25%", "cash 30%") */
 const CAP_BEFORE = new RegExp(
-  `(?:\\b(?:cap(?:ped)?|limit(?:ed)?)(?:\\s+(?:each|every|any|all))?(?:\\s+(?:[a-z0-9.&]+\\s+){0,2})?(?:at|to)?|\\b(?:max(?:imum)?|under|below|less than|at most|no more than|not more than|up to|kurang dari|di\\s*bawah|maks(?:imal|imum)?|paling banyak|tidak lebih dari|over|above|more than|lebih dari|di atas)\\s*(?:of\\s+|at\\s+)?|${CASH_WORDS}\\s*(?:reserve\\s*)?(?:of\\s+)?)$`
+  `(?:\\b(?:cap(?:ped)?|limit(?:ed)?)(?:\\s+(?:each|every|any|all))?(?:\\s+(?:[a-z0-9.&]+\\s+){0,2})?(?:at|to)?\\s*|\\b(?:max(?:imum)?|under|below|less than|at most|no more than|not more than|up to|kurang dari|di\\s*bawah|maks(?:imal|imum)?|paling banyak|tidak lebih dari|over|above|more than|lebih dari|di atas)\\s*(?:of\\s+|at\\s+)?|${CASH_WORDS}\\s*(?:reserve\\s*)?(?:of\\s+)?)$`
 );
 /** Words that make a percent a cash amount or a per-stock rule ("20% in cash", "30% each", "Apple 30% cap") */
 const NOT_WEIGHT_AFTER = new RegExp(
@@ -222,7 +222,7 @@ export function parseMandate(input: string): ParsedMandate {
   const clauses: string[] = [];
   const negAlt = NEGATORS.map(esc).join("|");
   const negRe = new RegExp(
-    `(?:^|[^a-z0-9])(?:${negAlt})\\s+([^.;!?]*?)(?=[.;!?]|,\\s*(?:${negAlt})(?=$|[^a-z0-9])|\\s(?:but|with|prefer|plus|and also|tapi|dengan)\\s|\\s(?:and|dan)\\s+(?:buy|want|pick|get|include|prefer|beli|cari|pilih)\\s|$)`,
+    `(?:^|[^a-z0-9])(?:${negAlt})\\s+(?!more than\\b|single\\b|one\\b|other\\b|only\\b|less than\\b)([^.;!?]*?)(?=[.;!?]|,\\s*(?:${negAlt})(?=$|[^a-z0-9])|\\s+(?:and|or|dan|atau)\\s+(?:${negAlt})(?=$|[^a-z0-9])|\\s(?:but|with|prefer|plus|and also|tapi|dengan)\\s|\\s(?:and|dan)\\s+(?:buy|want|pick|get|include|prefer|beli|cari|pilih)\\s|$)`,
     "g"
   );
   // After a comma the negation only continues through bare stock names ("except nvda, meta and amzn"),
@@ -236,7 +236,34 @@ export function parseMandate(input: string): ParsedMandate {
     const allowed = allowThemes ? [...stockNames, ...themeNames] : stockNames;
     return parts.every((part) => allowed.includes(part));
   };
-  const negatedText: string[] = [];
+  const NEGATED_STYLE_WORDS = [
+    "aggressive",
+    "high risk",
+    "high-risk",
+    "yolo",
+    "max growth",
+    "risiko tinggi",
+    "agresif",
+    "safe",
+    "safer",
+    "low risk",
+    "low-risk",
+    "conservative",
+    "defensive",
+    "stable",
+    "aman",
+    "risiko rendah",
+    "low volatility",
+    "low-volatility",
+    "less volatile",
+    "volatilitas rendah",
+    "recession-proof",
+    "recession proof",
+    "recession resistant",
+    "tahan resesi",
+    "defensif",
+  ];
+  const negatedFullPhrases: string[] = [];
   for (const m of text.matchAll(negRe)) {
     const rawClause = m[1].trim();
     // Cap / quantifier phrases ("no more than 25%", "no single stock over 30%", "not only AI") are limits, not exclusions
@@ -246,9 +273,10 @@ export function parseMandate(input: string): ParsedMandate {
     let end = 1;
     while (end < segs.length && bareName(segs[end], allowThemesAfterComma)) end++;
     const clause = segs.slice(0, end).join(",");
-    negatedText.push(clause);
+    negatedFullPhrases.push(m[0].slice(0, m[0].length - m[1].length) + clause);
     const found = mentions(clause);
-    if (found.symbols.length || found.themes.length) {
+    const hasNegatedStyle = has(` ${clause} `, NEGATED_STYLE_WORDS);
+    if (found.symbols.length || found.themes.length || hasNegatedStyle) {
       clauses.push(clause.trim());
       found.symbols.forEach((s) => exclude.add(s));
       found.themes.forEach((t) => {
@@ -257,12 +285,13 @@ export function parseMandate(input: string): ParsedMandate {
       });
     }
   }
-  // Strip only the negated names / theme words, so "no tesla" isn't read as asking for Tesla while the
+  // Strip only the negated names / theme words / negated style words, so "no tesla" isn't read as asking for Tesla while the
   // rest of the clause ("…, 3 stocks, equal weight") still counts
   let positive = text;
   const negatedWords = [
     ...[...exclude].flatMap((s) => STOCK_ALIASES[s] || []),
     ...[...excludedThemes].flatMap((t) => THEMES.find((x) => x.id === t)!.words),
+    ...NEGATED_STYLE_WORDS,
   ].sort((a, b) => b.length - a.length);
   for (const c of clauses) {
     let cleaned = ` ${c} `;
@@ -281,13 +310,19 @@ export function parseMandate(input: string): ParsedMandate {
     else if (!include.includes(s)) include.push(s);
   }
 
-  // 2b) Asked for, but not among the 10 supported stocks. "no netflix" is not a request: every negated
-  // phrase (up to the next comma) is dropped first, including ones the exclusion pass above skipped
+  // 2b) Asked for, but not among the 10 supported stocks. "no netflix" is not a request: negated phrases are
+  // dropped respecting clause boundaries ("and buy", "but", "with", "tapi") so subsequent positive buys remain intact.
   let wanted = text;
-  for (const c of negatedText) {
-    wanted = wanted.replace(new RegExp(`(^|[^a-z0-9])${esc(c)}(?=$|[^a-z0-9])`, "g"), "$1 ");
+  for (const phrase of negatedFullPhrases) {
+    wanted = wanted.replace(phrase, " ");
   }
-  wanted = wanted.replace(new RegExp(`(^|[^a-z0-9])(?:${NEGATORS.map(esc).join("|")})\\s+[^,.;!?]*`, "g"), "$1 ");
+  wanted = wanted.replace(
+    new RegExp(
+      `(^|[^a-z0-9])(?:${negAlt})\\s+(?!more than\\b|single\\b|one\\b|other\\b|only\\b|less than\\b)[^,.;!?]*?(?=[,.;!?]|\\s(?:but|with|prefer|plus|and also|tapi|dengan)\\s|\\s(?:and|dan)\\s+(?:buy|want|pick|get|include|prefer|beli|cari|pilih)\\s|$)`,
+      "g"
+    ),
+    "$1 "
+  );
   const unavailable: ParsedMandate["unavailable"] = [];
   for (const u of NOT_AVAILABLE) {
     if (!has(wanted, u.words)) continue;
@@ -304,10 +339,12 @@ export function parseMandate(input: string): ParsedMandate {
   const cashText = text.replace(/\b(?:half|separuh|setengah)\b/g, "50%");
   let cashPct: number | undefined;
   const allThemeWords = THEMES.flatMap((t) => t.words).map(esc).join("|");
+  const allUnavailableWords = NOT_AVAILABLE.flatMap((u) => u.words).map(esc).join("|");
+  const nonCashTargets = `${ALL_STOCK_ALIASES}|${allThemeWords}|${allUnavailableWords}|stocks?|equit(?:y|ies)|shares?|saham|invested|tech|technology|market|portfolio|index(?:es)?|etfs?|max(?:imum)?|cap|limit|per\\b|each\\b`;
   const cashMatch =
     cashText.match(new RegExp(`${pct}\\s*(?:(?:max(?:imum)?|up to|maks(?:imal)?)\\s+)?(?:in\\s+|as\\s+|of\\s+|di\\s+|dalam\\s+|sebagai\\s+)?${CASH_WORDS}`)) ||
-    // "keep 20%" is cash, but "hold 40% nvidia" or "keep 25% max" or "hold 40% in big tech" is not cash
-    cashText.match(new RegExp(`(?:keep|hold|leave|reserve|set aside|sisakan|simpan|sisihkan)\\s+${pct}(?!\\s*(?:(?:in|of|on|into|di|ke)\\s+)?(?:the\\s+)?(?:${ALL_STOCK_ALIASES}|${allThemeWords}|max(?:imum)?|cap|limit|per\\b|each\\b)(?![a-z0-9]))`)) ||
+    // "keep 20%" is cash, but "hold 40% nvidia", "keep 60% for Apple", "keep 80% in stocks", or "hold 50% in tech" is not cash
+    cashText.match(new RegExp(`(?:keep|hold|leave|reserve|set aside|sisakan|simpan|sisihkan)\\s+${pct}(?!\\s*(?:(?:in|of|on|into|to|for|di|ke|untuk)\\s+)?(?:the\\s+)?(?:${nonCashTargets})(?![a-z0-9]))`)) ||
     cashText.match(new RegExp(`${CASH_WORDS}\\s*(?:reserve\\s*)?(?:of\\s+)?${pct}`));
   if (cashMatch) {
     const v = Number(cashMatch[1]);

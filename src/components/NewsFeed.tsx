@@ -28,19 +28,25 @@ type Kind = "all" | "press" | "newsroom" | "filing" | "news";
 const kindOf = (x: NewsItem): Exclude<Kind, "all"> =>
   x.kind === "news" ? "news" : x.kind === "newsroom" ? "newsroom" : x.pressRelease ? "press" : "filing";
 
-const ago = (iso: string) => {
-  const m = (Date.now() - Date.parse(iso)) / 60_000;
+// Items are grouped by New York date: the trading day the news belongs to, the same for every visitor
+const NY = "America/New_York";
+const nyKey = (x: Date) => x.toLocaleDateString("en-CA", { timeZone: NY });
+const ago = (iso: string, nowMs: number | null) => {
+  const d = new Date(iso);
+  if (nowMs === null) {
+    return `${d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: NY })} ET`;
+  }
+  const m = (nowMs - d.getTime()) / 60_000;
   if (m < 60) return `${Math.max(1, Math.round(m))} min ago`;
   if (m < 48 * 60) return `${Math.round(m / 60)} h ago`;
   return `${Math.round(m / 1440)} days ago`;
 };
-// Items are grouped by New York date: the trading day the news belongs to, the same for every visitor
-const NY = "America/New_York";
-const nyKey = (x: Date) => x.toLocaleDateString("en-CA", { timeZone: NY });
-const dayLabel = (iso: string) => {
+const dayLabel = (iso: string, nowMs: number | null) => {
   const d = new Date(iso);
-  if (nyKey(d) === nyKey(new Date())) return "Today (New York)";
-  if (nyKey(d) === nyKey(new Date(Date.now() - 86_400_000))) return "Yesterday (New York)";
+  if (nowMs !== null) {
+    if (nyKey(d) === nyKey(new Date(nowMs))) return "Today (New York)";
+    if (nyKey(d) === nyKey(new Date(nowMs - 86_400_000))) return "Yesterday (New York)";
+  }
   return d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: NY });
 };
 const usd = (n: number) => `$${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -88,6 +94,13 @@ export function NewsFeed({
   const [kind, setKind] = useState<Kind>("all");
   const [stock, setStock] = useState<string>(symbol ?? "all");
   const [shown, setShown] = useState(limit);
+  const [nowMs, setNowMs] = useState<number | null>(null);
+
+  useEffect(() => {
+    setNowMs(Date.now());
+    const id = setInterval(() => setNowMs(Date.now()), 60_000);
+    return () => clearInterval(id);
+  }, []);
 
   useEffect(() => {
     if (initialItems) return;
@@ -124,7 +137,7 @@ export function NewsFeed({
   // Group the visible items by day
   const groups: { day: string; list: NewsItem[] }[] = [];
   for (const x of visible) {
-    const day = dayLabel(x.publishedAt);
+    const day = dayLabel(x.publishedAt, nowMs);
     const g = groups[groups.length - 1];
     if (g && g.day === day) g.list.push(x);
     else groups.push({ day, list: [x] });
@@ -237,7 +250,7 @@ export function NewsFeed({
                               {t}
                             </span>
                           ))}
-                          <span title={new Date(x.publishedAt).toUTCString()}>· {ago(x.publishedAt)}</span>
+                          <span title={new Date(x.publishedAt).toUTCString()}>· {ago(x.publishedAt, nowMs)}</span>
                           {x.kind !== "filing" && <span>· {x.source}</span>}
                         </div>
                         <a href={x.url} target="_blank" rel="noopener noreferrer" className="mt-1 block text-[13px] font-bold leading-snug text-slate-100 hover:text-white hover:underline">

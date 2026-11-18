@@ -43,8 +43,9 @@ async function load() {
   if (!inflightPreview) {
     inflightPreview = build()
       .then((data) => {
-        const full = Boolean(data.stocks.length && data.report && data.news.length);
-        if (data.stocks.length && data.report) cached = { at: Date.now(), full, data };
+        const hasLiveStocks = data.stocks.some((s) => s.source !== "fallback-snapshot");
+        const full = Boolean(hasLiveStocks && data.report && data.news.length);
+        if (hasLiveStocks && data.report) cached = { at: Date.now(), full, data };
         return data;
       })
       .finally(() => {

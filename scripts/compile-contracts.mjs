@@ -7,6 +7,7 @@
  */
 import fs from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import solc from "solc";
 
 const ROOT = process.cwd();
@@ -39,7 +40,7 @@ export function compile(sources, { viaIR = true } = {}) {
   return output;
 }
 
-const isMain = process.argv[1] && path.resolve(process.argv[1]) === path.resolve(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1"));
+const isMain = process.argv[1] && path.resolve(process.argv[1]) === path.resolve(fileURLToPath(import.meta.url));
 
 if (isMain) {
   console.log("Compiling StockMaxxIndexRegistry.sol with solc:", solc.version());

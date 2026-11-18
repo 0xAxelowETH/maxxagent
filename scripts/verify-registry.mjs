@@ -61,7 +61,10 @@ if (!address) {
   console.error("❌ No deployed address (contracts/deployment.base.json or NEXT_PUBLIC_INDEX_REGISTRY_ADDRESS).");
   process.exit(1);
 }
-const client = createPublicClient({ chain: base, transport: http(process.env.BASE_RPC_URL || "https://mainnet.base.org") });
+const client = createPublicClient({
+  chain: base,
+  transport: http(process.env.BASE_RPC_URL || process.env.NEXT_PUBLIC_BASE_RPC_URL || "https://mainnet.base.org", { timeout: 20000 }),
+});
 if ((await client.getCode({ address })) !== artifact.deployedBytecode) {
   console.error(`❌ Code at ${address} does not match the artifact.`);
   process.exit(1);
@@ -82,8 +85,14 @@ if (res.status === 409 || /already/i.test(JSON.stringify(body))) {
   let job;
   for (let i = 0; i < 30; i++) {
     await new Promise((r) => setTimeout(r, 3000));
-    job = await fetch(`${API}/v2/verify/${body.verificationId}`).then((r) => r.json());
-    if (job.isJobCompleted) break;
+    try {
+      const pr = await fetch(`${API}/v2/verify/${body.verificationId}`, { signal: AbortSignal.timeout(10000) });
+      if (!pr.ok) continue;
+      job = await pr.json();
+      if (job.isJobCompleted) break;
+    } catch {
+      // Transient Sourcify HTTP error/timeout; retry on next poll
+    }
   }
   if (!job?.isJobCompleted || job.error) {
     console.error(`❌ Sourcify verification failed: ${JSON.stringify(job?.error || job).slice(0, 300)}`);

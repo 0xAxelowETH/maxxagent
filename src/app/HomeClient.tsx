@@ -93,23 +93,6 @@ type ActiveTab = "terminal" | "agent" | "indexes" | "news" | "traction" | "publi
 const SLUG_BY_TAB: Partial<Record<ActiveTab, string>> = { agent: "agent", indexes: "indexes", news: "news", traction: "portfolio" };
 const TAB_BY_SLUG: Record<string, ActiveTab> = { market: "terminal", agent: "agent", indexes: "indexes", news: "news", portfolio: "traction" };
 
-function largestRemainderInts(values: number[], target = 100): number[] {
-  if (values.length === 0) return [];
-  const total = values.reduce((a, b) => a + Math.max(0, b), 0);
-  if (total <= 0) return values.map(() => 0);
-  const scaled = values.map((v) => (Math.max(0, v) / total) * target);
-  const floored = scaled.map((x) => Math.floor(x));
-  let remainder = target - floored.reduce((a, b) => a + b, 0);
-  const order = scaled
-    .map((x, idx) => ({ idx, frac: x - floored[idx] }))
-    .sort((a, b) => b.frac - a.frac);
-  for (let i = 0; i < order.length && remainder > 0; i++) {
-    floored[order[i].idx] += 1;
-    remainder -= 1;
-  }
-  return floored;
-}
-
 interface EthereumProvider {
   request: (args: { method: string; params?: unknown[] }) => Promise<unknown>;
   on?: (event: string, handler: (...args: unknown[]) => void) => void;
@@ -184,6 +167,11 @@ async function switchOrAddBaseChain(eth: EthereumProvider): Promise<string> {
       method: "wallet_addEthereumChain",
       params: [BASE_MAINNET_PARAMS],
     });
+  }
+  const actualRaw = await eth.request({ method: "eth_chainId" }).catch(() => "");
+  const actualHex = normalizeChainHex(actualRaw);
+  if (actualHex && actualHex !== BASE_MAINNET_PARAMS.chainId) {
+    throw new Error("Please switch your wallet network to Base Mainnet (8453) and try again.");
   }
   return BASE_MAINNET_PARAMS.chainId;
 }
@@ -565,6 +553,38 @@ export default function StockMaxxingDashboard() {
   const [searchQuery, setSearchQuery] = useState<string>("");
   const [selectedSectorFilter, setSelectedSectorFilter] = useState<string>("ALL");
   const [selectedSignalFilter, setSelectedSignalFilter] = useState<string>("ALL");
+  const [openSourcesMenu, setOpenSourcesMenu] = useState<{
+    symbol: string;
+    right: number;
+    top: number;
+    bottom: number;
+    upward: boolean;
+  } | null>(null);
+  const attachTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const txPendingRef = useRef<boolean>(false);
+
+  useEffect(() => {
+    if (!openSourcesMenu) return;
+    const close = () => setOpenSourcesMenu(null);
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") close();
+    };
+    document.addEventListener("mousedown", close);
+    document.addEventListener("keydown", onKey);
+    window.addEventListener("scroll", close, true);
+    return () => {
+      document.removeEventListener("mousedown", close);
+      document.removeEventListener("keydown", onKey);
+      window.removeEventListener("scroll", close, true);
+    };
+  }, [openSourcesMenu]);
+
+  useEffect(() => {
+    return () => {
+      if (attachTimerRef.current) clearTimeout(attachTimerRef.current);
+      detachListenersRef.current?.();
+    };
+  }, []);
 
   // AI Agent State
   const [userPrompt, setUserPrompt] = useState<string>(
@@ -910,8 +930,8 @@ export default function StockMaxxingDashboard() {
   // Step 2: the user confirmed the review; only now does the wallet open
   const confirmReview = useCallback(async () => {
     if (!review || orderLockRef.current) return;
-    if (Date.now() - review.order.preparedAt > QUOTE_TTL_MS) {
-      await refreshReview(); // show fresh numbers first, never send a stale quote silently
+    if (Date.now() - review.order.preparedAt >= QUOTE_TTL_MS - 2000) {
+      await refreshReview(); // refresh quotes with >= 2s margin before submitOrder's TTL guard
       return;
     }
     const eth = getEthProvider();
@@ -1145,16 +1165,31 @@ export default function StockMaxxingDashboard() {
   // Shared by manual connect and silent restore: show the account, read balances, listen for changes
   const attachWallet = (eth: EthereumProvider, account: string, chainId: unknown) => {
     const normalized = normalizeChainHex(chainId);
+    const prevAccount = walletRef.current;
+    if (prevAccount && prevAccount !== account.toLowerCase()) {
+      stocksFetchCtrl.current?.abort();
+      stocksFetchSeq.current++;
+      setWalletBalances({});
+      setBalancesFor("");
+      setBalancesError("");
+      setUsdcBalance(null);
+      setEthBalance(null);
+      setRebalanceUsdcBaseline(null);
+      setPnl({ for: "", error: "", data: null });
+    }
     setWalletAddress(account);
     setInspectAddress(account);
     setChainIdHex(normalized || "0x2105");
     fetchLiveStocks(account);
     // Some extensions report "0x1" for the first ~200ms after reload while waking up; re-read quietly once
+    if (attachTimerRef.current) clearTimeout(attachTimerRef.current);
     if (normalized !== "0x2105") {
-      setTimeout(() => {
+      attachTimerRef.current = setTimeout(() => {
+        if (providerRef.current !== eth) return;
         eth
           .request({ method: "eth_chainId" })
           .then((c) => {
+            if (providerRef.current !== eth) return;
             const nextChain = normalizeChainHex(c);
             if (nextChain) setChainIdHex(nextChain);
           })
@@ -1186,6 +1221,8 @@ export default function StockMaxxingDashboard() {
         setConnectedWalletName("");
         walletMetaRef.current = undefined;
         if (!inMiniAppRef.current) {
+          detachListenersRef.current?.();
+          detachListenersRef.current = null;
           providerRef.current = null;
           // Clear WalletConnect/Coinbase SDK handles when the wallet closes the session remotely (`session_delete`)
           void disconnectExternalWallets();
@@ -1230,6 +1267,10 @@ export default function StockMaxxingDashboard() {
 
   const disconnectWallet = async () => {
     setAccountMenuOpen(false);
+    if (attachTimerRef.current) {
+      clearTimeout(attachTimerRef.current);
+      attachTimerRef.current = null;
+    }
     stocksFetchCtrl.current?.abort();
     stocksFetchSeq.current++;
     setLoadingStocks(false);
@@ -1465,6 +1506,7 @@ export default function StockMaxxingDashboard() {
     ticker: string,
     entries: { b20Address: string; weightBps: number }[]
   ) => {
+    if (txPendingRef.current) return;
     setTxError("");
     setTxHash("");
     if (!nonUsComplianceAccepted) {
@@ -1502,6 +1544,7 @@ export default function StockMaxxingDashboard() {
       setTxError("No wallet detected. Install Coinbase Wallet or MetaMask to publish on Base.");
       return;
     }
+    txPendingRef.current = true;
     setTxPending(true);
     setPublishStatus("Checking…");
     try {
@@ -1514,7 +1557,10 @@ export default function StockMaxxingDashboard() {
       }
       // The dry run must hit Base (on another chain the registry address has no code and would "pass")
       const currentChain = normalizeChainHex(await eth.request({ method: "eth_chainId" }).catch(() => ""));
-      if (currentChain && currentChain !== "0x2105") await switchToBaseMainnet();
+      if (!currentChain) {
+        throw new Error("Could not verify your wallet network. Make sure your wallet is on Base Mainnet (8453) and try again.");
+      }
+      if (currentChain !== "0x2105") await switchToBaseMainnet();
       const calldata = encodeFunctionData({
         abi: INDEX_REGISTRY_ABI,
         functionName: "createIndex",
@@ -1565,6 +1611,7 @@ export default function StockMaxxingDashboard() {
     } catch (err: unknown) {
       setTxError(errMsg(err, "Transaction cancelled or failed"));
     } finally {
+      txPendingRef.current = false;
       setPublishStatus("");
       setTxPending(false);
     }
@@ -1862,8 +1909,8 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
 
       {/* Main Header */}
       <header className="sticky top-0 z-30 border-b border-slate-800/80 bg-[#040814]/90 backdrop-blur-xl shadow-2xl shadow-black/50">
-        <div className="mx-auto flex max-w-7xl items-center justify-between gap-3 px-4 py-3">
-          <div className="flex min-w-0 items-center gap-3.5">
+        <div className="mx-auto flex max-w-7xl items-center justify-between gap-2 sm:gap-3 px-3 sm:px-4 py-2.5 sm:py-3">
+          <div className="flex min-w-0 items-center gap-2 sm:gap-3.5">
             <MaxxAgentLogo size={40} tagline="Tokenized stock indexes on Base" />
             <span className="hidden 2xl:inline-flex items-center gap-1.5 rounded-full bg-emerald-500/10 px-2.5 py-0.5 font-mono text-[10px] font-bold text-emerald-300 border border-emerald-500/30">
               <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
@@ -1872,7 +1919,7 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
           </div>
 
           {/* Global KPIs, Theme Switcher & Wallet Connect */}
-          <div className="ml-auto flex items-center justify-end gap-2 sm:gap-3">
+          <div className="ml-auto flex shrink-0 flex-wrap items-center justify-end gap-1.5 sm:gap-3">
             <div className="hidden xl:flex items-center gap-5 rounded-2xl border border-slate-800/90 bg-[#091022]/90 px-4 py-2 shadow-inner">
               <div className="flex items-center gap-2.5">
                 <div>
@@ -1904,14 +1951,15 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
             <ThemeToggle />
 
             {walletAddress ? (
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-1.5 sm:gap-2">
                 {chainIdHex && normalizeChainHex(chainIdHex) !== "0x2105" && (
                   <button
                     onClick={() => switchToBaseMainnet()}
-                    className="rounded-xl bg-amber-500/20 border border-amber-500/40 px-3 py-2 text-xs font-semibold text-amber-300 hover:bg-amber-500/30 transition cursor-pointer"
+                    className="rounded-xl bg-amber-500/20 border border-amber-500/40 px-2 sm:px-3 py-2 text-[11px] sm:text-xs font-semibold text-amber-300 hover:bg-amber-500/30 transition cursor-pointer whitespace-nowrap"
                     title="Tokenized stocks are on Base Mainnet"
                   >
-                    Wrong network — switch to Base
+                    <span className="hidden sm:inline">Wrong network — switch to Base</span>
+                    <span className="sm:hidden">Switch Base</span>
                   </button>
                 )}
                 <div className="relative" ref={accountMenuRef}>
@@ -2058,7 +2106,7 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                       disabled={connectingWallet}
                       className="w-full flex items-start gap-2.5 rounded-xl px-2.5 py-2 text-left hover:bg-slate-800 disabled:opacity-60 cursor-pointer"
                     >
-                      <img src="/logos/brands/coinbase-wordmark.svg" alt="" className="mt-1 h-3 w-auto" />
+                      <img src="/logos/brands/coinbase-wordmark.svg" alt="" className="mt-1 h-3 w-auto shrink-0" />
                       <span>
                         <span className="block text-xs font-semibold text-slate-200">Coinbase Smart Wallet</span>
                         <span className="block text-[10px] text-slate-500">Passkey wallet in a popup — works on phones</span>
@@ -2362,7 +2410,7 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
 
                   <h2 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-white leading-tight">
                     Build your own stock index.{" "}
-                    <span className="bg-gradient-to-r from-[#60a5fa] via-cyan-300 to-emerald-300 bg-clip-text text-transparent">
+                    <span className="bg-gradient-to-r from-[#60a5fa] via-cyan-300 to-emerald-300 bg-clip-text text-transparent maxx-hero-accent">
                       Buy it in one click, from your wallet.
                     </span>
                   </h2>
@@ -3044,47 +3092,34 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                               >
                                 Inspect
                               </a>
-                              <details
-                                className="relative inline-block"
-                                onClick={(e) => e.stopPropagation()}
+                              <button
+                                type="button"
+                                onMouseDown={(e) => e.stopPropagation()}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  const r = e.currentTarget.getBoundingClientRect();
+                                  const right = Math.max(8, window.innerWidth - r.right);
+                                  const upward = window.innerHeight - r.bottom < 140 && r.top > 140;
+                                  setOpenSourcesMenu((cur) =>
+                                    cur?.symbol === stock.symbol
+                                      ? null
+                                      : {
+                                          symbol: stock.symbol,
+                                          right,
+                                          top: r.bottom + 6,
+                                          bottom: window.innerHeight - r.top + 6,
+                                          upward,
+                                        }
+                                  );
+                                }}
+                                aria-expanded={openSourcesMenu?.symbol === stock.symbol}
+                                aria-haspopup="menu"
+                                className="inline-flex items-center gap-1 rounded-md border border-slate-700 bg-slate-800/70 px-2 py-1 text-[11px] font-semibold text-slate-300 hover:border-slate-500 hover:text-white transition cursor-pointer select-none"
+                                title="B20 contract, Chainlink feed & prospectus links"
                               >
-                                <summary
-                                  className="list-none inline-flex items-center gap-1 rounded-md border border-slate-700 bg-slate-800/70 px-2 py-1 text-[11px] font-semibold text-slate-300 hover:border-slate-500 hover:text-white transition cursor-pointer select-none"
-                                  title="B20 contract, Chainlink feed & prospectus links"
-                                >
-                                  Sources
-                                  <ChevronDown className="h-3 w-3 opacity-70" />
-                                </summary>
-                                <div className="absolute right-0 top-full z-30 mt-1.5 w-36 rounded-xl border border-slate-700 bg-[#0b1120] p-1.5 shadow-2xl space-y-1 text-left">
-                                  <a
-                                    href={stock.basescanUrl}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="flex items-center justify-between rounded-lg px-2 py-1.5 font-mono text-[11px] text-slate-200 hover:bg-slate-800"
-                                  >
-                                    <span>B20 contract</span>
-                                    <ExternalLink className="h-3 w-3 text-slate-400" />
-                                  </a>
-                                  <a
-                                    href={`https://basescan.org/address/${stock.chainlinkFeed}`}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="flex items-center justify-between rounded-lg px-2 py-1.5 text-[11px] text-cyan-300 hover:bg-slate-800"
-                                  >
-                                    <span>Chainlink feed</span>
-                                    <ExternalLink className="h-3 w-3 text-cyan-400/80" />
-                                  </a>
-                                  <a
-                                    href={stock.prospectusUrl}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="flex items-center justify-between rounded-lg px-2 py-1.5 text-[11px] text-amber-300 hover:bg-slate-800"
-                                  >
-                                    <span>Prospectus PDF</span>
-                                    <FileText className="h-3 w-3 text-amber-300/80" />
-                                  </a>
-                                </div>
-                              </details>
+                                Sources
+                                <ChevronDown className={`h-3 w-3 opacity-70 transition ${openSourcesMenu?.symbol === stock.symbol ? "rotate-180" : ""}`} />
+                              </button>
                             </div>
                           </td>
                         </tr>
@@ -3093,6 +3128,56 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                   </tbody>
                 </table>
               </div>
+              {openSourcesMenu && (() => {
+                const openStock = filteredStocks.find((s) => s.symbol === openSourcesMenu.symbol);
+                if (!openStock) return null;
+                return (
+                  <div
+                    role="menu"
+                    onMouseDown={(e) => e.stopPropagation()}
+                    style={
+                      openSourcesMenu.upward
+                        ? { bottom: openSourcesMenu.bottom, right: openSourcesMenu.right }
+                        : { top: openSourcesMenu.top, right: openSourcesMenu.right }
+                    }
+                    className="fixed z-50 w-40 rounded-xl border border-slate-700 bg-[#0b1120] p-1.5 shadow-2xl space-y-1 text-left"
+                  >
+                    <a
+                      role="menuitem"
+                      href={openStock.basescanUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      onClick={() => setOpenSourcesMenu(null)}
+                      className="flex items-center justify-between rounded-lg px-2 py-1.5 font-mono text-[11px] text-slate-200 hover:bg-slate-800"
+                    >
+                      <span>B20 contract</span>
+                      <ExternalLink className="h-3 w-3 text-slate-400" />
+                    </a>
+                    <a
+                      role="menuitem"
+                      href={`https://basescan.org/address/${openStock.chainlinkFeed}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      onClick={() => setOpenSourcesMenu(null)}
+                      className="flex items-center justify-between rounded-lg px-2 py-1.5 text-[11px] text-cyan-300 hover:bg-slate-800"
+                    >
+                      <span>Chainlink feed</span>
+                      <ExternalLink className="h-3 w-3 text-cyan-400/80" />
+                    </a>
+                    <a
+                      role="menuitem"
+                      href={openStock.prospectusUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      onClick={() => setOpenSourcesMenu(null)}
+                      className="flex items-center justify-between rounded-lg px-2 py-1.5 text-[11px] text-amber-300 hover:bg-slate-800"
+                    >
+                      <span>Prospectus PDF</span>
+                      <FileText className="h-3 w-3 text-amber-300/80" />
+                    </a>
+                  </div>
+                );
+              })()}
             </div>
 
             {/* Learning material kept out of the way: glossary + dividend/split multiplier simulator */}
@@ -3413,11 +3498,12 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                           MAXXAGENT never holds your funds. Routes costing over 1.5% are skipped.
                         </p>
                       </div>
-                      <label className="flex items-center gap-2 text-xs text-slate-300">
-                        Total
+                      <div className="flex items-center gap-2 text-xs text-slate-300">
+                        <label htmlFor="agent-basket-total">Total</label>
                         <span className="relative">
                           <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500">$</span>
                           <UsdAmountInput
+                            id="agent-basket-total"
                             value={basketUsd}
                             onChange={setBasketUsd}
                             min={MIN_BUY_USD}
@@ -3426,7 +3512,7 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                           />
                         </span>
                         {payToggle}
-                      </label>
+                      </div>
                     </div>
 
                     {(agentReport.cashReservePct ?? 0) > 0 && (
@@ -3604,8 +3690,6 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                         const stockShares = agentReport.allocations.map((a) => Math.max(0, a.capitalSharePct ?? a.targetWeightBps / 100));
                         const rawParts = cashPct > 0 ? [...stockShares, cashPct] : stockShares;
                         const rawTotal = rawParts.reduce((s, v) => s + v, 0) || 100;
-                        const intPcts = largestRemainderInts(rawParts, 100);
-                        const cashIntPct = cashPct > 0 ? intPcts[agentReport.allocations.length] : 0;
                         return (
                           <div className="flex h-6 w-full overflow-hidden rounded-lg bg-slate-900">
                             {agentReport.allocations.map((alloc, idx) => {
@@ -3628,7 +3712,7 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                                   }`}
                                   title={`${alloc.symbol}: ${sharePct.toFixed(1)}% ($${alloc.usdAllocation.toFixed(2)})`}
                                 >
-                                  {widthPct >= 12 ? `${alloc.symbol.replace(/c$/, "")} ${intPcts[idx]}%` : ""}
+                                  {widthPct >= 12 ? `${alloc.symbol.replace(/c$/, "")} ${sharePct.toFixed(1).replace(/\.0$/, "")}%` : ""}
                                 </button>
                               );
                             })}
@@ -3638,7 +3722,7 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                                 className="flex items-center justify-center bg-emerald-600/80 text-[10px] font-mono font-bold text-white"
                                 title={`USDC cash reserve: ${cashPct.toFixed(1)}%`}
                               >
-                                {(cashPct / rawTotal) * 100 >= 12 ? `USDC ${cashIntPct}%` : ""}
+                                {(cashPct / rawTotal) * 100 >= 12 ? `USDC ${cashPct.toFixed(1).replace(/\.0$/, "")}%` : ""}
                               </div>
                             )}
                           </div>
@@ -3917,11 +4001,12 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                     <button
                       type="button"
                       onClick={selectPreset}
-                      className="block w-full text-left cursor-pointer focus:outline-none"
+                      aria-pressed={isSelected}
+                      className="block w-full text-left cursor-pointer rounded-xl focus:outline-none focus-visible:ring-2 focus-visible:ring-[#4C6FFF]"
                     >
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <h3 className="text-base font-bold text-white">{preset.name}</h3>
-                        <div className="flex flex-wrap -space-x-2 shrink-0">
+                      <span className="flex flex-wrap items-center justify-between gap-2">
+                        <span className="text-base font-bold text-white">{preset.name}</span>
+                        <span className="flex flex-wrap -space-x-2 shrink-0">
                           {preset.allocations.map((a) => (
                             <img
                               key={a.symbol}
@@ -3930,12 +4015,12 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                               className="h-6 w-6 rounded-full ring-2 ring-[#0b1120] bg-slate-900 object-cover"
                             />
                           ))}
-                        </div>
-                      </div>
+                        </span>
+                      </span>
 
-                      <p className="text-xs text-slate-400 mt-1.5 line-clamp-2">{preset.tagline}</p>
+                      <span className="block text-xs text-slate-400 mt-1.5 line-clamp-2">{preset.tagline}</span>
 
-                      <div className="mt-4 flex flex-wrap gap-1.5">
+                      <span className="mt-4 flex flex-wrap gap-1.5">
                         {preset.allocations.map((a) => (
                           <span
                             key={a.symbol}
@@ -3949,7 +4034,7 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                             {a.symbol} {(a.weightBps / 100).toFixed(0)}%
                           </span>
                         ))}
-                      </div>
+                      </span>
                     </button>
                   </div>
                 );
@@ -4059,8 +4144,9 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
 
                 {/* Sliders for the 10 supported Coinbase B20 tokenized stocks, with official logos */}
                 <div className={`grid grid-cols-1 gap-3 ${hasRegistry ? "" : "xl:grid-cols-2"}`}>
-                  {stocks.map((stock) => {
+                  {(stocks.length > 0 ? stocks : BASE_TOKENIZED_STOCKS).map((stock) => {
                     const weightBps = customWeights[stock.symbol] || 0;
+                    const nav = "navPrice" in stock ? (stock as LiveTokenizedStock).navPrice : null;
                     return (
                       <div
                         key={stock.symbol}
@@ -4077,9 +4163,11 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                               <span className="font-mono text-xs font-bold text-white">
                                 {stock.symbol}
                               </span>
-                              <span className="font-mono text-[11px] text-slate-400">
-                                ${stock.navPrice.toFixed(0)}
-                              </span>
+                              {nav !== null && (
+                                <span className="font-mono text-[11px] text-slate-400">
+                                  ${nav.toFixed(0)}
+                                </span>
+                              )}
                             </div>
                             <div className="text-[10px] text-slate-500 truncate">
                               {stock.companyName}
@@ -4090,7 +4178,7 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                         <input
                           type="range"
                           min={0}
-                          max={6000}
+                          max={10000}
                           step={100}
                           value={weightBps}
                           onChange={(e) =>
@@ -4398,12 +4486,22 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                           <button
                             type="button"
                             onClick={() => {
+                              const enc = new TextEncoder();
+                              const clampUtf8 = (s: string, max: number) => {
+                                let out = "";
+                                for (const ch of s.trim()) {
+                                  if (enc.encode(out + ch).length > max) break;
+                                  out += ch;
+                                }
+                                return out;
+                              };
                               const map: Record<string, number> = {};
                               ix.constituents.forEach((c) => {
                                 map[c.symbol] = c.weightBps;
                               });
-                              setCustomIndexName(`${ix.name} (Remix)`);
-                              setCustomIndexTicker(ix.ticker.slice(0, 8));
+                              const baseName = ix.name.replace(/\s*\(Remix\)$/i, "").trim();
+                              setCustomIndexName(`${clampUtf8(baseName, 56)} (Remix)`);
+                              setCustomIndexTicker(clampUtf8(ix.ticker, 16));
                               setCustomWeights(map);
                               document.getElementById("index-builder")?.scrollIntoView({ behavior: "smooth", block: "start" });
                             }}

@@ -121,11 +121,12 @@ export function planRebalance(
     let active = [...buyRows];
     while (active.length > 0) {
       const activeWanted = active.reduce((a, r) => a + Math.min(MAX_LEG_USD, Math.floor(r.deltaUsd * 100) / 100), 0) || 1;
-      const k = Math.max(0, budget) / activeWanted;
+      const k = Math.min(1, Math.max(0, budget) / activeWanted);
       const dropped: RebalanceRow[] = [];
       const kept: RebalanceRow[] = [];
       for (const r of active) {
-        const scaled = Math.min(MAX_LEG_USD, Math.floor(Math.min(MAX_LEG_USD, r.deltaUsd) * k * 100) / 100);
+        const legWanted = Math.min(MAX_LEG_USD, Math.floor(r.deltaUsd * 100) / 100);
+        const scaled = Math.floor(legWanted * k * 100) / 100;
         if (scaled < minBuyUsd) {
           r.action = "hold";
           r.note = "not enough USDC";
@@ -133,6 +134,7 @@ export function planRebalance(
           dropped.push(r);
         } else {
           r.amount = scaled;
+          if (scaled < MAX_LEG_USD && r.note?.startsWith("capped")) r.note = undefined;
           kept.push(r);
         }
       }

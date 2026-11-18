@@ -374,6 +374,10 @@ async function ensureBase(eth: EthProvider, onStatus: StatusFn) {
         throw err;
       }
     }
+    const postRaw = await withTimeout(eth.request({ method: "eth_chainId" }), 3000).catch(() => "");
+    if (normalizeChainHex(postRaw) !== BASE_CHAIN_HEX) {
+      throw new Error("Please switch your wallet network to Base Mainnet (8453) and try again.");
+    }
   }
 }
 
@@ -580,14 +584,17 @@ async function sendCalls(
     } catch (err) {
       if (isUserRejection(err)) throw err;
       if (!isUnsupportedMethod(err)) {
+        // Check whether sender is a pure ERC-4337 smart account (non-EIP-7702 bytecode): UserOps do not advance EOA nonce.
+        const code = (await withTimeout(rpcRead(eth, "eth_getCode", [sender, "latest"]), 1500).catch(() => "")) as string;
+        const isErc4337Account = typeof code === "string" && code.length > 2 && !code.toLowerCase().startsWith("0xef0100");
         // Unknown error (wallets word "no batching" in many ways). Before sending one by one, make sure the
         // batch did not go through anyway: if any spent balance or ETH dropped, never resend (no double trade).
         await sleep(5000);
         const [after, nonceAfter, ethAfter] = await Promise.all([balancesOf(), nonceOf(), ethBalanceOf()]);
         const nonceMoved = nonceBefore !== null && nonceAfter !== null && nonceAfter > nonceBefore;
         const ethDropped = ethBefore !== null && ethAfter !== null && ethBefore > ethAfter && ethBefore - ethAfter >= ethSpendTotal;
-        if (nonceMoved || ethDropped || after.some((a, i) => a !== null && before[i] !== null && a < before[i]!)) {
-          throw new Error("Your wallet reported an error, but funds have moved. Check your wallet activity before retrying.");
+        if (isErc4337Account || nonceMoved || ethDropped || after.some((a, i) => a !== null && before[i] !== null && a < before[i]!)) {
+          throw new Error("Your wallet reported an error, but funds have moved or a batch request may have been submitted. Check your wallet activity before retrying.");
         }
       }
       onStatus("Your wallet doesn't support one-prompt batches: confirming each step…");
@@ -635,32 +642,36 @@ async function sendCalls(
         }
       }
 
-      // Fallback 2: Direct Base Mainnet Transfer(to = sender) log + balanceOf check.
-      // Never short-circuit while wallet_getCallsStatus is actively reporting pending (`!parsed.isPending`),
-      // otherwise multi-leg non-atomic SELL batches (shared USDC_BASE) return after leg 1 finishes.
+      // Fallback 2: Direct Base Mainnet Transfer log + balanceOf check.
+      // For multi-leg SELL batches sharing one receive token (USDC_BASE), watch each sold stock's Transfer(from = sender)
+      // so leg 1 completing never prematurely ends legs 2..N.
+      const spendStocks = [...new Set(swapSpend.map((s) => s.token.toLowerCase()).filter((t) => !isNative(t)))];
+      const watchSellSpend = swapCalls.length > 1 && uniqueReceive.length === 1 && uniqueReceive[0] === USDC_BASE.toLowerCase() && spendStocks.length > 1;
+      const targetTokens = watchSellSpend ? spendStocks : uniqueReceive;
       let foundHashes: string[] = [];
       const fallbackActive = !parsed.isPending || misses > 0 || statusUnsupported || Date.now() - start >= 25_000;
-      if (uniqueReceive.length > 0 && fallbackActive && (Date.now() - start >= 2000 || misses > 0 || parsed.isDone)) {
+      if (targetTokens.length > 0 && fallbackActive && (Date.now() - start >= 2000 || misses > 0 || parsed.isDone)) {
         try {
           const latestHex = (await basePublicRpc("eth_blockNumber", []).catch(() => null)) as string | null;
           const latest = latestHex ? BigInt(latestHex) : null;
+          const minFrom = startBlock !== null ? startBlock + 1n : null;
           const scanFrom =
-            startBlock !== null
-              ? latest !== null && latest - startBlock > 1500n
+            minFrom !== null
+              ? latest !== null && latest - minFrom > 1500n
                 ? latest - 1500n
-                : startBlock
+                : minFrom
               : latest !== null
               ? latest > 15n
                 ? latest - 15n
                 : 0n
               : null;
-          if (scanFrom !== null) {
+          if (scanFrom !== null && (latest === null || latest >= scanFrom)) {
             const logs = (await basePublicRpc("eth_getLogs", [
               {
-                address: uniqueReceive,
+                address: targetTokens,
                 fromBlock: toHex(scanFrom),
                 toBlock: "latest",
-                topics: [TRANSFER_TOPIC, null, senderTopic],
+                topics: watchSellSpend ? [TRANSFER_TOPIC, senderTopic, null] : [TRANSFER_TOPIC, null, senderTopic],
               },
             ])) as { address?: string; transactionHash?: string }[] | null;
             if (Array.isArray(logs) && logs.length > 0) {
@@ -670,7 +681,7 @@ async function sendCalls(
               const foundTokens = new Set(logs.map((l) => (l?.address || "").toLowerCase()).filter(Boolean));
               if (foundHashes.length > 0) {
                 if (!firstTransferSeenAt) firstTransferSeenAt = Date.now();
-                if (foundTokens.size >= uniqueReceive.length || parsed.isDone || Date.now() - firstTransferSeenAt >= 4000) {
+                if (foundTokens.size >= targetTokens.length || parsed.isDone || Date.now() - firstTransferSeenAt >= 12_000) {
                   return { mode: "batch", txHashes: foundHashes, failed: [] };
                 }
               }
@@ -685,10 +696,10 @@ async function sendCalls(
         const receivedMore = receiveNow.some((now, i) => now !== null && receiveBefore[i] !== null && now > receiveBefore[i]!);
         if (receivedMore) {
           if (!firstTransferSeenAt) firstTransferSeenAt = Date.now();
-          if (foundHashes.length > 0) {
+          if (foundHashes.length > 0 && (parsed.isDone || (!watchSellSpend && uniqueReceive.length === 1) || Date.now() - firstTransferSeenAt >= 12_000)) {
             return { mode: "batch", txHashes: foundHashes, failed: [] };
           }
-          if (Date.now() - firstTransferSeenAt >= 8000) {
+          if (foundHashes.length === 0 && Date.now() - firstTransferSeenAt >= 8000) {
             throw new Error("Funds arrived onchain, but transaction hashes could not be read from RPC. Check your wallet activity.");
           }
         }
@@ -798,19 +809,22 @@ async function sendCalls(
           try {
             const latestHex = (await basePublicRpc("eth_blockNumber", []).catch(() => null)) as string | null;
             const latest = latestHex ? BigInt(latestHex) : null;
-            const fromBlock = latest !== null && latest - legStartBlock > 1500n ? latest - 1500n : legStartBlock;
-            const logs = (await basePublicRpc("eth_getLogs", [
-              {
-                address: watchToken,
-                fromBlock: toHex(fromBlock),
-                toBlock: "latest",
-                topics: isSellLeg ? [TRANSFER_TOPIC, senderTopic, null] : [TRANSFER_TOPIC, null, senderTopic],
-              },
-            ])) as { transactionHash?: string }[] | null;
-            const hit = (logs || []).find(
-              (l) => /^0x[0-9a-fA-F]{64}$/.test(l?.transactionHash || "") && !seenHashes.has(l.transactionHash!.toLowerCase())
-            );
-            if (hit?.transactionHash) return { kind: "onchain" as const, hash: hit.transactionHash };
+            const minFrom = legStartBlock + 1n;
+            if (latest === null || latest >= minFrom) {
+              const fromBlock = latest !== null && latest - minFrom > 1500n ? latest - 1500n : minFrom;
+              const logs = (await basePublicRpc("eth_getLogs", [
+                {
+                  address: watchToken,
+                  fromBlock: toHex(fromBlock),
+                  toBlock: "latest",
+                  topics: isSellLeg ? [TRANSFER_TOPIC, senderTopic, null] : [TRANSFER_TOPIC, null, senderTopic],
+                },
+              ])) as { transactionHash?: string }[] | null;
+              const hit = (logs || []).find(
+                (l) => /^0x[0-9a-fA-F]{64}$/.test(l?.transactionHash || "") && !seenHashes.has(l.transactionHash!.toLowerCase())
+              );
+              if (hit?.transactionHash) return { kind: "onchain" as const, hash: hit.transactionHash };
+            }
           } catch {}
         }
         await sleep(2500);
@@ -837,7 +851,14 @@ async function sendCalls(
         for (let k = j; k < swapCalls.length; k++) failed.push({ label: labels[k], error: "Cancelled in wallet" });
         break;
       }
-      failed.push({ label: labels[j], error: shortError(err) });
+      const msg = shortError(err);
+      failed.push({ label: labels[j], error: msg });
+      if (/timed out waiting/i.test(msg)) {
+        for (let k = j + 1; k < swapCalls.length; k++) {
+          failed.push({ label: labels[k], error: "Skipped because the previous wallet prompt timed out" });
+        }
+        break;
+      }
     }
   }
   if (swapped === 0) {
@@ -850,7 +871,9 @@ async function sendCalls(
 async function findContractTxBySender(to: string, senderTopic: string, startBlock: bigint): Promise<string | null> {
   const latestHex = (await basePublicRpc("eth_blockNumber", []).catch(() => null)) as string | null;
   const latest = latestHex ? BigInt(latestHex) : null;
-  const fromBlock = latest !== null && latest - startBlock > 1500n ? latest - 1500n : startBlock;
+  const minFrom = startBlock + 1n;
+  if (latest !== null && latest < minFrom) return null;
+  const fromBlock = latest !== null && latest - minFrom > 1500n ? latest - 1500n : minFrom;
   const logs = (await basePublicRpc("eth_getLogs", [
     {
       address: to,
@@ -885,8 +908,8 @@ export async function sendContractCall(params: {
   const call = { to, data: alignedWithSuffix(params.data, suffix), value: "0x0" };
   const nonceOf = () =>
     (rpcRead(eth, "eth_getTransactionCount", [sender, "latest"]) as Promise<string>).then((n) => BigInt(n)).catch(() => null);
-  const [, nonceBefore, startBlockHex] = await Promise.all([
-    ensureBase(eth, onStatus),
+  await ensureBase(eth, onStatus);
+  const [nonceBefore, startBlockHex] = await Promise.all([
     nonceOf(),
     (withTimeout(basePublicRpc("eth_blockNumber", []), 2000).catch(() => null)) as Promise<string | null>,
   ]);
@@ -912,11 +935,14 @@ export async function sendContractCall(params: {
     } catch (err) {
       if (isUserRejection(err)) throw new Error("Cancelled in wallet.");
       if (!isUnsupportedMethod(err)) {
+        // Detect ERC-4337 smart accounts (whose UserOps do not move EOA nonce) before fallback resend
+        const code = (await withTimeout(rpcRead(eth, "eth_getCode", [sender, "latest"]), 1500).catch(() => "")) as string;
+        const isErc4337Account = typeof code === "string" && code.length > 2 && !code.toLowerCase().startsWith("0xef0100");
         // Unknown wallet error: make sure nothing was sent before asking again another way
         await sleep(5000);
         const nonceAfter = await nonceOf();
-        if (nonceBefore !== null && nonceAfter !== null && nonceAfter > nonceBefore) {
-          throw new Error("Your wallet reported an error, but a transaction was sent. Check your wallet activity before retrying.");
+        if (isErc4337Account || (nonceBefore !== null && nonceAfter !== null && nonceAfter > nonceBefore)) {
+          throw new Error("Your wallet reported an error, but a transaction may have been sent. Check your wallet activity before retrying.");
         }
       }
     }
@@ -985,13 +1011,16 @@ export async function sendContractCall(params: {
   const watchOnchain = (async () => {
     await sleep(5000);
     const started = Date.now();
-    while (!settled && startBlock !== null && Date.now() - started < 120_000) {
-      try {
-        const hit = await findContractTxBySender(to, senderTopic, startBlock);
-        if (hit) return { kind: "onchain" as const, hash: hit };
-      } catch {}
+    while (!settled && Date.now() - started < 120_000) {
+      if (startBlock !== null) {
+        try {
+          const hit = await findContractTxBySender(to, senderTopic, startBlock);
+          if (hit) return { kind: "onchain" as const, hash: hit };
+        } catch {}
+      }
       await sleep(2500);
     }
+    if (!settled) throw new Error("Timed out waiting for transaction confirmation in your wallet. If no prompt appeared, open your wallet app or retry.");
     return new Promise<never>(() => {});
   })();
 
@@ -1240,8 +1269,9 @@ export async function submitOrder(params: {
   const { eth, order, builderCode, onStatus = () => {}, walletHint } = params;
   if (Date.now() - order.preparedAt > QUOTE_TTL_MS) throw new Error("Quote expired. Refresh the quote and review again.");
   const { side, sender, legs, skipped } = order;
-  // Run network check and allowance reads in parallel right before prompting so mobile browsers retain user activation
-  const [, approveCalls] = await Promise.all([ensureBase(eth, onStatus), buildApprovals(eth, sender, legs, builderCode)]);
+  // Ensure Base network before querying allowances so eth_call reads run on the right chain
+  await ensureBase(eth, onStatus);
+  const approveCalls = await buildApprovals(eth, sender, legs, builderCode);
   const verb = side === "buy" ? "Buy" : "Sell";
   // Native ETH is excluded from the double-trade guard: gas also lowers it, which would stop valid orders
   const spend = [...new Set(legs.map((q) => q.tokenIn!).filter((t) => !isNative(t)))];

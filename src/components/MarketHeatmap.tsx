@@ -221,7 +221,7 @@ export function MarketHeatmap({ stocks, updatedAt, links = true }: { stocks: Hea
         </div>
       )}
 
-      <div ref={ref} className="relative w-full overflow-hidden rounded-2xl bg-[#050811]" style={{ height: height || 320 }}>
+      <div ref={ref} data-heatmap-tiles className="relative w-full overflow-hidden rounded-2xl bg-[#050811]" style={{ height: height || 320 }}>
         {tiles.map(({ s, r, size }) => {
           const m = Math.min(r.w, r.h);
           const big = m > 150;

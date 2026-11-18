@@ -35,7 +35,7 @@ const w = WALLET.toLowerCase();
 
 const client = createPublicClient({
   chain: base,
-  transport: http(env.BASE_RPC_URL || process.env.BASE_RPC_URL || "https://mainnet.base.org", { retryCount: 2 }),
+  transport: http(env.BASE_RPC_URL || process.env.BASE_RPC_URL || env.NEXT_PUBLIC_BASE_RPC_URL || process.env.NEXT_PUBLIC_BASE_RPC_URL || "https://mainnet.base.org", { retryCount: 2 }),
 });
 const USDC = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
 const STOCKS = {
@@ -77,12 +77,18 @@ while (hi - lo > 1n) {
 const fromBlock = hi;
 const CHUNK = 2000n;
 const txs = new Map(); // hash -> { block, moves: [] }
+let rpcFailures = 0;
 process.stdout.write(`Scanning ${HOURS}h of Base blocks for ${WALLET}…`);
 for (let start = fromBlock; start <= latest; start += CHUNK) {
   const end = start + CHUNK - 1n > latest ? latest : start + CHUNK - 1n;
   for (const args of [{ from: WALLET }, { to: WALLET }]) {
-    const logs = await client.getLogs({ address: TOKENS, event: TRANSFER, args, fromBlock: start, toBlock: end }).catch(() => null);
+    let logs = await client.getLogs({ address: TOKENS, event: TRANSFER, args, fromBlock: start, toBlock: end }).catch(() => null);
     if (logs === null) {
+      await new Promise((r) => setTimeout(r, 400));
+      logs = await client.getLogs({ address: TOKENS, event: TRANSFER, args, fromBlock: start, toBlock: end }).catch(() => null);
+    }
+    if (logs === null) {
+      rpcFailures++;
       console.log(`\n⚠️  RPC refused blocks ${start}-${end}; results may be incomplete`);
       continue;
     }
@@ -91,7 +97,7 @@ for (let start = fromBlock; start <= latest; start += CHUNK) {
       const sym = l.address.toLowerCase() === USDC.toLowerCase() ? "USDC" : STOCKS[l.address.toLowerCase()];
       const dec = sym === "USDC" ? 6 : 8;
       const out = l.args.from.toLowerCase() === w;
-      if (Number(l.args.value) > 0) t.moves.push(`${out ? "-" : "+"}${(Number(l.args.value) / 10 ** dec).toFixed(sym === "USDC" ? 2 : 6)} ${sym}`);
+      if (l.args.value > 0n) t.moves.push(`${out ? "-" : "+"}${(Number(l.args.value) / 10 ** dec).toFixed(sym === "USDC" ? 2 : 6)} ${sym}`);
       txs.set(l.transactionHash, t);
     }
   }
@@ -139,4 +145,7 @@ if (ours.length > ok) {
   console.log("❌ = not attributed. Expected for: trades made outside MAXXAGENT (e.g. a funding swap elsewhere),");
   console.log("   and batched UI trades before the batch-padding fix (commit 6438632, 2026-11-07 13:06 WIB).");
 }
-process.exitCode = ours.length > ok ? 1 : 0;
+if (rpcFailures > 0) {
+  console.error(`\n❌ ${rpcFailures} RPC log range(s) failed — trade scan incomplete.`);
+}
+process.exitCode = ours.length > ok || rpcFailures > 0 ? 1 : 0;

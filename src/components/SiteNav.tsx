@@ -10,11 +10,11 @@ export function SiteNav({ current }: { current?: "stats" | "verify" | "faq" | "t
     { href: "/faq", label: "FAQ", key: "faq" },
   ];
   return (
-    <nav className="flex items-center justify-between gap-3" aria-label="Site">
-      <Link href="/" className="inline-block shrink-0" aria-label="MAXXAGENT home">
+    <nav className="flex flex-wrap items-center justify-between gap-2 sm:gap-3" aria-label="Site">
+      <Link href="/" className="inline-block min-w-0 shrink" aria-label="MAXXAGENT home">
         <MaxxAgentLogo size={32} />
       </Link>
-      <div className="flex items-center gap-1 sm:gap-2 text-xs">
+      <div className="flex items-center gap-1.5 sm:gap-2 text-xs shrink-0">
         {links.map((l) => (
           <Link
             key={l.key}

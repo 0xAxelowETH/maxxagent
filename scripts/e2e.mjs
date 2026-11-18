@@ -53,6 +53,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // Simulated balances, so the steps don't depend on what the real test wallet holds today
 const FIXTURE = {
   usdc: 5,
+  eth: 0.05,
   stocks: {
     NVDAc: { address: "0xb20000000000000000000078ee7ce2fe4908108c", tokens: 0.0107 },
     MSFTc: { address: "0xb200000000000000000000ab99cfa739e253872b", tokens: 0.0019 },
@@ -119,10 +120,14 @@ const MOCK = (wallet, fixture) => {
           if (held) return "0x" + BigInt(Math.round(held.tokens * 1e8)).toString(16).padStart(64, "0");
         }
       }
+      if (method === "eth_getBalance") {
+        const eth = typeof m.eth === "number" ? m.eth : fixture.eth;
+        return "0x" + BigInt(Math.round(eth * 1e18)).toString(16);
+      }
       if (method === "eth_getTransactionReceipt" && window.__fakeTx[params?.[0]]) {
         return { status: window.__fakeTx[params[0]], logs: [], gasUsed: "0x5208", blockNumber: "0x1" };
       }
-      if (["eth_call", "eth_getTransactionReceipt", "eth_blockNumber", "eth_getBalance", "eth_getCode", "eth_getTransactionCount"].includes(method)) return rpc(method, params);
+      if (["eth_call", "eth_getTransactionReceipt", "eth_blockNumber", "eth_getCode", "eth_getTransactionCount"].includes(method)) return rpc(method, params);
       if (method === "wallet_sendCalls") {
         if (m.sendCalls === "unsupported") return Promise.reject(Object.assign(new Error("Method not supported"), { code: -32601 }));
         if (m.sendCalls === "weird") return Promise.reject(Object.assign(new Error("Internal JSON-RPC error."), { code: -32603 }));
@@ -161,6 +166,7 @@ const MOCK = (wallet, fixture) => {
 };
 
 const browser = await puppeteer.launch({ executablePath: BROWSER, headless: process.argv.includes("--headful") ? false : "new" });
+try {
 const page = await browser.newPage();
 const consoleErrors = [];
 page.on("pageerror", (e) => consoleErrors.push(e.message.slice(0, 160)));
@@ -188,6 +194,7 @@ page.on("request", async (req) => {
     const d = await res.json();
     if (d && Array.isArray(d.stocks)) {
       d.walletUsdc = FIXTURE.usdc;
+      d.walletEth = FIXTURE.eth;
       d.walletBalances = d.walletBalances || {};
       for (const s of d.stocks) {
         const held = FIXTURE.stocks[s.symbol]?.tokens ?? 0;
@@ -287,7 +294,12 @@ await step("Switching stocks updates the Swap panel quickly", async () => {
   await page.waitForSelector("#swap-panel", { timeout: 30000 });
   const t = Date.now();
   assert(await click("button", /^AAPLc$/), "AAPLc chip");
-  await page.waitForFunction(() => /AAPLc/.test(document.getElementById("swap-panel")?.innerText || ""), { timeout: 5000 });
+  await page.waitForFunction(
+    () =>
+      document.getElementById("swap-stock-select")?.value === "AAPLc" ||
+      [...document.querySelectorAll("#swap-panel button")].some((b) => /of AAPLc\b/i.test(b.textContent)),
+    { timeout: 5000 }
+  );
   return `${Date.now() - t} ms`;
 });
 
@@ -362,11 +374,11 @@ await step("Pay with ETH: review shows ETH, no approval, one wallet request afte
   assert(/\d\.\d{6} ETH/.test(d), "review does not show the ETH amount");
   assert(/1 swap\)/.test(d) && !/approval/i.test(d.split("Your wallet will ask")[1] || ""), "ETH buy should need no approval");
   assert(!(await calls()).includes("wallet_sendCalls"), "sent before confirm");
-  await click('[role="dialog"] button', /Confirm in wallet/);
+  assert(await click('[role="dialog"] button', /Confirm in wallet/), "Confirm in wallet");
   await waitText(/Order not completed/, 30000);
   assert((await calls()).filter((m) => m === "wallet_sendCalls").length === 1, "wallet not asked exactly once");
   await dismissToast();
-  await click("#swap-panel button", /^usdc$/i);
+  assert(await click("#swap-panel button", /^usdc$/i), "Reset pay-with to USDC");
 });
 
 await step("Wallet on the wrong network is asked to switch to Base", async () => {
@@ -375,17 +387,17 @@ await step("Wallet on the wrong network is asked to switch to Base", async () =>
   await page.waitForSelector('[role="dialog"]', { timeout: 60000 });
   const c = await calls();
   assert(c.includes("wallet_switchEthereumChain"), "no switch request");
-  await click('[role="dialog"] button', /^Cancel$/);
+  assert(await click('[role="dialog"] button', /^Cancel$/), "Cancel review dialog");
 });
 
 await step("Agent basket: buy opens a multi-stock review or a clear funds message", async () => {
-  await tab("Agent");
+  assert(await tab("Agent"), "Agent tab");
   await waitText(/Buy basket for \$/, 60000);
-  await click("button", /^Buy basket for \$/);
+  assert(await click("button", /^Buy basket for \$/), "Buy basket button");
   await page.waitForFunction(() => document.querySelector('[role="dialog"]') || /Not enough USDC|at least \$/.test(document.body.innerText), { timeout: 90000 });
   const dlg = await page.$('[role="dialog"]');
   if (dlg) {
-    await click('[role="dialog"] button', /^Cancel$/);
+    assert(await click('[role="dialog"] button', /^Cancel$/), "Cancel agent review");
     return "review opened";
   }
   return "clear message shown (test wallet has little USDC)";
@@ -462,18 +474,19 @@ await step(`Portfolio: balances, P/L and visible Sell buttons at ${WIDTH}px`, as
 });
 
 await step("Sell 50% opens a sell review; nothing sent before Confirm", async () => {
+  assert(await tab("Portfolio"), "Portfolio tab");
   await setMock({});
-  await click("table button", /^50%$/);
+  assert(await click("table button", /^50%$/), "50% sell button");
   await page.waitForSelector('[role="dialog"]', { timeout: 60000 });
   const d = await page.$eval('[role="dialog"]', (e) => e.innerText);
   assert(/Sell/.test(d) && /USDC/.test(d), "not a sell review");
   assert(!(await calls()).some((m) => ["wallet_sendCalls", "eth_sendTransaction"].includes(m)), "sent before confirm");
-  await click('[role="dialog"] button', /^Cancel$/);
+  assert(await click('[role="dialog"] button', /^Cancel$/), "Cancel sell review");
 });
 
 await step("Agent limits: an unavailable stock is named, a weight limit is kept (rest stays in USDC), facts carry sources", async () => {
-  await tab("Agent");
-  await click("button", /^AI with limits$/, 20000);
+  assert(await tab("Agent"), "Agent tab");
+  assert(await click("button", /^AI with limits$/, 20000), "AI with limits preset");
   await page.waitForSelector('[data-testid="agent-limits"]', { timeout: 60000 });
   const limits = await page.$eval('[data-testid="agent-limits"]', (e) => e.innerText);
   assert(/Netflix/.test(limits) && /Not supported/i.test(limits) && /NFLXc/.test(limits), `Netflix not flagged: ${limits}`);
@@ -595,15 +608,52 @@ await step("Shared basket link opens the index builder with validated, normalize
 
 await step("Stats page loads with live onchain totals", async () => {
   // Right after a deploy the first scan answers {loading}: wait for it like the page does
-  let r = await fetch(URL_BASE + "/api/stats").then((x) => x.json());
+  const readStats = async () => {
+    const res = await fetch(URL_BASE + "/api/stats");
+    assert(res.ok || res.status === 202, `stats HTTP ${res.status}`);
+    return res.json();
+  };
+  let r = await readStats();
   for (let i = 0; i < 6 && r.loading; i++) {
     await sleep(10000);
-    r = await fetch(URL_BASE + "/api/stats").then((x) => x.json());
+    r = await readStats();
   }
   assert(r.ok && r.totals && typeof r.totals.trades === "number", `stats API: ${r.error || "bad shape"}`);
   await page.goto(URL_BASE + "/stats", { waitUntil: "load", timeout: 120000 });
   await waitText(/Builder Code attributed/, 60000);
   return `${r.totals.trades} trades, ${r.totals.wallets} wallets (team wallet excluded: ${r.excludesTeamTestWallet})`;
+});
+
+await step("New UI flows: Swap quick selector, Pro Terminal, Theme toggle, and Indexes builder actions", async () => {
+  await page.goto(URL_BASE + "/", { waitUntil: "load", timeout: 120000 });
+  await waitText(/Overview/, 30000);
+  assert(await click("button", /^Pro Terminal$/), "Pro Terminal toggle");
+  await page.waitForFunction(
+    () =>
+      [...document.querySelectorAll("button")].some(
+        (b) => /^Pro Terminal$/.test(b.textContent.trim()) && b.getAttribute("aria-pressed") === "true"
+      ),
+    { timeout: 10000 }
+  );
+  await page.waitForSelector("#swap-stock-select", { timeout: 15000 });
+  await page.select("#swap-stock-select", "MSFTc");
+  await page.waitForFunction(
+    () =>
+      document.getElementById("swap-stock-select")?.value === "MSFTc" &&
+      [...document.querySelectorAll("#swap-panel button")].some((b) => /of MSFTc\b/i.test(b.textContent)),
+    { timeout: 5000 }
+  );
+  assert(await click('button[aria-label*="light mode"]', /.*/, 5000), "Theme toggle button");
+  const theme = await page.evaluate(() => document.documentElement.dataset.theme);
+  assert(theme === "light", `expected light theme, got ${theme}`);
+  await page.evaluate(() => document.querySelector('button[aria-label*="dark mode"]')?.click());
+  assert(await tab("Indexes"), "Indexes tab");
+  assert(await click("button", /^Clear$/), "Indexes Clear button");
+  assert(await click("button", /^Equal$/), "Indexes Equal button");
+  await waitText(/10,?000 \/ 10,000 bps/, 5000);
+  assert(await tab("Market"), "Back to Market tab");
+  assert(await click("button", /^Overview$/, 5000), "Overview reset");
+  return "Pro Terminal, Swap selector, ThemeToggle & Indexes Equal verified";
 });
 
 await step("Disconnect, then refresh: stays disconnected", async () => {
@@ -618,9 +668,19 @@ await step("Disconnect, then refresh: stays disconnected", async () => {
   assert(!(await connected()), "reconnected after an explicit disconnect");
 });
 
-await step("FAQ, Terms, robots, sitemap respond; unknown page is 404", async () => {
+await step("FAQ, Terms, Verify, Preview, Stock, robots, sitemap respond; unknown page is 404", async () => {
   const st = [];
-  for (const [p, want] of [["/faq", 200], ["/terms", 200], ["/stats", 200], ["/robots.txt", 200], ["/sitemap.xml", 200], ["/no-such-page", 404]]) {
+  for (const [p, want] of [
+    ["/faq", 200],
+    ["/terms", 200],
+    ["/verify", 200],
+    ["/preview", 200],
+    ["/stock/NVDAc", 200],
+    ["/stats", 200],
+    ["/robots.txt", 200],
+    ["/sitemap.xml", 200],
+    ["/no-such-page", 404],
+  ]) {
     const r = await fetch(URL_BASE + p);
     if (r.status !== want) st.push(`${p}=${r.status}`);
   }
@@ -634,7 +694,8 @@ await step("No unexpected errors in the browser console", async () => {
 await step("No server errors (5xx) from the app's own API", async () => {
   assert(serverErrors.length === 0, serverErrors.slice(0, 3).join(" | "));
 });
-
-await browser.close();
+} finally {
+  await browser.close();
+}
 console.log(failures ? `\n❌ ${failures} step(s) failed` : `\n✅ All ${results.length} steps passed`);
 process.exitCode = failures ? 1 : 0;

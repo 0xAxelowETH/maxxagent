@@ -26,7 +26,7 @@ if (fs.existsSync(envPath)) {
 }
 
 const args = process.argv.slice(2);
-const opt = (name, def) => args.find((a) => a.startsWith(`--${name}=`))?.split("=")[1] ?? def;
+const opt = (name, def) => args.find((a) => a.startsWith(`--${name}=`))?.split("=").slice(1).join("=") ?? def;
 const EXECUTE = args.includes("--execute");
 const STOCK = opt("stock", "NVDAc");
 const rawPct = Number(opt("pct", "100"));
@@ -59,7 +59,7 @@ if (!stockAddr) {
 }
 
 const account = privateKeyToAccount(pk);
-const rpc = process.env.BASE_RPC_URL || "https://mainnet.base.org";
+const rpc = process.env.BASE_RPC_URL || process.env.NEXT_PUBLIC_BASE_RPC_URL || "https://mainnet.base.org";
 const pub = createPublicClient({ chain: base, transport: http(rpc, { timeout: 20000 }) });
 const wallet = createWalletClient({ account, chain: base, transport: http(rpc, { timeout: 20000 }) });
 const suffix = Attribution.toDataSuffix({ codes: [BUILDER_CODE] });
@@ -88,8 +88,19 @@ if (!q.ok) {
   console.error(`❌ /api/swap: ${q.error || res.status} (is npm run dev running at ${APP}?)`);
   process.exit(1);
 }
+const sellAttributed = (() => {
+  try {
+    return Boolean(Attribution.fromData(q.tx.data)?.codes?.includes(BUILDER_CODE));
+  } catch {
+    return false;
+  }
+})();
 console.log(`  quote: ${q.amountInTokens} ${STOCK} → ~${q.amountOutUsdc} USDC | cost ${q.costPct.toFixed(2)}% | via ${q.venues.join("+")}`);
-console.log(`  router ${q.routerAddress} | Builder Code ${q.builderCode} attached: ${q.tx.data.endsWith("80218021802180218021802180218021")}`);
+console.log(`  router ${q.routerAddress} | Builder Code ${q.builderCode} attached: ${sellAttributed}`);
+if (!sellAttributed) {
+  console.error("❌ Quoted sell calldata is missing the Builder Code attribution suffix");
+  process.exit(1);
+}
 const allowance = await pub.readContract({ address: stockAddr, abi: ERC20, functionName: "allowance", args: [account.address, q.routerAddress] });
 const needsApprove = allowance < BigInt(q.amountInRaw);
 console.log(`  approval needed: ${needsApprove ? `yes (exact ${q.amountInTokens} ${STOCK})` : "no"}`);
@@ -119,5 +130,13 @@ for (const log of receipt.logs) {
 }
 console.log(`  received onchain: ${formatUnits(received, 6)} USDC (quoted ~${q.amountOutUsdc})`);
 const tx = await pub.getTransaction({ hash: swapHash });
-console.log(`  Builder Code in calldata: ${tx.input.endsWith("80218021802180218021802180218021") ? "✅ yes" : "❌ no"}`);
+const onchainAttributed = (() => {
+  try {
+    return Boolean(Attribution.fromData(tx.input)?.codes?.includes(BUILDER_CODE));
+  } catch {
+    return false;
+  }
+})();
+console.log(`  Builder Code in calldata: ${onchainAttributed ? "✅ yes" : "❌ no"}`);
 console.log(`\nDone. Sell: https://basescan.org/tx/${swapHash}`);
+if (receipt.status !== "success" || !onchainAttributed) process.exitCode = 1;

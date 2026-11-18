@@ -1,23 +1,34 @@
 // Unit checks for the mandate reader (src/lib/mandate.ts). No network.
 //   npm run test:agent
-import { readFileSync, writeFileSync, mkdtempSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import ts from "typescript";
 
-const js = ts.transpileModule(readFileSync("src/lib/mandate.ts", "utf8"), {
-  compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
-}).outputText;
-const file = join(mkdtempSync(join(tmpdir(), "maxx-mandate-")), "mandate.mjs");
-writeFileSync(file, js);
-const { parseMandate } = await import(pathToFileURL(file).href);
-const wjs = ts.transpileModule(readFileSync("src/lib/weights.ts", "utf8"), {
-  compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
-}).outputText;
-const wfile = join(mkdtempSync(join(tmpdir(), "maxx-weights-")), "weights.mjs");
-writeFileSync(wfile, wjs);
-const { capWeightsBps, roundWeightsBps } = await import(pathToFileURL(wfile).href);
+const dirA = mkdtempSync(join(tmpdir(), "maxx-mandate-"));
+const dirB = mkdtempSync(join(tmpdir(), "maxx-weights-"));
+const cleanup = () => {
+  rmSync(dirA, { recursive: true, force: true });
+  rmSync(dirB, { recursive: true, force: true });
+};
+let parseMandate, capWeightsBps, roundWeightsBps;
+try {
+  const js = ts.transpileModule(readFileSync("src/lib/mandate.ts", "utf8"), {
+    compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
+  }).outputText;
+  const file = join(dirA, "mandate.mjs");
+  writeFileSync(file, js);
+  ({ parseMandate } = await import(pathToFileURL(file).href));
+  const wjs = ts.transpileModule(readFileSync("src/lib/weights.ts", "utf8"), {
+    compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
+  }).outputText;
+  const wfile = join(dirB, "weights.mjs");
+  writeFileSync(wfile, wjs);
+  ({ capWeightsBps, roundWeightsBps } = await import(pathToFileURL(wfile).href));
+} finally {
+  cleanup();
+}
 
 let fail = 0;
 const ok = (c, m) => {
@@ -217,6 +228,55 @@ ok(w && w.reduce((a, b) => a + b, 0) === 10000 && Math.max(...w) <= 3334, `tight
 ok(capWeightsBps([5000, 5000], 4000) === null, "an impossible cap (2 x 40%) is refused, never broken");
 w = roundWeightsBps([1, 1, 1]);
 ok(w && w.reduce((a, b) => a + b, 0) === 10000, `rounding thirds sums to 10000 -> ${JSON.stringify(w)}`);
+
+// Pass 9 NLP regressions
+m = parseMandate("no tesla and buy netflix");
+ok(
+  m.exclude.includes("TSLAc") && m.unavailable.some((u) => u.token === "NFLXc"),
+  `"no tesla and buy netflix" keeps unavailable Netflix -> unavail=${JSON.stringify(m.unavailable.map((u) => u.token))}`,
+);
+m = parseMandate("AI stocks with no more than 25% per stock and Palantir");
+ok(
+  m.maxWeightPct === 25 && m.unavailable.some((u) => u.token === "PLTRc"),
+  `quantifier cap phrase does not wipe unavailable Palantir -> max=${m.maxWeightPct} unavail=${JSON.stringify(m.unavailable.map((u) => u.token))}`,
+);
+m = parseMandate("keep 80% in stocks, buy Apple and Nvidia");
+ok(
+  m.cashPct === undefined && m.include.includes("AAPLc") && m.include.includes("NVDAc"),
+  `"keep 80% in stocks" is not misread as cash -> cash=${m.cashPct}`,
+);
+m = parseMandate("no aggressive stocks, buy Nvidia");
+ok(
+  m.riskHint !== "Aggressive" && m.include.includes("NVDAc"),
+  `negated risk hint is suppressed -> risk=${m.riskHint}`,
+);
+m = parseMandate("cap Strategy Inc at 25% and buy Nvidia");
+ok(
+  m.weightsPct.MSTRc === undefined && m.include.includes("NVDAc"),
+  `multi-word CAP_BEFORE matches "cap Strategy Inc at 25%" -> w=${JSON.stringify(m.weightsPct)}`,
+);
+
+// Pass 10 NLP regressions
+m = parseMandate("AI stocks with no more than 25% per stock and no tesla");
+ok(
+  m.maxWeightPct === 25 && m.exclude.includes("TSLAc") && !m.include.includes("TSLAc"),
+  `"no more than 25% ... and no tesla" keeps trailing exclusion -> excl=${JSON.stringify(m.exclude)}`,
+);
+m = parseMandate("keep 60% for Apple and 40% for Microsoft");
+ok(
+  m.cashPct === undefined && m.weightsPct.AAPLc === 60 && m.weightsPct.MSFTc === 40,
+  `"keep 60% for Apple" is a stock weight, not cash -> cash=${m.cashPct} w=${JSON.stringify(m.weightsPct)}`,
+);
+m = parseMandate("hold 60% for stocks, buy Nvidia and Apple");
+ok(
+  m.cashPct === undefined && m.include.includes("NVDAc") && m.include.includes("AAPLc"),
+  `"hold 60% for stocks" is not misread as cash -> cash=${m.cashPct}`,
+);
+m = parseMandate("no safe stocks, buy aggressive AI");
+ok(
+  m.riskHint === "Aggressive" && m.themes.includes("ai"),
+  `negated conservative term does not override aggressive hint -> risk=${m.riskHint}`,
+);
 
 console.log(fail ?`\n❌ ${fail} check(s) failed` : "\n✅ All mandate checks passed");
 process.exitCode = fail ? 1 : 0;

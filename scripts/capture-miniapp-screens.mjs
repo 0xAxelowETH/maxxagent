@@ -9,9 +9,12 @@ const arg = (n, d) => process.argv.find((a) => a.startsWith(`--${n}=`))?.split("
 const BASE = arg("url", "http://localhost:3000").replace(/\/$/, "");
 const BROWSER =
   process.env.CHROME_PATH ||
+  process.env.BROWSER_PATH ||
   [
-    "C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe",
+    `${process.env.LOCALAPPDATA || ""}/Google/Chrome/Application/chrome.exe`,
     "C:/Program Files/Google/Chrome/Application/chrome.exe",
+    "C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe",
+    "C:/Program Files/Microsoft/Edge/Application/msedge.exe",
     "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
     "/usr/bin/google-chrome",
   ].find((p) => fs.existsSync(p));
@@ -27,9 +30,11 @@ const browser = await puppeteer.launch({ executablePath: BROWSER, headless: "new
 try {
 const page = await browser.newPage();
 await page.setViewport({ width: 428, height: 926, deviceScaleFactor: 3, isMobile: true, hasTouch: true });
-await page.evaluateOnNewDocument(() =>
-  localStorage.setItem("maxxagent_terms_v1", JSON.stringify({ acceptedAt: new Date().toISOString(), version: "1" }))
-);
+await page.evaluateOnNewDocument(() => {
+  try {
+    localStorage.setItem("maxxagent_terms_v1", JSON.stringify({ acceptedAt: new Date().toISOString(), version: "1" }));
+  } catch {}
+});
 const scrollTo = (sel) =>
   page.evaluate((sel) => {
     const el = typeof sel === "string" ? document.querySelector(sel) : null;
@@ -47,15 +52,19 @@ await sleep(800);
 await page.screenshot({ path: path.join(out, "screen-1.png") });
 
 // 2) Agent: a plain-language mandate and how it was read
-await page.evaluate(() => [...document.querySelectorAll("nav button")].find((b) => /^Agent/.test(b.textContent.trim()))?.click());
+await page.evaluate(() => [...document.querySelectorAll("nav button")].find((b) => b.offsetParent !== null && /^Agent/.test(b.textContent.trim()))?.click());
 await sleep(1500);
+await page.waitForFunction(
+  () => Boolean([...document.querySelectorAll("button")].find((b) => !b.disabled && /^Run agent/.test(b.textContent.trim()))),
+  { timeout: 60000 }
+);
 await page.evaluate(() => {
   const ta = document.querySelector("textarea");
   const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value").set;
   setter.call(ta, "AI and cloud, no Tesla, 3 stocks, equal weight");
   ta.dispatchEvent(new Event("input", { bubbles: true }));
 });
-await page.evaluate(() => [...document.querySelectorAll("button")].find((b) => /^Run agent/.test(b.textContent.trim()))?.click());
+await page.evaluate(() => [...document.querySelectorAll("button")].find((b) => !b.disabled && /^Run agent/.test(b.textContent.trim()))?.click());
 await page.waitForSelector('[data-testid="agent-limits"]', { timeout: 60000 });
 await sleep(1500);
 await scrollTo('[data-testid="agent-limits"]');
@@ -72,5 +81,4 @@ await page.screenshot({ path: path.join(out, "screen-3.png") });
   await browser.close();
 }
 
-await browser.close();
 for (const f of fs.readdirSync(out)) console.log(f, fs.statSync(path.join(out, f)).size, "bytes");

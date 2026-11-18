@@ -262,7 +262,12 @@ function Chart({
         <span className="flex flex-wrap items-center gap-3 font-mono tabular-nums">
           {hoverT !== null && (
             <span className="text-cyan-200">
-              {new Date(hoverT * 1000).toLocaleString("en-US", { month: "short", day: "numeric", hour: tf === "30D" ? undefined : "2-digit" })}
+              {new Date(hoverT * 1000).toLocaleString("en-US", {
+                month: "short",
+                day: "numeric",
+                hour: tf === "30D" ? undefined : "2-digit",
+                minute: tf === "24H" ? "2-digit" : undefined,
+              })}
               {navAt ? ` · NAV ${usd(navAt[1])}` : ""}
               {dexAt ? ` · DEX ${usd(dexAt[1])}` : ""}
             </span>
@@ -284,6 +289,8 @@ function Chart({
           aria-label={`${tfLabel} price chart`}
           onMouseMove={(e) => scrubAt(e.clientX, e.currentTarget.getBoundingClientRect())}
           onTouchMove={(e) => e.touches[0] && scrubAt(e.touches[0].clientX, e.currentTarget.getBoundingClientRect())}
+          onTouchEnd={() => setHoverT(null)}
+          onTouchCancel={() => setHoverT(null)}
           onMouseLeave={() => setHoverT(null)}
         >
           {hist.nav.length > 1 && <path d={path(hist.nav)} fill="none" stroke={color} strokeWidth="2" vectorEffect="non-scaling-stroke" />}
@@ -295,35 +302,42 @@ function Chart({
             <line x1={x(hoverT)} x2={x(hoverT)} y1={0} y2={H} stroke="rgba(148, 163, 184, 0.5)" strokeDasharray="3 3" vectorEffect="non-scaling-stroke" />
           )}
         </svg>
-        {/* News dots: HTML on top of the SVG so they stay round; hover for the title, click for the original */}
-        {marks.map(({ n, t }) => {
-          const left = (x(t) / W) * 100;
-          const k = kindOf(n);
-          return (
-            <a
-              key={n.url}
-              href={n.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="group absolute -translate-x-1/2 -translate-y-1/2"
-              style={{ left: `${left}%`, top: `${(y(priceAt(t)) / H) * 100}%` }}
-              aria-label={`${KIND_LABEL[k] ?? "News"}: ${n.title}`}
-            >
-              <span className="block h-3 w-3 rounded-full border-2 border-[#0b1120] shadow" style={{ background: KIND_DOT[k] ?? "#94a3b8" }} />
-              <span
-                className={`pointer-events-none absolute bottom-4 z-10 hidden w-56 rounded-lg border border-slate-700 bg-[#050811] p-2 text-[10px] leading-snug text-slate-300 shadow-xl group-hover:block group-focus:block ${
-                  left > 60 ? "right-0" : "left-0"
-                }`}
+        {/* News dots: HTML on top of the SVG so they stay round; staggered to avoid collisions */}
+        {(() => {
+          const placed: number[] = [];
+          return marks.map(({ n, t }) => {
+            const left = (x(t) / W) * 100;
+            const top = Math.max(8, Math.min(92, (y(priceAt(t)) / H) * 100));
+            const closeCount = placed.filter((prevL) => Math.abs(prevL - left) < 5).length;
+            placed.push(left);
+            const dy = closeCount === 0 ? 0 : closeCount % 2 === 1 ? -11 * Math.ceil(closeCount / 2) : 11 * Math.ceil(closeCount / 2);
+            const k = kindOf(n);
+            const horiz = left > 72 ? "right-0" : left < 28 ? "left-0" : "left-1/2 -translate-x-1/2";
+            const vert = top < 35 ? "top-4" : "bottom-4";
+            return (
+              <a
+                key={n.url}
+                href={n.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="group absolute -translate-x-1/2 -translate-y-1/2 hover:z-20"
+                style={{ left: `${left}%`, top: `calc(${top}% + ${dy}px)` }}
+                aria-label={`${KIND_LABEL[k] ?? "News"}: ${n.title}`}
               >
-                <span className="block font-bold text-white">{n.title}</span>
-                <span className="mt-0.5 block text-slate-500">
-                  {KIND_LABEL[k] ?? "News"} · {new Date(n.publishedAt).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "America/New_York" })}
-                  {n.changePct !== null ? ` · ${n.changePct >= 0 ? "+" : ""}${n.changePct.toFixed(2)}% since` : ""}
+                <span className="block h-3 w-3 rounded-full border-2 border-[#0b1120] shadow" style={{ background: KIND_DOT[k] ?? "#94a3b8" }} />
+                <span
+                  className={`pointer-events-none absolute z-20 hidden w-48 sm:w-56 rounded-lg border border-slate-700 bg-[#050811] p-2 text-[10px] leading-snug text-slate-300 shadow-xl group-hover:block group-focus:block ${horiz} ${vert}`}
+                >
+                  <span className="block font-bold text-white">{n.title}</span>
+                  <span className="mt-0.5 block text-slate-500">
+                    {KIND_LABEL[k] ?? "News"} · {new Date(n.publishedAt).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "America/New_York" })}
+                    {n.changePct !== null ? ` · ${n.changePct >= 0 ? "+" : ""}${n.changePct.toFixed(2)}% since` : ""}
+                  </span>
                 </span>
-              </span>
-            </a>
-          );
-        })}
+              </a>
+            );
+          });
+        })()}
       </div>
       <div className="mt-1.5 flex items-center justify-between font-mono tabular-nums text-[10px] text-slate-400">
         <span>{usd(lo)}</span>

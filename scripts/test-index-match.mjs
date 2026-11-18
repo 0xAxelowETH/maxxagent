@@ -1,17 +1,23 @@
 // Unit checks for matching onchain buys to published indexes (src/lib/indexMatch.ts). No network, no wallet.
 //   npm run test:indexmatch
-import { readFileSync, writeFileSync, mkdtempSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import ts from "typescript";
 
-const js = ts.transpileModule(readFileSync("src/lib/indexMatch.ts", "utf8"), {
-  compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
-}).outputText;
-const file = join(mkdtempSync(join(tmpdir(), "maxx-indexmatch-")), "indexMatch.mjs");
-writeFileSync(file, js);
-const { matchIndexBuys } = await import(pathToFileURL(file).href);
+const dir = mkdtempSync(join(tmpdir(), "maxx-indexmatch-"));
+let matchIndexBuys;
+try {
+  const js = ts.transpileModule(readFileSync("src/lib/indexMatch.ts", "utf8"), {
+    compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
+  }).outputText;
+  const file = join(dir, "indexMatch.mjs");
+  writeFileSync(file, js);
+  ({ matchIndexBuys } = await import(pathToFileURL(file).href));
+} finally {
+  rmSync(dir, { recursive: true, force: true });
+}
 
 let fail = 0;
 const ok = (c, m) => {

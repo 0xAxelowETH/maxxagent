@@ -18,7 +18,7 @@ export const HIDDEN = new Set(
 );
 const KNOWN = new Map(BASE_TOKENIZED_STOCKS.map((s) => [s.b20Address.toLowerCase(), s.symbol]));
 // Strip control / bidi-override characters so a name can't break or spoof the layout
-const cleanText = (v: string) => v.replace(/[\u0000-\u001f\u007f-\u009f​-‏‪-‮⁦-⁩]/g, "").trim();
+const cleanText = (v: string) => v.replace(/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2066-\u2069]/g, "").trim();
 
 const client = createPublicClient({ chain: base, transport: baseTransport({ timeout: 10000 }), batch: { multicall: true } });
 

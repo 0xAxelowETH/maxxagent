@@ -22,6 +22,16 @@ import {
 } from "viem";
 import { base } from "viem/chains";
 import { Attribution } from "ox/erc8021";
+import { loadEnv } from "./registry-common.mjs";
+
+loadEnv();
+
+const alignedWithSuffix = (calldata, suffix) => {
+  const clean = calldata.replace(/^0x/i, "");
+  const sfx = suffix.replace(/^0x/i, "");
+  const padBytes = (32 - ((clean.length / 2 + sfx.length / 2) % 32)) % 32;
+  return `0x${clean}${"00".repeat(padBytes)}${sfx}`;
+};
 
 const USDC = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
 const TEST_USER = "0x000000000000000000000000000000000000dEaD";
@@ -87,7 +97,7 @@ async function testStock(symbol, tokenOut) {
   }
 
   const suffix = Attribution.toDataSuffix({ codes: [BUILDER_CODE] });
-  const data = `${b.data.data}${suffix.slice(2)}`;
+  const data = alignedWithSuffix(b.data.data, suffix);
 
   const venues = [...new Set(routeSummary.route.flat().map((h) => h.exchange))].join("+");
   const outUsd = Number(routeSummary.amountOutUsd);
@@ -129,16 +139,25 @@ async function testStock(symbol, tokenOut) {
 }
 
 console.log(`Testing USDC -> B20 stock swaps for $${usd} each (Builder Code: ${BUILDER_CODE})\n`);
+let failures = 0;
 for (const [symbol, addr] of Object.entries(STOCKS)) {
   // KyberSwap answers "Forbidden" to quick bursts from one client: space the stocks out
   await new Promise((res) => setTimeout(res, 1500));
   const r = await testStock(symbol, addr);
   if (r.ok) {
+    const costOk = Number.isFinite(r.costPct) && r.costPct <= 1.5;
+    if (!r.attributed || !costOk) failures++;
+    const tag = !r.attributed ? " (missing builderCode)" : !costOk ? " (>1.5% cost)" : "";
     console.log(
-      `✅ ${symbol.padEnd(7)} out ${r.simulatedOut} sh  ≈ $${r.outUsd.toFixed(2)}  cost ${r.costPct.toFixed(2)}%  via ${r.venues}  builderCode=${r.attributed}`
+      `${r.attributed && costOk ? "✅" : "⚠️"} ${symbol.padEnd(7)} out ${r.simulatedOut} sh  ≈ $${r.outUsd.toFixed(2)}  cost ${r.costPct.toFixed(2)}%  via ${r.venues}  builderCode=${r.attributed}${tag}`
     );
   } else {
+    failures++;
     console.log(`❌ ${symbol.padEnd(7)} ${r.reason}${r.venues ? `  via ${r.venues}` : ""}`);
   }
   await new Promise((s) => setTimeout(s, 400));
+}
+if (failures > 0) {
+  console.error(`\n❌ ${failures} stock route check(s) failed`);
+  process.exitCode = 1;
 }

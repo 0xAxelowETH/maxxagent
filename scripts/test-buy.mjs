@@ -12,7 +12,7 @@
  */
 import fs from "node:fs";
 import path from "node:path";
-import { createPublicClient, createWalletClient, encodeFunctionData, formatEther, formatUnits, http, parseAbi } from "viem";
+import { createPublicClient, createWalletClient, encodeAbiParameters, encodeFunctionData, formatEther, formatUnits, http, keccak256, pad, parseAbi, toHex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { base } from "viem/chains";
 import { Attribution } from "ox/erc8021";
@@ -28,7 +28,7 @@ if (fs.existsSync(envPath)) {
 }
 
 const args = process.argv.slice(2);
-const opt = (name, def) => args.find((a) => a.startsWith(`--${name}=`))?.split("=")[1] ?? def;
+const opt = (name, def) => args.find((a) => a.startsWith(`--${name}=`))?.split("=").slice(1).join("=") ?? def;
 const EXECUTE = args.includes("--execute");
 const STOCK = opt("stock", "NVDAc");
 const USD = Number(opt("usd", "1"));
@@ -65,7 +65,7 @@ if (!(USD >= 1 && USD <= 5)) {
 }
 
 const account = privateKeyToAccount(pk);
-const rpc = process.env.BASE_RPC_URL || "https://mainnet.base.org";
+const rpc = process.env.BASE_RPC_URL || process.env.NEXT_PUBLIC_BASE_RPC_URL || "https://mainnet.base.org";
 const pub = createPublicClient({ chain: base, transport: http(rpc, { timeout: 20000 }) });
 const wallet = createWalletClient({ account, chain: base, transport: http(rpc, { timeout: 20000 }) });
 const stockAddr = STOCKS[STOCK];
@@ -100,8 +100,19 @@ if (!q.ok) {
   console.error(`❌ /api/swap: ${q.error || res.status} (is npm run dev running at ${APP}?)`);
   process.exit(1);
 }
+const quotedAttributed = (() => {
+  try {
+    return Boolean(Attribution.fromData(q.tx.data)?.codes?.includes(BUILDER_CODE));
+  } catch {
+    return false;
+  }
+})();
 console.log(`  quote: ~${q.amountOutShares} ${STOCK} (≈ $${q.amountOutUsd.toFixed(2)}) | cost ${q.costPct.toFixed(2)}% | via ${q.venues.join("+")}`);
-console.log(`  router ${q.routerAddress} | Builder Code ${q.builderCode} attached: ${q.tx.data.endsWith("80218021802180218021802180218021")}`);
+console.log(`  router ${q.routerAddress} | Builder Code ${q.builderCode} attached: ${quotedAttributed}`);
+if (!quotedAttributed) {
+  console.error("❌ Quoted swap calldata is missing the Builder Code attribution suffix");
+  process.exit(1);
+}
 
 let needsApprove = false;
 if (PAY !== "eth") {
@@ -117,15 +128,32 @@ if (PAY !== "eth") {
 }
 
 if (!EXECUTE) {
-  // Simulate the swap with a state override for the allowance so it works even before approving
+  // Simulate the swap with a USDC balance/allowance state override when needed so dry runs still verify the route
+  let simFailed = false;
+  const mapSlot = (key, slot) => keccak256(encodeAbiParameters([{ type: "address" }, { type: "uint256" }], [key, BigInt(slot)]));
+  const nestedSlot = (owner, spender, slot) =>
+    keccak256(encodeAbiParameters([{ type: "address" }, { type: "bytes32" }], [spender, mapSlot(owner, slot)]));
+  const stateOverride =
+    PAY !== "eth" && needsApprove
+      ? [
+          {
+            address: USDC,
+            stateDiff: [
+              { slot: mapSlot(account.address, 9), value: pad(toHex(BigInt(q.amountInRaw) * 10n)) },
+              { slot: nestedSlot(account.address, q.routerAddress, 10), value: pad(toHex(BigInt(q.amountInRaw) * 10n)) },
+            ],
+          },
+        ]
+      : undefined;
   try {
-    await pub.call({ account: account.address, to: q.tx.to, data: q.tx.data, value: BigInt(q.tx.value || "0") });
+    await pub.call({ account: account.address, to: q.tx.to, data: q.tx.data, value: BigInt(q.tx.value || "0"), stateOverride });
     console.log("  simulation: ✅ swap would succeed");
   } catch (e) {
-    console.log(`  simulation: ${needsApprove ? "⚠️ reverts until USDC is approved (expected)" : "❌ " + (e.shortMessage || e.message).split("\n")[0]}`);
+    simFailed = true;
+    console.log(`  simulation: ❌ ${(e.shortMessage || e.message).split("\n")[0]}`);
   }
   console.log("\nNothing was sent. Run with --execute to perform the real test buy.");
-  process.exit(0);
+  process.exit(simFailed ? 1 : 0);
 }
 
 const links = [];
@@ -152,5 +180,13 @@ for (const log of receipt.logs) {
 }
 console.log(`  received onchain: ${formatUnits(received, 8)} ${STOCK} (quoted ~${q.amountOutShares})`);
 const tx = await pub.getTransaction({ hash: swapHash });
-console.log(`  Builder Code in calldata: ${tx.input.endsWith("80218021802180218021802180218021") ? "✅ yes" : "❌ no"}`);
+const onchainAttributed = (() => {
+  try {
+    return Boolean(Attribution.fromData(tx.input)?.codes?.includes(BUILDER_CODE));
+  } catch {
+    return false;
+  }
+})();
+console.log(`  Builder Code in calldata: ${onchainAttributed ? "✅ yes" : "❌ no"}`);
 console.log(`\nDone. Swap: https://basescan.org/tx/${swapHash}`);
+if (receipt.status !== "success" || !onchainAttributed) process.exitCode = 1;

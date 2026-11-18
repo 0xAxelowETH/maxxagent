@@ -35,7 +35,7 @@ export function matchIndexBuys(trades: MatchTrade[], indexes: MatchIndex[]): Ind
 
   const byWallet = new Map<string, MatchTrade[]>();
   for (const t of trades) {
-    if (t.side !== "buy" || !(t.usd > 0)) continue;
+    if (t.side !== "buy" || !Number.isFinite(t.usd) || !(t.usd > 0)) continue;
     const list = byWallet.get(t.wallet) || [];
     list.push(t);
     byWallet.set(t.wallet, list);

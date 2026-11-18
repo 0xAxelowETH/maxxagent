@@ -277,11 +277,13 @@ html[data-theme="light"] .bg-\[\#050914\]\/90,
 html[data-theme="light"] .bg-\[\#050a16\],
 html[data-theme="light"] .bg-\[\#050a18\],
 html[data-theme="light"] .bg-\[\#050a18\]\/80,
+html[data-theme="light"] .bg-\[\#050a18\]\/90,
 html[data-theme="light"] .bg-\[\#050a18\]\/95,
 html[data-theme="light"] .bg-\[\#060b16\],
 html[data-theme="light"] .bg-\[\#060c18\],
 html[data-theme="light"] .bg-\[\#070b14\],
 html[data-theme="light"] .bg-\[\#070d1d\]\/95,
+html[data-theme="light"] .bg-\[\#080f20\],
 html[data-theme="light"] .bg-\[\#081022\],
 html[data-theme="light"] .bg-\[\#091022\]\/90,
 html[data-theme="light"] .bg-\[\#0a1226\]\/90 {
@@ -292,13 +294,39 @@ html[data-theme="light"] .bg-\[\#0b1120\],
 html[data-theme="light"] .bg-\[\#0b1120\]\/95,
 html[data-theme="light"] .bg-\[\#0b1326\],
 html[data-theme="light"] .bg-\[\#0b152e\],
+html[data-theme="light"] .from-\[\#0d1428\],
+html[data-theme="light"] .from-\[\#101a33\] {
+  background-color: #ffffff !important;
+  background-image: none !important;
+}
+
+html[data-theme="light"] .bg-\[\#14070c\],
+html[data-theme="light"] .bg-rose-950\/40 {
+  background-color: #fff1f2 !important;
+}
+html[data-theme="light"] .bg-\[\#141006\] {
+  background-color: #fffbeb !important;
+}
+html[data-theme="light"] .bg-emerald-950\/40 {
+  background-color: #ecfdf5 !important;
+}
+
 html[data-theme="light"] .bg-slate-900,
+html[data-theme="light"] .bg-slate-900\/40,
 html[data-theme="light"] .bg-slate-800,
 html[data-theme="light"] .bg-slate-800\/90,
 html[data-theme="light"] .bg-slate-800\/80,
 html[data-theme="light"] .bg-slate-800\/70,
 html[data-theme="light"] .bg-slate-800\/60 {
-  background-color: #ffffff !important;
+  background-color: #eef3fb !important;
+}
+
+html[data-theme="light"] .hover\:bg-slate-800:hover,
+html[data-theme="light"] .hover\:bg-slate-800\/60:hover,
+html[data-theme="light"] .hover\:bg-slate-800\/50:hover,
+html[data-theme="light"] .hover\:bg-slate-800\/40:hover,
+html[data-theme="light"] .hover\:bg-slate-700:hover {
+  background-color: #e2e8f0 !important;
 }
 
 html[data-theme="light"] .border-slate-800,
@@ -310,6 +338,7 @@ html[data-theme="light"] .border-slate-700,
 html[data-theme="light"] .border-slate-700\/90,
 html[data-theme="light"] .border-slate-700\/80,
 html[data-theme="light"] .divide-slate-800 > :not(:last-child),
+html[data-theme="light"] .divide-slate-800\/70 > :not(:last-child),
 html[data-theme="light"] .divide-slate-800\/60 > :not(:last-child) {
   border-color: #d6e0ef !important;
 }
@@ -319,14 +348,16 @@ html[data-theme="light"] .hover\:text-white:hover {
   color: #0f172a !important;
 }
 html[data-theme="light"] .text-white[class*="bg-gradient-to-"],
+html[data-theme="light"] [class*="bg-gradient-to-"]:not(.from-\[\#0d1428\]):not(.from-\[\#101a33\]) .text-white,
 html[data-theme="light"] .text-white.bg-\[\#4C6FFF\],
 html[data-theme="light"] .text-white.bg-emerald-600,
 html[data-theme="light"] .text-white.bg-emerald-600\/80,
+html[data-theme="light"] .text-white.bg-rose-600,
 html[data-theme="light"] .text-white.bg-rose-500\/80,
 html[data-theme="light"] .text-white.bg-slate-700,
 html[data-theme="light"] .text-white[style*="background"],
-html[data-theme="light"] [data-testid="market-heatmap"] .text-white,
-html[data-theme="light"] [data-testid="market-heatmap"] .text-white\/70 {
+html[data-theme="light"] [data-heatmap-tiles] .text-white,
+html[data-theme="light"] [data-heatmap-tiles] .text-white\/70 {
   color: #ffffff !important;
 }
 
@@ -341,7 +372,9 @@ html[data-theme="light"] textarea::placeholder {
 }
 
 html[data-theme="light"] .text-slate-100,
-html[data-theme="light"] .text-slate-200 {
+html[data-theme="light"] .text-slate-200,
+html[data-theme="light"] .hover\:text-slate-200:hover,
+html[data-theme="light"] .hover\:text-slate-300:hover {
   color: #1e293b !important;
 }
 html[data-theme="light"] .text-slate-300 {
@@ -352,19 +385,25 @@ html[data-theme="light"] .text-slate-500 {
   color: #475569 !important;
 }
 
+html[data-theme="light"] .text-emerald-100,
 html[data-theme="light"] .text-emerald-200,
 html[data-theme="light"] .text-emerald-300,
+html[data-theme="light"] .text-emerald-300\/90,
 html[data-theme="light"] .text-emerald-400 {
   color: #047857 !important;
 }
+html[data-theme="light"] .text-cyan-100,
 html[data-theme="light"] .text-cyan-200,
 html[data-theme="light"] .text-cyan-300,
-html[data-theme="light"] .text-cyan-400 {
+html[data-theme="light"] .text-cyan-400,
+html[data-theme="light"] .text-cyan-400\/80,
+html[data-theme="light"] .text-sky-300 {
   color: #0369a1 !important;
 }
 html[data-theme="light"] .text-blue-100,
 html[data-theme="light"] .text-blue-200,
-html[data-theme="light"] .text-blue-300 {
+html[data-theme="light"] .text-blue-300,
+html[data-theme="light"] .text-blue-400 {
   color: #3730a3 !important;
 }
 html[data-theme="light"] .text-rose-200,
@@ -374,16 +413,34 @@ html[data-theme="light"] .text-rose-400 {
 }
 html[data-theme="light"] .text-amber-100,
 html[data-theme="light"] .text-amber-200,
-html[data-theme="light"] .text-amber-300 {
+html[data-theme="light"] .text-amber-200\/80,
+html[data-theme="light"] .text-amber-300,
+html[data-theme="light"] .text-amber-300\/80,
+html[data-theme="light"] .text-amber-400 {
   color: #b45309 !important;
 }
 html[data-theme="light"] .text-indigo-100,
-html[data-theme="light"] .text-indigo-200 {
+html[data-theme="light"] .text-indigo-200,
+html[data-theme="light"] .text-indigo-200\/80,
+html[data-theme="light"] .text-indigo-300,
+html[data-theme="light"] .text-purple-300 {
   color: #3730a3 !important;
+}
+html[data-theme="light"] .text-pink-300 {
+  color: #be185d !important;
 }
 
 html[data-theme="light"] .maxx-wordmark-accent {
   background-image: linear-gradient(to right, #0284c7, #4338ca, #059669);
+}
+html[data-theme="light"] .maxx-hero-accent {
+  background-image: linear-gradient(to right, #1d4ed8, #0369a1, #047857);
+}
+html[data-theme="light"] img[src$="/logos/brands/x.svg"] {
+  filter: invert(1);
+}
+html[data-theme="light"] .bg-\[\#4C6FFF\] img[src$="/logos/brands/x.svg"] {
+  filter: none;
 }
 
 html[data-theme="light"] svg text {

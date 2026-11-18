@@ -266,7 +266,8 @@ async function refresh(): Promise<StatsState> {
   if (persisted && (!state || persisted.scannedTo >= state.scannedTo)) {
     const merged = new Map(state?.trades ?? []);
     for (const [k, v] of persisted.trades) merged.set(k, v);
-    state = { scannedTo: persisted.scannedTo, trades: merged, at: persisted.at, since: persisted.since };
+    const prevAt = persisted.at > 0 ? persisted.at : state?.at ?? 0;
+    state = { scannedTo: persisted.scannedTo, trades: merged, at: prevAt, since: persisted.since };
   }
   const latest = await client.getBlockNumber();
   const since = state?.since ?? Number((await withRetry(() => client.getBlock({ blockNumber: START_BLOCK }))).timestamp);
@@ -277,6 +278,7 @@ async function refresh(): Promise<StatsState> {
   for (let a = from; a <= latest; a += CHUNK) ranges.push([a, a + CHUNK - 1n > latest ? latest : a + CHUNK - 1n]);
 
   let currentScannedTo = state ? state.scannedTo : START_BLOCK - 1n;
+  let incomplete = false;
   // Scan chronologically in batches so cold starts checkpoint progress to KV before hitting Vercel's 60s limit
   const BATCH_SIZE = CONCURRENCY * 3;
   for (let startIdx = 0; startIdx < ranges.length; startIdx += BATCH_SIZE) {
@@ -322,13 +324,17 @@ async function refresh(): Promise<StatsState> {
     }
     const batchEnd = batch[batch.length - 1][1];
     currentScannedTo = failedMinBlock !== null ? failedMinBlock - 1n : batchEnd;
-    const partialState: StatsState = { scannedTo: currentScannedTo, trades, at: Date.now(), since };
-    state = partialState;
-    await savePersistedState(partialState);
-    if (failedMinBlock !== null) break;
+    // Mark checkpoint `at: 0` so intermediate/incomplete progress is never mistaken for a fresh completed scan
+    const checkpoint: StatsState = { scannedTo: currentScannedTo, trades, at: 0, since };
+    if (!state) state = checkpoint;
+    await savePersistedState(checkpoint);
+    if (failedMinBlock !== null) {
+      incomplete = true;
+      break;
+    }
   }
 
-  const finalState: StatsState = { scannedTo: currentScannedTo, trades, at: Date.now(), since };
+  const finalState: StatsState = { scannedTo: currentScannedTo, trades, at: incomplete ? 0 : Date.now(), since };
   await savePersistedState(finalState);
   return finalState;
 }
@@ -338,16 +344,18 @@ export async function GET(request: NextRequest) {
   const includeTeam = process.env.NODE_ENV !== "production" && request.nextUrl.searchParams.has("team");
   try {
     if (!state) state = await loadPersistedState();
-    if (!state || Date.now() - state.at > 60_000) {
+    const isIncomplete = Boolean(state && state.at === 0);
+    const servedStale = Boolean(state && state.at > 0 && Date.now() - state.at > 60_000);
+    if (!state || isIncomplete || servedStale) {
       if (!inflight) inflight = refresh().finally(() => (inflight = null));
       const job = inflight;
       // Keep the refresh alive after the response (serverless would freeze it) and store its result
       const keep = () => after(() => job.then((s) => void (state = s), () => undefined));
-      if (state) {
-        // Serve the previous numbers now; the refresh lands for the next visitor
+      if (state && state.at > 0) {
+        // Serve the previous complete numbers now; the refresh lands for the next visitor
         keep();
       } else {
-        // First scan after a deploy can be long: answer before the 60s function limit instead of a 504
+        // First scan or resumed incomplete checkpoint: wait up to 45s instead of caching truncated totals on CDN
         const done = await Promise.race([job, new Promise<null>((r) => setTimeout(() => r(null), RESPONSE_BUDGET_MS))]);
         if (!done) {
           keep();
@@ -418,7 +426,7 @@ export async function GET(request: NextRequest) {
     };
     return NextResponse.json(body, {
       headers: {
-        "Cache-Control": indexBuysFailed ? "no-store" : "public, s-maxage=120, stale-while-revalidate=600",
+        "Cache-Control": servedStale || current.at === 0 || indexBuysFailed ? "no-store" : "public, s-maxage=120, stale-while-revalidate=600",
       },
     });
   } catch (e) {

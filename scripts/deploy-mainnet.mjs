@@ -12,18 +12,18 @@
  */
 import fs from "node:fs";
 import path from "node:path";
-import { createPublicClient, createWalletClient, http, encodeDeployData, encodeFunctionData, formatEther, getAddress, isAddress } from "viem";
+import { createPublicClient, createWalletClient, http, encodeDeployData, encodeFunctionData, formatEther, getAddress, isAddress, zeroAddress } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { base } from "viem/chains";
 import { Attribution } from "ox/erc8021";
 import { ALLOWED_B20_STOCKS, ARTIFACT_PATH, loadEnv } from "./registry-common.mjs";
 
 loadEnv();
-const arg = (n) => process.argv.find((a) => a.startsWith(`--${n}=`))?.split("=")[1];
+const arg = (n) => process.argv.find((a) => a.startsWith(`--${n}=`))?.split("=").slice(1).join("=");
 const CONFIRM = process.argv.includes("--confirm");
 const newOwner = arg("owner");
-if (newOwner && !isAddress(newOwner)) {
-  console.error("❌ --owner is not a valid address.");
+if (newOwner && (!isAddress(newOwner) || getAddress(newOwner) === zeroAddress)) {
+  console.error("❌ --owner is not a valid non-zero address.");
   process.exit(1);
 }
 const envPathCheck = path.join(process.cwd(), ".env.local");

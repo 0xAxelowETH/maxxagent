@@ -63,10 +63,10 @@ export function MaxxAgentLogo({
   className?: string;
 }) {
   return (
-    <div className={`flex items-center gap-3 ${className}`}>
+    <div className={`flex min-w-0 items-center gap-2 sm:gap-3 ${className}`}>
       <MaxxAgentMark size={size} className="shrink-0 drop-shadow-[0_8px_24px_rgba(56,189,248,0.25)]" />
-      <div className="leading-tight">
-        <div className="text-xl font-extrabold tracking-tight">
+      <div className="min-w-0 leading-tight">
+        <div className="text-base sm:text-xl font-extrabold tracking-tight truncate">
           <span className="text-white">MAXX</span>
           <span className="bg-gradient-to-r from-sky-400 via-indigo-400 to-emerald-400 bg-clip-text text-transparent maxx-wordmark-accent">
             AGENT

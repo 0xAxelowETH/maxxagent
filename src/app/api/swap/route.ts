@@ -63,13 +63,22 @@ interface KyberRouteHop {
 }
 
 export async function POST(request: NextRequest) {
-  const rawBody = await request.text();
+  let rawBody: string;
+  try {
+    rawBody = await request.text();
+  } catch {
+    return NextResponse.json({ ok: false, error: "Could not read request body." }, { status: 400 });
+  }
   if (rawBody.length > 10_000) {
     return NextResponse.json({ ok: false, error: "Request too large." }, { status: 413 });
   }
   let body: Record<string, unknown>;
   try {
-    body = JSON.parse(rawBody || "{}");
+    const parsed = JSON.parse(rawBody || "{}");
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return NextResponse.json({ ok: false, error: "Invalid JSON body." }, { status: 400 });
+    }
+    body = parsed as Record<string, unknown>;
   } catch {
     return NextResponse.json({ ok: false, error: "Invalid JSON body." }, { status: 400 });
   }
@@ -281,6 +290,11 @@ export async function POST(request: NextRequest) {
     const data = alignedWithSuffix(build.data.data, toErc8021DataSuffix([BUILDER_CODE]).dataSuffix);
     const minAmountOutRaw = (amountOutRaw * BigInt(10_000 - slippageBps)) / 10_000n;
 
+    const effectiveAmountOutUsd =
+      summaryOutRaw > 0n && amountOutRaw < summaryOutRaw
+        ? amountOutUsd * (Number(amountOutRaw) / Number(summaryOutRaw))
+        : amountOutUsd;
+
     return NextResponse.json({
       ok: true,
       side,
@@ -304,8 +318,8 @@ export async function POST(request: NextRequest) {
       amountOutUsdc: side === "sell" ? Number(amountOutRaw) / 1e6 : undefined,
       amountInTokens: side === "sell" ? Number(amountIn) / 10 ** stock.decimals : undefined,
       amountInUsd,
-      amountOutUsd,
-      costPct,
+      amountOutUsd: effectiveAmountOutUsd,
+      costPct: effectiveCostPct,
       nav,
       navDeviationPct,
       slippageBps,

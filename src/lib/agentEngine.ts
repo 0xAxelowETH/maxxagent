@@ -431,9 +431,10 @@ export function runAutonomousStockAgent(params: {
     const rest = selected.filter((x) => !fixedSyms.includes(x.stock.symbol));
     const setText = fixedSyms.map((s) => `${s} ${mandate.weightsPct[s]}%`).join(", ");
     const overLimit = fixedSyms.some((s) => capPct && mandate.weightsPct[s] > capPct);
+    const allCapBps = capPct ? Math.max(Math.floor((capPct / investPct) * 10000), Math.ceil(10000 / selected.length)) : 10000;
     if (!rest.length) {
-      // roundWeightsBps without a cap always returns weights summing to 10,000
-      weights = roundWeightsBps(selected.map((x) => fixedOfStocks(x.stock.symbol)))!;
+      const rawFixed = selected.map((x) => fixedOfStocks(x.stock.symbol));
+      weights = roundWeightsBps(rawFixed, allCapBps) ?? roundWeightsBps(rawFixed)!;
       // Talk in the user's own numbers (share of their money), not the internal share of the invested part
       const userSum = fixedSyms.reduce((a, s) => a + mandate.weightsPct[s], 0);
       if (Math.abs(userSum - fixedBase) > 0.5 && !overLimit)
@@ -453,7 +454,6 @@ export function runAutonomousStockAgent(params: {
         restShares = capWeightsBps(restShares, restCapBps) ?? restShares;
       }
       const raw = selected.map((x) => (fixedSyms.includes(x.stock.symbol) ? fixedOfStocks(x.stock.symbol) : (restShares[rest.indexOf(x)] / 10000) * restPct));
-      const allCapBps = capPct ? Math.max(Math.ceil((capPct / investPct) * 10000), Math.ceil(10000 / selected.length)) : 10000;
       weights = roundWeightsBps(raw, allCapBps) ?? roundWeightsBps(raw)!;
       if (!overLimit) {
         fixedLimits.push({

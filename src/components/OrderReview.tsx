@@ -47,6 +47,11 @@ export function OrderReview({
   onCancelRef.current = onCancel;
   useEffect(() => {
     confirmRef.current?.focus();
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = prev;
+    };
   }, []);
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 1000);

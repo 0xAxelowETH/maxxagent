@@ -66,7 +66,7 @@ function annual(facts: Fact[]): Map<string, Fact> {
   for (const f of facts) {
     if (!/^10-K/.test(f.form) || !f.start) continue;
     const days = (Date.parse(f.end) - Date.parse(f.start)) / DAY;
-    if (days < 350 || days > 380) continue;
+    if (!(days >= 350 && days <= 380)) continue;
     const prev = byEnd.get(f.end);
     if (!prev || f.filed > prev.filed) byEnd.set(f.end, f);
   }

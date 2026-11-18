@@ -305,9 +305,11 @@ async function loadHistory(wallet: `0x${string}`): Promise<WalletHistory> {
     // slow, only the gap-free newest part counts and the rest is valued from the balances at its start.
     const windowFrom = latest - FIRST_WINDOW > START_BLOCK ? latest - FIRST_WINDOW : START_BLOCK;
     const first = await scanRange(wallet, windowFrom, latest, deadline);
+    if (first.coveredFrom === null) {
+      throw new Error("RPC timed out before completing initial P/L range");
+    }
     await addTxs(first.hashes);
-    if (first.coveredFrom === null) shouldCache = false;
-    scannedFrom = first.coveredFrom ?? latest;
+    scannedFrom = first.coveredFrom;
     scannedTo = latest;
     const ob = scannedFrom > START_BLOCK ? await balancesAt(wallet, scannedFrom - 1n, deadline) : { map: new Map(), anyFailed: false };
     opening = ob.map;
@@ -322,7 +324,12 @@ async function loadHistory(wallet: `0x${string}`): Promise<WalletHistory> {
     const nextFrom = scannedFrom - span > START_BLOCK ? scannedFrom - span : START_BLOCK;
     const r = await scanRange(wallet, nextFrom, scannedFrom - 1n, deadline).catch(() => null);
     if (!r || r.coveredFrom === null) break;
-    await addTxs(r.hashes);
+    try {
+      await addTxs(r.hashes);
+    } catch (e) {
+      if (e instanceof Error && e.message === "TOO_MANY") throw e;
+      break;
+    }
     scannedFrom = r.coveredFrom;
     const ob = scannedFrom > START_BLOCK ? await balancesAt(wallet, scannedFrom - 1n, deadline).catch(() => null) : { map: new Map(), anyFailed: false };
     if (!ob) {

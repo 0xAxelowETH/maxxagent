@@ -35,17 +35,17 @@ export function GuidedQuickStartBar({
   setActiveTab,
   onQuickRunAgent,
 }: GuidedQuickStartBarProps) {
-  const [hidden, setHidden] = useState(false);
+  const [hidden, setHidden] = useState<boolean | null>(null);
 
   useEffect(() => {
     try {
-      if (window.localStorage.getItem(QUICKSTART_DISMISS_KEY) === "1") setHidden(true);
+      setHidden(window.localStorage.getItem(QUICKSTART_DISMISS_KEY) === "1");
     } catch {
-      // ignore storage access issues
+      setHidden(false);
     }
   }, []);
 
-  if (hidden) return null;
+  if (hidden !== false) return null;
 
   return (
     <div className="hero-mesh-card rounded-2xl px-4 py-2.5 flex flex-wrap items-center justify-between gap-2.5 animate-fade-up">
@@ -249,6 +249,11 @@ export function InteractiveB20TradingChart({
   const [hoverT, setHoverT] = useState<number | null>(null);
   const [hoverSpread, setHoverSpread] = useState<{ t: number; pct: number } | null>(null);
   const [peerSymbol, setPeerSymbol] = useState<string>("");
+
+  useEffect(() => {
+    setHoverT(null);
+    setHoverSpread(null);
+  }, [selectedSymbol, timeframe]);
   const [showPins, setShowPins] = useState<boolean>(true);
   const [allNews, setAllNews] = useState<NewsPin[]>([]);
   // Bumped when a history response lands, so the chart re-reads the cache
@@ -509,7 +514,7 @@ export function InteractiveB20TradingChart({
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch">
-        <div className="lg:col-span-8 flex flex-col justify-between rounded-2xl border border-slate-800/90 bg-[#040814]/90 p-4 sm:p-5 relative overflow-hidden">
+        <div className="lg:col-span-8 flex flex-col justify-between rounded-2xl border border-slate-800/90 bg-[#040814]/90 p-4 sm:p-5 relative">
           <div className="flex flex-wrap items-start justify-between gap-4 z-10">
             <div className="flex items-center gap-3.5">
               <img
@@ -588,6 +593,8 @@ export function InteractiveB20TradingChart({
                     className="w-full h-auto overflow-visible cursor-crosshair touch-pan-y"
                     onMouseMove={(e) => scrub(e.clientX, e.currentTarget.getBoundingClientRect())}
                     onTouchMove={(e) => e.touches[0] && scrub(e.touches[0].clientX, e.currentTarget.getBoundingClientRect())}
+                    onTouchEnd={() => setHoverT(null)}
+                    onTouchCancel={() => setHoverT(null)}
                     onMouseLeave={() => setHoverT(null)}
                   >
                     <defs>
@@ -714,18 +721,20 @@ export function InteractiveB20TradingChart({
                     {peerAt && <circle cx={x(peerAt[0])} cy={y(peerAt[1])} r="4.5" fill="#f472b6" stroke="#fff" strokeWidth="1.5" />}
                   </svg>
 
-                  {/* Interactive news/SEC pin dots (vertically staggered when timestamps cluster) */}
+                  {/* Interactive news/SEC pin dots (staggered to avoid overlaps, clamped tooltips) */}
                   {(() => {
                     const placed: number[] = [];
                     return newsMarks.map(({ n, t }) => {
                       const pVal = interpAt(pinLine, t);
                       if (pVal === null) return null;
                       const left = (x(t) / svgWidth) * 100;
-                      const top = (y(pVal) / svgHeight) * 100;
-                      const closeCount = placed.filter((prevL) => Math.abs(prevL - left) < 2.8).length;
+                      const top = Math.max(8, Math.min(92, (y(pVal) / svgHeight) * 100));
+                      const closeCount = placed.filter((prevL) => Math.abs(prevL - left) < 5).length;
                       placed.push(left);
-                      const dy = closeCount === 0 ? 0 : closeCount % 2 === 1 ? -9 * Math.ceil(closeCount / 2) : 9 * Math.ceil(closeCount / 2);
+                      const dy = closeCount === 0 ? 0 : closeCount % 2 === 1 ? -11 * Math.ceil(closeCount / 2) : 11 * Math.ceil(closeCount / 2);
                       const k = pinKind(n);
+                      const horiz = left > 72 ? "right-0" : left < 28 ? "left-0" : "left-1/2 -translate-x-1/2";
+                      const vert = top < 35 ? "top-4" : "bottom-4";
                       return (
                         <a
                           key={`pd-${n.url}`}
@@ -741,9 +750,7 @@ export function InteractiveB20TradingChart({
                             style={{ backgroundColor: PIN_COLOR[k] ?? "#94a3b8" }}
                           />
                           <span
-                            className={`pointer-events-none absolute bottom-4 z-20 hidden w-56 rounded-lg border border-slate-700 bg-[#050811] p-2 text-[10px] leading-snug text-slate-200 shadow-xl group-hover:block group-focus:block ${
-                              left > 60 ? "right-0" : "left-0"
-                            }`}
+                            className={`pointer-events-none absolute z-20 hidden w-48 sm:w-56 rounded-lg border border-slate-700 bg-[#050811] p-2 text-[10px] leading-snug text-slate-200 shadow-xl group-hover:block group-focus:block ${horiz} ${vert}`}
                           >
                             <span className="block font-bold text-white">{n.title}</span>
                             <span className="mt-0.5 block text-slate-400">
@@ -801,8 +808,18 @@ export function InteractiveB20TradingChart({
                     </div>
                     <svg
                       viewBox={`0 0 ${svgWidth} 44`}
-                      className="w-full h-11 overflow-visible cursor-crosshair"
+                      className="w-full h-11 overflow-visible cursor-crosshair touch-pan-y"
                       onMouseLeave={() => setHoverSpread(null)}
+                      onTouchEnd={() => setHoverSpread(null)}
+                      onTouchCancel={() => setHoverSpread(null)}
+                      onTouchMove={(e) => {
+                        const rect = e.currentTarget.getBoundingClientRect();
+                        const touch = e.touches[0];
+                        if (!touch || !rect.width || spreadBars.length === 0) return;
+                        const svgX = ((touch.clientX - rect.left) / rect.width) * svgWidth;
+                        const nearest = spreadBars.reduce((best, cur) => (Math.abs(x(cur.t) - svgX) < Math.abs(x(best.t) - svgX) ? cur : best));
+                        setHoverSpread(nearest);
+                      }}
                     >
                       <line x1={padL} x2={svgWidth - padR} y1={22} y2={22} stroke="rgba(148, 163, 184, 0.35)" strokeDasharray="3 3" />
                       <text x={svgWidth - 4} y={25} textAnchor="end" fill="rgba(148, 163, 184, 0.7)" fontSize="9" fontFamily="ui-monospace, monospace">
@@ -1150,7 +1167,7 @@ function SwapPanel({
             <label htmlFor="swap-amount-usd" className="flex items-center justify-between text-[11px] text-slate-400">
               <span>You pay (USD)</span>
               {walletConnected && payWith === "usdc" && usdcBalance !== null && (
-                <span className="font-mono tabular-nums">Balance: {usdcBalance.toFixed(2)} USDC</span>
+                <span className="font-mono tabular-nums">Balance: {(Math.floor(usdcBalance * 100) / 100).toFixed(2)} USDC</span>
               )}
               {walletConnected && payWith === "eth" && ethBalance !== null && (
                 <span className="font-mono tabular-nums">
@@ -1203,13 +1220,16 @@ function SwapPanel({
               <span>Wallet %</span>
               <div className="flex gap-1">
                 {[0.25, 0.5, 1].map((frac) => {
-                  const amt = Math.max(BUY_MIN_USD, Math.floor(maxBuy * frac * 100) / 100);
+                  const rawAmt = Math.floor(maxBuy * frac * 100) / 100;
+                  const belowMin = rawAmt < BUY_MIN_USD;
+                  const amt = frac === 1 ? maxBuy : rawAmt;
                   return (
                     <button
                       key={frac}
                       type="button"
-                      onClick={() => onTradeUsdChange(amt)}
-                      className="rounded-md border border-slate-700 px-2 py-0.5 font-mono text-slate-300 hover:border-cyan-400 hover:text-white cursor-pointer"
+                      disabled={belowMin}
+                      onClick={() => !belowMin && onTradeUsdChange(amt)}
+                      className="rounded-md border border-slate-700 px-2 py-0.5 font-mono text-slate-300 hover:border-cyan-400 hover:text-white disabled:opacity-35 disabled:cursor-not-allowed cursor-pointer"
                     >
                       {frac === 1 ? "100%" : `${Math.round(frac * 100)}%`}
                     </button>

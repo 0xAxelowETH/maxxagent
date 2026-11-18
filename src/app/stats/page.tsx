@@ -26,30 +26,48 @@ export default function StatsPage() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
+  const mountedRef = useRef(true);
 
   // The first scan after a deploy can take a minute: the API then answers "loading" and this retries
   const load = useCallback((attempt = 0, bypassCache = false) => {
     if (timerRef.current) clearTimeout(timerRef.current);
+    abortRef.current?.abort();
+    const ac = new AbortController();
+    abortRef.current = ac;
     setLoading(true);
     setError("");
     let retrying = false;
     const retry = (ms: number) => {
+      if (!mountedRef.current) return;
       retrying = true;
-      timerRef.current = setTimeout(() => load(attempt + 1, bypassCache), ms);
+      timerRef.current = setTimeout(() => {
+        if (mountedRef.current) load(attempt + 1, bypassCache);
+      }, ms);
     };
-    fetch("/api/stats", bypassCache ? { cache: "no-store" } : undefined)
+    fetch("/api/stats", bypassCache ? { cache: "no-store", signal: ac.signal } : { signal: ac.signal })
       .then((r) => r.json())
       .then((d: Stats & { loading?: boolean }) => {
+        if (!mountedRef.current) return;
         if (d?.ok) setData(d);
         else if (d?.loading && attempt < 6) retry(10_000);
         else setError(d?.error || "Stats are unavailable right now.");
       })
-      .catch(() => (attempt < 2 ? retry(5_000) : setError("Stats are unavailable right now.")))
-      .finally(() => !retrying && setLoading(false));
+      .catch((e) => {
+        if (!mountedRef.current || ac.signal.aborted || (e instanceof Error && e.name === "AbortError")) return;
+        if (attempt < 2) retry(5_000);
+        else setError("Stats are unavailable right now.");
+      })
+      .finally(() => {
+        if (mountedRef.current && !retrying && abortRef.current === ac) setLoading(false);
+      });
   }, []);
   useEffect(() => {
+    mountedRef.current = true;
     load(0, false);
     return () => {
+      mountedRef.current = false;
+      abortRef.current?.abort();
       if (timerRef.current) clearTimeout(timerRef.current);
     };
   }, [load]);
