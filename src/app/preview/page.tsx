@@ -5,6 +5,7 @@ import { POST as runAgent } from "@/app/api/agent/route";
 import { getNews } from "@/lib/newsFeed";
 import { MarketHeatmap } from "@/components/MarketHeatmap";
 import { NewsFeed, type NewsItem } from "@/components/NewsFeed";
+import { ThemeToggle } from "@/components/ThemeToggle";
 import type { LiveTokenizedStock } from "@/lib/tokenizedStocks";
 
 /**
@@ -89,9 +90,12 @@ export default async function PreviewPage() {
       </div>
 
       <header className="space-y-2">
-        <div className="flex items-center gap-3">
-          <img src="/brand/maxxagent-mark.svg" alt="" className="h-10 w-10" />
-          <h1 className="text-2xl font-extrabold text-white">MAXXAGENT</h1>
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <img src="/brand/maxxagent-mark.svg" alt="" className="h-10 w-10" />
+            <h1 className="text-2xl font-extrabold text-white">MAXXAGENT</h1>
+          </div>
+          <ThemeToggle />
         </div>
         <p className="max-w-3xl text-sm text-slate-300">
           An agent for Coinbase tokenized stocks on Base. A user describes what they want in plain English; the agent researches

@@ -1109,9 +1109,9 @@ export default function StockMaxxingDashboard() {
         .then(async (r) => {
           const d = await r.json();
           if (cancelled) return;
-          // 503 = server busy with other first-time scans: retry once instead of showing an error.
+          // 503/502 = server busy or transient RPC error: retry once instead of failing immediately.
           // loading = a long first scan is still running server-side: check back a few times.
-          if (r.status === 503 && attempt === 0) retry = setTimeout(() => load(1), 5000);
+          if ((r.status === 503 || r.status === 502) && attempt === 0) retry = setTimeout(() => load(1), r.status === 503 ? 5000 : 2500);
           else if (d?.loading && attempt < 4) retry = setTimeout(() => load(attempt + 1), 8000);
           else setPnl({ for: w, data: d?.ok ? d : null, error: d?.ok ? "" : d?.error || "P/L unavailable" });
         })
@@ -2311,6 +2311,31 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
           </div>
         )}
 
+        {activeTab !== "traction" && activeTab !== "public" && savedTarget && targetOff && targetDrift && (
+          <div data-testid="target-notice" className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-xs text-amber-100">
+            {targetDrift.breaches.length > 0 ? (
+              <span>
+                <strong>Your {savedTarget.label} limit is broken:</strong>{" "}
+                <span className="text-amber-200/80">{driftSummary(targetDrift, savedTarget.maxWeightPct)}.</span>
+              </span>
+            ) : (
+              <span>
+                <strong>Your portfolio is {targetDrift.driftPct.toFixed(targetDrift.driftPct < 10 ? 1 : 0)}% off your {savedTarget.label} target.</strong>{" "}
+                <span className="text-amber-200/80">{driftSummary(targetDrift)}</span>
+              </span>
+            )}
+            <button
+              onClick={() => {
+                setActiveTab("traction");
+                setTimeout(() => document.querySelector('[data-testid="target-watch"]')?.scrollIntoView({ behavior: "smooth", block: "center" }), 300);
+              }}
+              className="rounded-lg bg-amber-500 px-3 py-1.5 text-[11px] font-bold text-slate-950 hover:bg-amber-400 cursor-pointer"
+            >
+              Review
+            </button>
+          </div>
+        )}
+
         {/* =====================================================================
             TAB 1: LIVE B20 EQUITIES & CHAINLINK TOTAL-RETURN ORACLE TERMINAL
            ===================================================================== */}
@@ -2341,31 +2366,6 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
           );
           return (
           <div className="space-y-6">
-            {savedTarget && targetOff && targetDrift && (
-              <div data-testid="target-notice" className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-xs text-amber-100">
-                {targetDrift.breaches.length > 0 ? (
-                  <span>
-                    <strong>Your {savedTarget.label} limit is broken:</strong>{" "}
-                    <span className="text-amber-200/80">{driftSummary(targetDrift, savedTarget.maxWeightPct)}.</span>
-                  </span>
-                ) : (
-                  <span>
-                    <strong>Your portfolio is {targetDrift.driftPct.toFixed(targetDrift.driftPct < 10 ? 1 : 0)}% off your {savedTarget.label} target.</strong>{" "}
-                    <span className="text-amber-200/80">{driftSummary(targetDrift)}</span>
-                  </span>
-                )}
-                <button
-                  onClick={() => {
-                    setActiveTab("traction");
-                    setTimeout(() => document.querySelector('[data-testid="target-watch"]')?.scrollIntoView({ behavior: "smooth", block: "center" }), 300);
-                  }}
-                  className="rounded-lg bg-amber-500 px-3 py-1.5 text-[11px] font-bold text-slate-950 hover:bg-amber-400 cursor-pointer"
-                >
-                  Review
-                </button>
-              </div>
-            )}
-
             {/* Market workspace switcher: Overview (Hero + Heatmap) vs Pro Terminal (Chart + Swap immediately above fold) */}
             <div className="flex items-center justify-between gap-2">
               <div className="text-[11px] text-slate-400">
@@ -2411,7 +2411,7 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                   <h2 className="text-xl sm:text-3xl font-extrabold tracking-tight text-white leading-tight">
                     Build your own stock index.{" "}
                     <span className="bg-gradient-to-r from-[#60a5fa] via-cyan-300 to-emerald-300 bg-clip-text text-transparent maxx-hero-accent">
-                      Buy it in one click, from your wallet.
+                      Buy it in one flow, from your wallet.
                     </span>
                   </h2>
 
@@ -2581,7 +2581,7 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                   <div className="my-2">
                     <div className="font-mono text-xl font-extrabold text-emerald-300">Non-custodial</div>
                     <div className="text-[11px] text-slate-300 mt-0.5">
-                      USDC or ETH → stocks in one confirmation. Cost quoted live; routes over 1.5% refused.
+                      USDC or ETH → stocks in one flow (1 confirmation on EIP-5792 smart wallets; step-by-step on standard wallets). Cost quoted live; routes over 1.5% refused.
                     </div>
                   </div>
                   <div className="text-[10px] font-mono text-slate-400 border-t border-slate-800/80 pt-2">
@@ -4327,7 +4327,7 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                           <span className="rounded-full bg-[#4C6FFF]/20 px-2 py-0.5 font-mono text-[11px] text-blue-200">{publishedIndexes.length}</span>
                         )}
                       </h3>
-                      <p className="text-[11px] text-slate-400">Onchain baskets anyone can buy in one click</p>
+                      <p className="text-[11px] text-slate-400">Onchain baskets anyone can buy in one flow</p>
                     </div>
                   </div>
                   <button

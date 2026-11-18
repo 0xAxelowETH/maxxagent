@@ -22,7 +22,7 @@ const jetbrainsMono = localFont({
 
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || "https://maxxagent.xyz";
 const DESCRIPTION =
-  "Build your own index of Coinbase tokenized stocks on Base, or let an agent propose one, and buy it in one click from your own wallet. Live Chainlink NAV vs DEX prices, non-custodial. Not financial advice.";
+  "Build your own index of Coinbase tokenized stocks on Base, or let an agent propose one, and buy it in one flow from your own wallet. Live Chainlink NAV vs DEX prices, non-custodial. Not financial advice.";
 
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
@@ -68,8 +68,8 @@ export default function RootLayout({
       <body className="min-h-screen bg-[#03060e] text-slate-100 antialiased selection:bg-[#4C6FFF] selection:text-white">
         {children}
         <MiniAppReady />
-        {/* Cookieless page-view analytics (no wallet addresses or personal data are sent) */}
-        <Analytics />
+        {/* Cookieless page-view analytics on Vercel deployments (avoids 404 MIME errors on local next start) */}
+        {Boolean(process.env.VERCEL) && <Analytics />}
       </body>
     </html>
   );

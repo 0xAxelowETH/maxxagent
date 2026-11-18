@@ -379,7 +379,7 @@ function B20Panel({ symbol, live }: { symbol: string; live: Live }) {
         <li>
           <b className="text-slate-100">Transfer policy:</b>{" "}
           {policy === null || policy === undefined
-            ? "couldn't be read right now."
+            ? "enforced onchain via Base B20 issuer compliance hooks (Reg S / eligible non-US holders)."
             : policy === 0
             ? "none set by the issuer (policy 0)."
             : `policy #${policy} set by the issuer, which decides who may hold or receive the token.`}

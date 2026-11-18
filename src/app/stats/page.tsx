@@ -21,6 +21,21 @@ interface Stats {
 
 const usd = (n: number) => `$${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
+/** Align rounded row cent amounts to the exact rounded total via largest-remainder without distorting unrounded server math. */
+function reconcileUsdCents(values: number[], targetTotalUsd: number): number[] {
+  if (values.length === 0 || !Number.isFinite(targetTotalUsd)) return values;
+  const targetCents = Math.round(targetTotalUsd * 100);
+  const baseCents = values.map((v) => Math.floor(v * 100 + 1e-9));
+  const diff = targetCents - baseCents.reduce((a, b) => a + b, 0);
+  if (diff <= 0 || diff > values.length) return values;
+  const order = values
+    .map((v, i) => ({ i, rem: v * 100 - baseCents[i] }))
+    .sort((a, b) => b.rem - a.rem || a.i - b.i);
+  const out = [...baseCents];
+  for (let k = 0; k < diff; k++) out[order[k].i] += 1;
+  return out.map((c) => c / 100);
+}
+
 export default function StatsPage() {
   const [data, setData] = useState<Stats | null>(null);
   const [error, setError] = useState("");
@@ -146,13 +161,19 @@ export default function StatsPage() {
                       </tr>
                     </thead>
                     <tbody className="font-mono">
-                      {data.perStock.map((s) => (
-                        <tr key={s.symbol} className="border-b border-slate-800/60">
-                          <td className="py-2 font-sans font-semibold text-white">{s.symbol}</td>
-                          <td className="py-2 text-right text-slate-300">{s.trades}</td>
-                          <td className="py-2 text-right text-white">{usd(s.volumeUsd)}</td>
-                        </tr>
-                      ))}
+                      {(() => {
+                        const rowUsd = reconcileUsdCents(
+                          data.perStock.map((x) => x.volumeUsd),
+                          t.volumeUsd
+                        );
+                        return data.perStock.map((s, idx) => (
+                          <tr key={s.symbol} className="border-b border-slate-800/60">
+                            <td className="py-2 font-sans font-semibold text-white">{s.symbol}</td>
+                            <td className="py-2 text-right text-slate-300">{s.trades}</td>
+                            <td className="py-2 text-right text-white">{usd(rowUsd[idx])}</td>
+                          </tr>
+                        ));
+                      })()}
                     </tbody>
                   </table>
                 </section>
@@ -201,14 +222,20 @@ export default function StatsPage() {
                       </tr>
                     </thead>
                     <tbody className="font-mono">
-                      {data.daily.map((d) => (
-                        <tr key={d.date} className="border-b border-slate-800/60">
-                          <td className="py-2 text-slate-200">{d.date}</td>
-                          <td className="py-2 text-right text-slate-300">{d.trades}</td>
-                          <td className="py-2 text-right text-slate-300">{d.wallets}</td>
-                          <td className="py-2 text-right text-white">{usd(d.volumeUsd)}</td>
-                        </tr>
-                      ))}
+                      {(() => {
+                        const dayUsd = reconcileUsdCents(
+                          data.daily.map((x) => x.volumeUsd),
+                          t.volumeUsd
+                        );
+                        return data.daily.map((d, idx) => (
+                          <tr key={d.date} className="border-b border-slate-800/60">
+                            <td className="py-2 text-slate-200">{d.date}</td>
+                            <td className="py-2 text-right text-slate-300">{d.trades}</td>
+                            <td className="py-2 text-right text-slate-300">{d.wallets}</td>
+                            <td className="py-2 text-right text-white">{usd(dayUsd[idx])}</td>
+                          </tr>
+                        ));
+                      })()}
                     </tbody>
                   </table>
                 </section>

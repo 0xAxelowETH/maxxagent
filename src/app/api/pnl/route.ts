@@ -27,11 +27,11 @@ const USDC = "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913";
 const ETH_USD_FEED = "0x71041dddad3595F9CEd3DcCFBe3D1F4b0a16Bb70" as const; // Chainlink ETH / USD on Base
 // First Coinbase B20 stock supply on Base (NVDAc, 2026-08-12): nothing exists before this
 const START_BLOCK = 49_870_000n;
-// Dedicated RPCs (CDP) accept 100k-block getLogs ranges; the public fallback caps at 50k
-const CHUNK = process.env.BASE_RPC_URL || process.env.NEXT_PUBLIC_BASE_RPC_URL ? 100_000n : 45_000n;
+// Stay friendly to strict free/starter RPC block-range limits (10k-50k blocks)
+const CHUNK = process.env.BASE_RPC_URL || process.env.NEXT_PUBLIC_BASE_RPC_URL ? 20_000n : 45_000n;
 // ~3 days at Base's 0.2s block time (it was 2s until late Oct 2026, so older ranges cover more time)
 const FIRST_WINDOW = 1_300_000n;
-const CONCURRENCY = 4; // more triggers the RPC's rate limit
+const CONCURRENCY = 2; // gentle on public / free-tier RPC rate limits
 // The log scan is bound by the RPC's rate limit (more parallel workers made it slower, not faster). 15s keeps a
 // first scan well inside the response budget: older lots are then valued at NAV ("estimated") and later
 // requests continue the scan until the cost basis is exact.
@@ -102,11 +102,10 @@ async function fetchTransferLogs(
   wallet: `0x${string}`,
   dir: "to" | "from",
   a: bigint,
-  b: bigint,
-  deadline: number
+  b: bigint
 ) {
   const args = dir === "to" ? { to: wallet } : { from: wallet };
-  return withRetry(() => client.getLogs({ address: STOCK_ADDRESSES, event: TRANSFER, args, fromBlock: a, toBlock: b }), 3, deadline);
+  return client.getLogs({ address: STOCK_ADDRESSES, event: TRANSFER, args, fromBlock: a, toBlock: b });
 }
 
 type TransferLogList = Awaited<ReturnType<typeof fetchTransferLogs>>;
@@ -119,14 +118,23 @@ async function getTransferLogsAdaptive(
   deadline: number
 ): Promise<TransferLogList> {
   try {
-    return await fetchTransferLogs(wallet, dir, a, b, deadline);
+    return await fetchTransferLogs(wallet, dir, a, b);
   } catch (e) {
-    if (b - a <= 10_000n || Date.now() >= deadline) throw e;
+    if (Date.now() >= deadline) throw e;
+    const msg = e instanceof Error ? e.message : String(e);
+    if (b - a <= 2_000n) {
+      return withRetry(() => fetchTransferLogs(wallet, dir, a, b), 2, deadline);
+    }
+    if (!/limit|range|exceed|more than|too large|response size|block|10,?000|timeout/i.test(msg)) {
+      try {
+        return await withRetry(() => fetchTransferLogs(wallet, dir, a, b), 2, deadline);
+      } catch {}
+    }
+    if (Date.now() >= deadline) throw e;
     const mid = a + (b - a) / 2n;
-    const [left, right] = await Promise.all([
-      getTransferLogsAdaptive(wallet, dir, a, mid, deadline),
-      getTransferLogsAdaptive(wallet, dir, mid + 1n, b, deadline),
-    ]);
+    const left = await getTransferLogsAdaptive(wallet, dir, a, mid, deadline);
+    if (Date.now() >= deadline) throw new Error("Scan deadline reached during range split");
+    const right = await getTransferLogsAdaptive(wallet, dir, mid + 1n, b, deadline);
     return [...left, ...right];
   }
 }
@@ -285,10 +293,15 @@ async function loadHistory(wallet: `0x${string}`): Promise<WalletHistory> {
     scannedTo = prev.scannedTo;
     if (latest > prev.scannedTo) {
       // Scan chronologically from prev.scannedTo + 1n forward so partial scans never leave a gap before `scannedTo`
-      const inc = await scanRange(wallet, prev.scannedTo + 1n, latest, deadline, true);
-      await addTxs(inc.hashes);
-      if (inc.coveredTo !== null && inc.coveredTo > scannedTo) scannedTo = inc.coveredTo;
-      incrementalPartial = inc.partial;
+      try {
+        const inc = await scanRange(wallet, prev.scannedTo + 1n, latest, deadline, true);
+        await addTxs(inc.hashes);
+        if (inc.coveredTo !== null && inc.coveredTo > scannedTo) scannedTo = inc.coveredTo;
+        incrementalPartial = inc.partial;
+      } catch (e) {
+        if (e instanceof Error && e.message === "TOO_MANY") throw e;
+        incrementalPartial = true;
+      }
     }
     scannedFrom = prev.scannedFrom;
     opening = prev.opening;
@@ -311,7 +324,10 @@ async function loadHistory(wallet: `0x${string}`): Promise<WalletHistory> {
     await addTxs(first.hashes);
     scannedFrom = first.coveredFrom;
     scannedTo = latest;
-    const ob = scannedFrom > START_BLOCK ? await balancesAt(wallet, scannedFrom - 1n, deadline) : { map: new Map(), anyFailed: false };
+    const ob =
+      scannedFrom > START_BLOCK
+        ? await balancesAt(wallet, scannedFrom - 1n, deadline).catch(() => ({ map: new Map<string, bigint>(), anyFailed: true }))
+        : { map: new Map<string, bigint>(), anyFailed: false };
     opening = ob.map;
     openingPartial = ob.anyFailed;
     if (openingPartial && !anyHeld(opening)) shouldCache = false;

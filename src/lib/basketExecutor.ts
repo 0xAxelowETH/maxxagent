@@ -272,17 +272,23 @@ async function readErc20(eth: EthProvider, token: string, fn: "balanceOf" | "all
   return decodeFunctionResult({ abi: ERC20_ABI, functionName: fn, data: raw }) as bigint;
 }
 
+async function firstReceipt(eth: EthProvider, hash: string): Promise<RpcReceipt | null> {
+  const fromWallet = withTimeout(eth.request({ method: "eth_getTransactionReceipt", params: [hash] }), 2500).then((r) =>
+    r && typeof r === "object" ? (r as RpcReceipt) : Promise.reject(new Error("null"))
+  );
+  const fromPublic = basePublicRpc("eth_getTransactionReceipt", [hash]).then((r) =>
+    r && typeof r === "object" ? (r as RpcReceipt) : Promise.reject(new Error("null"))
+  );
+  return Promise.any([fromWallet, fromPublic]).catch(() => null);
+}
+
 async function waitForReceipt(eth: EthProvider, hash: string, timeoutMs = 120_000) {
   if (!/^0x[0-9a-fA-F]{64}$/.test(hash)) throw new Error(`Invalid transaction hash from wallet: ${hash}`);
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
     try {
-      // Query wallet provider and public Base RPC in parallel so a hanging mobile provider never adds 4s per poll
-      const [walletRec, publicRec] = await Promise.all([
-        withTimeout(eth.request({ method: "eth_getTransactionReceipt", params: [hash] }), 2500).catch(() => null),
-        basePublicRpc("eth_getTransactionReceipt", [hash]).catch(() => null),
-      ]);
-      const receipt = (publicRec || walletRec) as { status?: string | number } | null;
+      // Race wallet provider and public Base RPC so a fast wallet response never blocks on throttled public RPC
+      const receipt = await firstReceipt(eth, hash);
       if (receipt) {
         if (receipt.status !== undefined && receipt.status !== null && BigInt(receipt.status) !== 1n) {
           throw new Error(`Transaction ${hash} reverted`);
@@ -406,8 +412,8 @@ async function trackReceipts(
       for (let attempt = 0; attempt < 3 && !r; attempt++) {
         if (attempt > 0) await sleep(800);
         const [publicRec, walletRec] = await Promise.all([
-          basePublicRpc("eth_getTransactionReceipt", [hash]).catch(() => null),
-          withTimeout(eth.request({ method: "eth_getTransactionReceipt", params: [hash] }), 2500).catch(() => null),
+          withTimeout(basePublicRpc("eth_getTransactionReceipt", [hash]), 2000).catch(() => null),
+          withTimeout(eth.request({ method: "eth_getTransactionReceipt", params: [hash] }), 2000).catch(() => null),
         ]);
         r = (publicRec || walletRec) as RpcReceipt | null;
       }

@@ -543,7 +543,7 @@ await step("Saved target: set from the Agent tab, drift reported after a reload,
   // 3b) A saved per-stock limit that the wallet breaks is reported as such
   // Every stock the test wallet may hold (about a third each) sits above a 30% limit, whatever its current mix
   await page.evaluate((k) => localStorage.setItem(k, JSON.stringify({ label: "TEST-CAP", maxWeightPct: 30, weights: [{ symbol: "NVDAc", weightBps: 2500 }, { symbol: "METAc", weightBps: 2500 }, { symbol: "GOOGLc", weightBps: 2500 }, { symbol: "MSFTc", weightBps: 2500 }], savedAt: new Date().toISOString() })), key);
-  await page.reload({ waitUntil: "load" });
+  await page.goto(URL_BASE + "/", { waitUntil: "load" });
   await waitNotice("TEST-CAP after reload");
   const capNotice = await page.$eval('[data-testid="target-notice"]', (e) => e.innerText);
   assert(/limit is broken/.test(capNotice) && /(NVDAc|METAc|GOOGLc|MSFTc)/.test(capNotice), `breach not reported: ${capNotice}`);
@@ -640,7 +640,7 @@ await step("New UI flows: Swap quick selector, Pro Terminal, Theme toggle, and I
   await page.waitForFunction(
     () =>
       document.getElementById("swap-stock-select")?.value === "MSFTc" &&
-      [...document.querySelectorAll("#swap-panel button")].some((b) => /of MSFTc\b/i.test(b.textContent)),
+      [...document.querySelectorAll("#swap-panel button")].some((b) => /\bMSFTc\b/i.test(b.textContent)),
     { timeout: 5000 }
   );
   assert(await click('button[aria-label*="light mode"]', /.*/, 5000), "Theme toggle button");

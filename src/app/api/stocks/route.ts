@@ -248,7 +248,6 @@ async function buildMarket(): Promise<LiveTokenizedStock[]> {
     { address: meta.chainlinkFeed, abi: B20_AND_CHAINLINK_ABI, functionName: "latestRoundData" as const },
     { address: meta.b20Address, abi: B20_AND_CHAINLINK_ABI, functionName: "totalSupply" as const },
     { address: meta.b20Address, abi: B20_AND_CHAINLINK_ABI, functionName: "uiMultiplier" as const },
-    { address: meta.b20Address, abi: B20_AND_CHAINLINK_ABI, functionName: "policyId" as const },
   ]);
   const marketMulticall = await publicClient.multicall({ allowFailure: true, contracts: marketContracts }).catch(() => null);
 
@@ -262,17 +261,16 @@ async function buildMarket(): Promise<LiveTokenizedStock[]> {
     };
     const liveDexPool = dexPoolsByAddr[meta.b20Address.toLowerCase()];
     const safeDexUrl = liveDexPool?.url && /^https:\/\//i.test(liveDexPool.url) ? liveDexPool.url : undefined;
-    const base = idx * 4;
+    const base = idx * 3;
     const roundRes = marketMulticall?.[base];
     const supplyRes = marketMulticall?.[base + 1];
     const multRes = marketMulticall?.[base + 2];
-    const policyRes = marketMulticall?.[base + 3];
 
     if (roundRes?.status === "success" && supplyRes?.status === "success") {
       const [roundId, answer, , updatedAt, answeredInRound] = roundRes.result as readonly [bigint, bigint, bigint, bigint, bigint];
       const rawSupplyHex = supplyRes.result as bigint;
       const rawMultiplier = multRes?.status === "success" ? (multRes.result as bigint) : 0n;
-      const rawPolicy = policyRes?.status === "success" ? Number(policyRes.result as bigint) : null;
+      const rawPolicy = null;
 
       const isRoundValid = Number(answer) > 0 && Number(updatedAt) > 0 && answeredInRound >= roundId;
       const navPrice = isRoundValid ? Number(answer) / 1e8 : fb.price;

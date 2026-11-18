@@ -82,7 +82,7 @@ export default async function IndexPage({ params }: { params: Promise<{ id: stri
                 <div key={c.symbol} className="space-y-1">
                   <div className="flex items-center justify-between gap-3 text-xs">
                     <Link href={`/stock/${c.symbol}`} className="flex items-center gap-2 hover:text-cyan-300">
-                      {m && <img src={m.logoUrl} alt="" className="h-6 w-6 rounded-full bg-white/5 object-contain" />}
+                      {m && <img src={m.logoUrl} alt="" className="h-6 w-6 shrink-0 rounded-full bg-slate-900 object-cover maxx-avatar-ring" />}
                       <span className="font-mono font-bold text-white">{c.symbol}</span>
                       <span className="text-slate-400">{m?.companyName}</span>
                     </Link>
