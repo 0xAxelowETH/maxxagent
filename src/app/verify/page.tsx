@@ -34,8 +34,8 @@ function Section({ n, title, children }: { n: number; title: string; children: R
 export default function VerifyPage() {
   const suffix = toErc8021DataSuffix([BUILDER_CODE]).dataSuffix;
   return (
-    <main className="min-h-screen bg-[#03060e] px-4 py-10">
-      <div className="mx-auto max-w-3xl space-y-6">
+    <main className="min-h-screen bg-[#02050c] bg-cyber-grid px-4 py-10">
+      <div className="mx-auto max-w-5xl space-y-6">
         <SiteNav current="verify" />
         <div className="space-y-2">
           <h1 className="text-2xl font-extrabold text-white">How to verify MAXXAGENT</h1>

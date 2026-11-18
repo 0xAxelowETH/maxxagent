@@ -245,18 +245,36 @@ export function NewsFeed({
                         </a>
                         {x.summary && <p className="mt-1 line-clamp-2 text-[11px] leading-snug text-slate-400">{x.summary}</p>}
                         <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
-                          <a href={x.url} target="_blank" rel="noopener noreferrer" className="text-[10px] font-bold text-cyan-300 hover:text-white hover:underline">
-                            {x.kind !== "filing" ? `Read on ${x.source} →` : x.pressRelease ? "Read the press release on sec.gov →" : "Read the filing on sec.gov →"}
-                          </a>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <a href={x.url} target="_blank" rel="noopener noreferrer" className="text-[10px] font-bold text-cyan-300 hover:text-white hover:underline">
+                              {x.kind !== "filing" ? `Read on ${x.source} →` : x.pressRelease ? "Read the press release on sec.gov →" : "Read the filing on sec.gov →"}
+                            </a>
+                            {stockLinks && (
+                              <>
+                                <Link
+                                  href={`/?stock=${encodeURIComponent(x.symbol)}`}
+                                  className="rounded-md border border-[#4C6FFF]/40 bg-[#4C6FFF]/15 px-2 py-0.5 text-[10px] font-semibold text-blue-200 hover:bg-[#4C6FFF]/30 transition"
+                                >
+                                  Trade {x.symbol}
+                                </Link>
+                                <Link
+                                  href={`/?tab=agent&prompt=${encodeURIComponent(`Evaluate ${x.symbol} and related peers after latest ${x.form || kindOf(x)}`)}`}
+                                  className="rounded-md border border-slate-700 bg-slate-800/80 px-2 py-0.5 text-[10px] font-semibold text-slate-300 hover:border-cyan-400/50 hover:text-white transition"
+                                >
+                                  Ask Agent
+                                </Link>
+                              </>
+                            )}
+                          </div>
                           {x.changePct !== null ? (
-                            <span className="inline-flex items-center gap-2 text-[10px] text-slate-500" title={`Price source: ${x.priceSource === "DEX" ? "24/7 DEX price" : "Chainlink NAV"}`}>
+                            <span className="inline-flex items-center gap-2 text-[10px] text-slate-400" title={`Price source: ${x.priceSource === "DEX" ? "24/7 DEX price" : "Chainlink NAV"}`}>
                               {x.priceThen !== null && x.priceNow !== null && (
-                                <span className="font-mono">
+                                <span className="font-mono tabular-nums">
                                   {usd(x.priceThen)} → {usd(x.priceNow)}
                                 </span>
                               )}
                               <span
-                                className={`rounded-md px-1.5 py-0.5 font-mono text-[11px] font-bold ${
+                                className={`rounded-md px-1.5 py-0.5 font-mono tabular-nums text-[11px] font-bold ${
                                   x.changePct >= 0 ? "bg-emerald-500/15 text-emerald-300" : "bg-rose-500/15 text-rose-300"
                                 }`}
                               >
@@ -266,7 +284,7 @@ export function NewsFeed({
                               <span>since published ({x.priceSource})</span>
                             </span>
                           ) : (
-                            <span className="text-[10px] text-slate-600">no price yet</span>
+                            <span className="text-[10px] text-slate-400">no price yet</span>
                           )}
                         </div>
                       </div>

@@ -36,10 +36,11 @@ const compact = (n: number) => `$${Intl.NumberFormat("en-US", { notation: "compa
 const ago = (m: number) => (m < 60 ? `${Math.round(m)} min ago` : m < 48 * 60 ? `${Math.round(m / 60)}h ago` : `${Math.round(m / 1440)}d ago`);
 const pct = (n: number) => `${n >= 0 ? "+" : "−"}${Math.abs(n).toFixed(2)}%`;
 
-/** Live numbers + 7-day NAV vs DEX chart for one stock (public data only, no wallet). */
+/** Live numbers + interactive 24H/7D/30D NAV vs DEX chart for one stock (public data only, no wallet). */
 export function StockLive({ symbol, color }: { symbol: string; color: string }) {
   const [live, setLive] = useState<Live | null>(null);
   const [failed, setFailed] = useState(false);
+  const [tf, setTf] = useState<"24H" | "7D" | "30D">("7D");
   const [hist, setHist] = useState<{ nav: Point[]; dex: Point[] } | null>(null);
   const [news, setNews] = useState<NewsMark[]>([]);
 
@@ -54,13 +55,6 @@ export function StockLive({ symbol, color }: { symbol: string; color: string }) 
         else setFailed(true);
       })
       .catch(() => !off && setFailed(true));
-    fetch(`/api/history?symbol=${encodeURIComponent(symbol)}&tf=7D`)
-      .then((r) => r.json())
-      .then((d) => {
-        if (off) return;
-        setHist(d?.ok ? { nav: d.nav || [], dex: d.dex || [] } : { nav: [], dex: [] });
-      })
-      .catch(() => !off && setHist({ nav: [], dex: [] }));
     // News and filings to pin on the chart (the feed is cached; "loading" right after a deploy just means no dots yet)
     fetch(`/api/news?symbol=${encodeURIComponent(symbol)}`)
       .then((r) => r.json())
@@ -70,6 +64,21 @@ export function StockLive({ symbol, color }: { symbol: string; color: string }) 
       off = true;
     };
   }, [symbol]);
+
+  useEffect(() => {
+    let off = false;
+    setHist(null);
+    fetch(`/api/history?symbol=${encodeURIComponent(symbol)}&tf=${tf}`)
+      .then((r) => r.json())
+      .then((d) => {
+        if (off) return;
+        setHist(d?.ok ? { nav: d.nav || [], dex: d.dex || [] } : { nav: [], dex: [] });
+      })
+      .catch(() => !off && setHist({ nav: [], dex: [] }));
+    return () => {
+      off = true;
+    };
+  }, [symbol, tf]);
 
   const cards: [string, string, string?][] = live
     ? [
@@ -107,13 +116,13 @@ export function StockLive({ symbol, color }: { symbol: string; color: string }) 
           {cards.map(([k, v, sub]) => (
             <div key={k} className="rounded-xl border border-slate-800 bg-[#0b1120] p-3">
               <div className="text-[10px] text-slate-400">{k}</div>
-              <div className="font-mono text-sm font-bold text-white">{v}</div>
-              {sub && <div className="text-[10px] text-slate-500">{sub}</div>}
+              <div className="font-mono tabular-nums text-sm font-bold text-white">{v}</div>
+              {sub && <div className="text-[10px] text-slate-400">{sub}</div>}
             </div>
           ))}
         </div>
       )}
-      <Chart hist={hist} color={color} news={news} />
+      <Chart hist={hist} color={color} news={news} tf={tf} onTfChange={setTf} />
       {live && <B20Panel symbol={symbol} live={live} />}
     </div>
   );
@@ -123,12 +132,69 @@ const KIND_DOT: Record<string, string> = { press: "#34d399", newsroom: "#a5b4fc"
 const kindOf = (n: NewsMark) => (n.kind === "filing" ? (n.pressRelease ? "press" : "filing") : n.kind);
 const KIND_LABEL: Record<string, string> = { press: "Press release", newsroom: "Company news", filing: "SEC filing", news: "Headline" };
 
-function Chart({ hist, color, news }: { hist: { nav: Point[]; dex: Point[] } | null; color: string; news: NewsMark[] }) {
+function Chart({
+  hist,
+  color,
+  news,
+  tf,
+  onTfChange,
+}: {
+  hist: { nav: Point[]; dex: Point[] } | null;
+  color: string;
+  news: NewsMark[];
+  tf: "24H" | "7D" | "30D";
+  onTfChange: (next: "24H" | "7D" | "30D") => void;
+}) {
+  const [hoverT, setHoverT] = useState<number | null>(null);
   const W = 600;
-  const H = 180;
-  if (!hist) return <div className="h-[180px] animate-pulse rounded-2xl bg-slate-800/40" />;
+  const H = 190;
+  const nearest = (pts: Point[], t: number): Point | null =>
+    pts.length ? pts.reduce((b, p) => (Math.abs(p[0] - t) < Math.abs(b[0] - t) ? p : b), pts[0]) : null;
+  const tfLabel = tf === "24H" ? "24 hours" : tf === "30D" ? "30 days" : "7 days";
+
+  if (!hist)
+    return (
+      <div className="rounded-2xl border border-slate-800 bg-[#0b1120] p-3">
+        <div className="mb-2 flex items-center justify-between text-[10px]">
+          <span className="font-semibold text-slate-200">{tfLabel}</span>
+          <div className="inline-flex rounded-lg border border-slate-800 bg-[#050811] p-0.5">
+            {(["24H", "7D", "30D"] as const).map((k) => (
+              <button
+                key={k}
+                type="button"
+                onClick={() => onTfChange(k)}
+                className={`rounded-md px-2 py-0.5 font-mono font-bold cursor-pointer ${tf === k ? "bg-[#4C6FFF] text-white" : "text-slate-400 hover:text-white"}`}
+              >
+                {k}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="h-[190px] animate-pulse rounded-xl bg-slate-800/40" />
+      </div>
+    );
   const all = [...hist.nav, ...hist.dex];
-  if (all.length < 2) return <p className="text-xs text-slate-500">No price history available yet.</p>;
+  if (all.length < 2)
+    return (
+      <div className="rounded-2xl border border-slate-800 bg-[#0b1120] p-3 space-y-2">
+        <div className="flex items-center justify-between text-[10px]">
+          <span className="font-semibold text-slate-200">{tfLabel}</span>
+          <div className="inline-flex rounded-lg border border-slate-800 bg-[#050811] p-0.5">
+            {(["24H", "7D", "30D"] as const).map((k) => (
+              <button
+                key={k}
+                type="button"
+                onClick={() => onTfChange(k)}
+                className={`rounded-md px-2 py-0.5 font-mono font-bold cursor-pointer ${tf === k ? "bg-[#4C6FFF] text-white" : "text-slate-400 hover:text-white"}`}
+              >
+                {k}
+              </button>
+            ))}
+          </div>
+        </div>
+        <p className="text-xs text-slate-400">No price history available for {tf} yet.</p>
+      </div>
+    );
   const t0 = Math.min(...all.map((p) => p[0]));
   const t1 = Math.max(...all.map((p) => p[0]));
   const lo = Math.min(...all.map((p) => p[1]));
@@ -153,26 +219,68 @@ function Chart({ hist, color, news }: { hist: { nav: Point[]; dex: Point[] } | n
     // Official items first (press releases, company newsrooms, filings), then any headlines, at most 12 dots
     .sort((a, b) => Number(a.n.kind === "news") - Number(b.n.kind === "news"))
     .slice(0, 12);
+  const navAt = hoverT !== null ? nearest(hist.nav, hoverT) : null;
+  const dexAt = hoverT !== null ? nearest(hist.dex, hoverT) : null;
+  const scrubAt = (clientX: number, rect: DOMRect) => {
+    const ratio = Math.min(1, Math.max(0, (clientX - rect.left) / Math.max(1, rect.width)));
+    setHoverT(t0 + ratio * (t1 - t0));
+  };
   return (
-    <div className="rounded-2xl border border-slate-800 bg-[#0b1120] p-3">
+    <div className="rounded-2xl border border-slate-800 bg-[#0b1120] p-3 sm:p-4">
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2 text-[10px] text-slate-400">
-        <span className="font-semibold text-slate-200">7 days</span>
-        <span className="flex gap-3">
-          <span className="inline-flex items-center gap-1">
+        <div className="flex items-center gap-2">
+          <span className="font-semibold text-slate-200">{tfLabel}</span>
+          <div className="inline-flex rounded-lg border border-slate-800 bg-[#050811] p-0.5">
+            {(["24H", "7D", "30D"] as const).map((k) => (
+              <button
+                key={k}
+                type="button"
+                onClick={() => {
+                  setHoverT(null);
+                  onTfChange(k);
+                }}
+                className={`rounded-md px-2 py-0.5 font-mono font-bold cursor-pointer ${tf === k ? "bg-[#4C6FFF] text-white" : "text-slate-400 hover:text-white"}`}
+              >
+                {k}
+              </button>
+            ))}
+          </div>
+        </div>
+        <span className="flex flex-wrap items-center gap-3 font-mono tabular-nums">
+          {hoverT !== null && (
+            <span className="text-cyan-200">
+              {new Date(hoverT * 1000).toLocaleString("en-US", { month: "short", day: "numeric", hour: tf === "30D" ? undefined : "2-digit" })}
+              {navAt ? ` · NAV ${usd(navAt[1])}` : ""}
+              {dexAt ? ` · DEX ${usd(dexAt[1])}` : ""}
+            </span>
+          )}
+          <span className="inline-flex items-center gap-1 font-sans">
             <span className="h-0.5 w-3" style={{ background: color }} /> Chainlink NAV
           </span>
-          <span className="inline-flex items-center gap-1">
+          <span className="inline-flex items-center gap-1 font-sans">
             <span className="h-0.5 w-3 bg-cyan-400" /> Base DEX
           </span>
         </span>
       </div>
       <div className="relative">
-        <svg viewBox={`0 0 ${W} ${H}`} className="h-[180px] w-full" preserveAspectRatio="none" role="img" aria-label="7-day price chart">
+        <svg
+          viewBox={`0 0 ${W} ${H}`}
+          className="h-[190px] w-full cursor-crosshair touch-pan-y"
+          preserveAspectRatio="none"
+          role="img"
+          aria-label={`${tfLabel} price chart`}
+          onMouseMove={(e) => scrubAt(e.clientX, e.currentTarget.getBoundingClientRect())}
+          onTouchMove={(e) => e.touches[0] && scrubAt(e.touches[0].clientX, e.currentTarget.getBoundingClientRect())}
+          onMouseLeave={() => setHoverT(null)}
+        >
           {hist.nav.length > 1 && <path d={path(hist.nav)} fill="none" stroke={color} strokeWidth="2" vectorEffect="non-scaling-stroke" />}
           {hist.dex.length > 1 && <path d={path(hist.dex)} fill="none" stroke="#22d3ee" strokeWidth="1.5" strokeDasharray="4 3" vectorEffect="non-scaling-stroke" />}
           {marks.map(({ n, t }) => (
             <line key={`l${n.url}`} x1={x(t)} x2={x(t)} y1={0} y2={H} stroke={KIND_DOT[kindOf(n)] ?? "#94a3b8"} strokeOpacity="0.25" strokeDasharray="2 3" vectorEffect="non-scaling-stroke" />
           ))}
+          {hoverT !== null && (
+            <line x1={x(hoverT)} x2={x(hoverT)} y1={0} y2={H} stroke="rgba(148, 163, 184, 0.5)" strokeDasharray="3 3" vectorEffect="non-scaling-stroke" />
+          )}
         </svg>
         {/* News dots: HTML on top of the SVG so they stay round; hover for the title, click for the original */}
         {marks.map(({ n, t }) => {

@@ -63,38 +63,75 @@ export default async function StockPage({ params }: { params: Promise<{ symbol: 
     ["Issuer", "Coinbase (B20 tokenized stock)"],
   ];
 
+  const peers = BASE_TOKENIZED_STOCKS.filter((p) => p.sector === s.sector && p.symbol !== s.symbol);
+
   return (
-    <main className="min-h-screen bg-[#03060e] px-4 py-8">
-      <div className="mx-auto max-w-3xl space-y-6">
+    <main className="min-h-screen bg-[#02050c] bg-cyber-grid px-4 py-8">
+      <div className="mx-auto max-w-5xl space-y-6">
         <SiteNav />
 
-        <div className="flex items-center gap-4">
-          <img src={s.logoUrl} alt="" className="h-14 w-14 rounded-2xl bg-white/5 object-contain p-1.5" />
-          <div>
-            <h1 className="text-2xl font-extrabold text-white">{s.symbol}</h1>
-            <p className="text-sm text-slate-400">
-              {s.name} · tracks {s.companyName} ({s.tickerUnderlying})
-            </p>
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div className="flex items-center gap-4">
+            <img src={s.logoUrl} alt="" className="h-14 w-14 rounded-2xl bg-white/5 object-contain p-1.5" />
+            <div>
+              <div className="flex items-center gap-2">
+                <h1 className="text-2xl font-extrabold text-white">{s.symbol}</h1>
+                <span className="rounded-full border border-slate-700 bg-slate-800/80 px-2.5 py-0.5 text-[11px] font-semibold text-slate-300">
+                  {s.sector}
+                </span>
+              </div>
+              <p className="text-sm text-slate-400">
+                {s.name} · tracks {s.companyName} ({s.tickerUnderlying})
+              </p>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap gap-2">
+            <Link
+              href={`/?stock=${s.symbol}`}
+              className="inline-flex min-h-[40px] items-center gap-2 rounded-xl bg-gradient-to-r from-[#4C6FFF] to-cyan-600 px-5 py-2.5 text-sm font-bold text-white shadow-lg shadow-[#4C6FFF]/25 hover:brightness-110"
+            >
+              Buy or sell {s.symbol}
+            </Link>
+            <Link
+              href={`/?tab=agent&prompt=${encodeURIComponent(`Build a basket around ${s.symbol} (${s.sector}), max 30% per stock`)}`}
+              className="inline-flex min-h-[40px] items-center gap-2 rounded-xl border border-slate-700 bg-[#0b1120] px-4 py-2.5 text-sm font-semibold text-slate-200 hover:border-cyan-400/50 hover:text-white"
+            >
+              Ask Agent with {s.symbol}
+            </Link>
           </div>
         </div>
         <p className="text-sm leading-relaxed text-slate-300">{s.description}</p>
 
         <StockLive symbol={s.symbol} color={s.color} />
 
+        {peers.length > 0 && (
+          <div className="rounded-2xl border border-slate-800 bg-[#0b1120] p-4">
+            <h2 className="mb-2.5 text-xs font-bold uppercase tracking-wider text-slate-400">Same sector peers ({s.sector})</h2>
+            <div className="flex flex-wrap gap-2">
+              {peers.map((p) => (
+                <Link
+                  key={p.symbol}
+                  href={`/stock/${p.symbol}`}
+                  className="inline-flex min-h-[38px] items-center gap-2 rounded-xl border border-slate-800 bg-[#060b16] px-3 py-1.5 text-xs font-semibold text-slate-200 hover:border-[#4C6FFF]/60 hover:text-white transition"
+                >
+                  <img src={p.logoUrl} alt="" className="h-5 w-5 rounded-full object-contain" />
+                  <span className="font-mono font-bold text-white">{p.symbol}</span>
+                  <span className="text-slate-400">{p.companyName}</span>
+                </Link>
+              ))}
+            </div>
+          </div>
+        )}
+
         <NewsFeed symbol={s.symbol} limit={10} />
 
         <div className="flex flex-wrap gap-2">
-          <Link
-            href={`/?stock=${s.symbol}`}
-            className="inline-flex items-center gap-2 rounded-xl bg-[#4C6FFF] px-5 py-3 text-sm font-bold text-white hover:brightness-110"
-          >
-            Buy or sell {s.symbol}
-          </Link>
           <a
             href={s.prospectusUrl}
             target="_blank"
             rel="noopener noreferrer"
-            className="inline-flex items-center gap-2 rounded-xl border border-slate-700 px-4 py-3 text-sm text-slate-200 hover:border-slate-500"
+            className="inline-flex min-h-[40px] items-center gap-2 rounded-xl border border-slate-700 px-4 py-2.5 text-sm text-slate-200 hover:border-slate-500"
           >
             <FileText className="h-4 w-4" /> Prospectus
           </a>
@@ -102,7 +139,7 @@ export default async function StockPage({ params }: { params: Promise<{ symbol: 
             href={s.basescanUrl}
             target="_blank"
             rel="noopener noreferrer"
-            className="inline-flex items-center gap-2 rounded-xl border border-slate-700 px-4 py-3 text-sm text-slate-200 hover:border-slate-500"
+            className="inline-flex min-h-[40px] items-center gap-2 rounded-xl border border-slate-700 px-4 py-2.5 text-sm text-slate-200 hover:border-slate-500"
           >
             <ExternalLink className="h-4 w-4" /> BaseScan
           </a>

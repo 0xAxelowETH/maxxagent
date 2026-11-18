@@ -20,8 +20,8 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 
 export default function TermsPage() {
   return (
-    <main className="min-h-screen bg-[#03060e] px-4 py-10">
-      <div className="mx-auto max-w-2xl space-y-8">
+    <main className="min-h-screen bg-[#02050c] bg-cyber-grid px-4 py-10">
+      <div className="mx-auto max-w-3xl space-y-8">
         <SiteNav current="terms" />
         <div>
           <h1 className="text-2xl font-extrabold text-white">Terms of Use &amp; Risk Disclosure</h1>

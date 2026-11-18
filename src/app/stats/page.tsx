@@ -56,8 +56,8 @@ export default function StatsPage() {
 
   const t = data?.totals;
   return (
-    <main className="min-h-screen bg-[#03060e] px-4 py-10">
-      <div className="mx-auto max-w-3xl space-y-6">
+    <main className="min-h-screen bg-[#02050c] bg-cyber-grid px-4 py-10">
+      <div className="mx-auto max-w-5xl space-y-6">
         <SiteNav current="stats" />
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div>

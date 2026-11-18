@@ -146,38 +146,28 @@ function isMissingChainError(err: unknown): boolean {
   return /unrecognized chain|unknown chain|chain .*not.*added|missing.*chain|4902/i.test(msg);
 }
 
-const BASE_CHAIN_PARAMS = {
-  mainnet: {
-    chainId: "0x2105",
-    chainName: "Base Mainnet",
-    nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
-    rpcUrls: ["https://mainnet.base.org"],
-    blockExplorerUrls: ["https://basescan.org"],
-  },
-  sepolia: {
-    chainId: "0x14a34",
-    chainName: "Base Sepolia Testnet",
-    nativeCurrency: { name: "Sepolia Ether", symbol: "ETH", decimals: 18 },
-    rpcUrls: ["https://sepolia.base.org"],
-    blockExplorerUrls: ["https://sepolia.basescan.org"],
-  },
+const BASE_MAINNET_PARAMS = {
+  chainId: "0x2105",
+  chainName: "Base Mainnet",
+  nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
+  rpcUrls: ["https://mainnet.base.org"],
+  blockExplorerUrls: ["https://basescan.org"],
 };
 
-async function switchOrAddBaseChain(eth: EthereumProvider, mode: "mainnet" | "sepolia"): Promise<string> {
-  const target = BASE_CHAIN_PARAMS[mode];
+async function switchOrAddBaseChain(eth: EthereumProvider): Promise<string> {
   try {
     await eth.request({
       method: "wallet_switchEthereumChain",
-      params: [{ chainId: target.chainId }],
+      params: [{ chainId: BASE_MAINNET_PARAMS.chainId }],
     });
   } catch (switchErr: unknown) {
     if (!isMissingChainError(switchErr)) throw switchErr;
     await eth.request({
       method: "wallet_addEthereumChain",
-      params: [target],
+      params: [BASE_MAINNET_PARAMS],
     });
   }
-  return target.chainId;
+  return BASE_MAINNET_PARAMS.chainId;
 }
 
 function useDismissMenu(open: boolean, ref: React.RefObject<HTMLDivElement | null>, onClose: () => void) {
@@ -545,11 +535,14 @@ export default function StockMaxxingDashboard() {
     }
   }, []);
   const nonUsComplianceAccepted = termsAccepted === true;
-  // Tokenized stocks exist on Base Mainnet only
-  const txTargetNetwork = "mainnet" as "sepolia" | "mainnet";
-
-  // UX Ease-of-Use State: Virtual Demo Sandbox, Simple/Pro Mode, & Table Search/Filters
+  // Studio raw calldata toggle + Market workspace view + Table Search/Sort/Filters + Agent Bar Hover
   const [proMode, setProMode] = useState<boolean>(false);
+  const [marketView, setMarketView] = useState<"overview" | "terminal">("overview");
+  const [tableSort, setTableSort] = useState<{
+    col: "default" | "nav" | "change" | "gap" | "mult" | "vol" | "mcap";
+    dir: "desc" | "asc";
+  }>({ col: "default", dir: "desc" });
+  const [highlightedAlloc, setHighlightedAlloc] = useState<string | null>(null);
   const [chartSelectedSymbol, setChartSelectedSymbol] = useState<string>("NVDAc");
   const [searchQuery, setSearchQuery] = useState<string>("");
   const [selectedSectorFilter, setSelectedSectorFilter] = useState<string>("ALL");
@@ -1099,13 +1092,14 @@ export default function StockMaxxingDashboard() {
     };
   }, [walletAddress, balancesFor, balanceRefreshNonce]);
 
-  // First visit: one proposal from the default request, started once. A run that fails (e.g. rate limited) must not
-  // start another by itself, and asking from the hero must not add a duplicate run.
+  // First visit: one proposal from URL ?prompt= (if provided) or the default request, started once.
   const autoRunStarted = useRef(false);
   useEffect(() => {
     if (autoRunStarted.current || stocks.length === 0 || agentReport || runningAgent) return;
     autoRunStarted.current = true;
-    triggerStockAgent(stocks);
+    const urlPrompt = new URLSearchParams(window.location.search).get("prompt")?.trim().slice(0, 500);
+    if (urlPrompt) setUserPrompt(urlPrompt);
+    triggerStockAgent(stocks, urlPrompt || undefined);
   }, [stocks, agentReport, runningAgent, triggerStockAgent]);
 
   const copyToClipboard = async (text: string, key: string) => {
@@ -1300,7 +1294,7 @@ export default function StockMaxxingDashboard() {
           if (candidateName) setConnectedWalletName(candidateName);
           if (chainId && chainId !== "0x2105") {
             try {
-              chainId = await switchOrAddBaseChain(eth, "mainnet");
+              chainId = await switchOrAddBaseChain(eth);
             } catch {
               // Keep connected even if user postpones switching until trade time
             }
@@ -1435,12 +1429,11 @@ export default function StockMaxxingDashboard() {
     };
   }, [walletProviders, walletAddress, termsAccepted]);
 
-  const switchToBaseMainnet = async (modeOverride?: "sepolia" | "mainnet") => {
-    const mode = modeOverride || txTargetNetwork;
+  const switchToBaseMainnet = async () => {
     const eth = getEthProvider();
     if (!eth) return;
     try {
-      const switchedHex = await switchOrAddBaseChain(eth, mode);
+      const switchedHex = await switchOrAddBaseChain(eth);
       setChainIdHex(switchedHex);
     } catch (err: unknown) {
       setTxError(errMsg(err, "Failed to switch to Base network"));
@@ -1503,7 +1496,7 @@ export default function StockMaxxingDashboard() {
       }
       // The dry run must hit Base (on another chain the registry address has no code and would "pass")
       const currentChain = normalizeChainHex(await eth.request({ method: "eth_chainId" }).catch(() => ""));
-      if (currentChain && currentChain !== "0x2105") await switchToBaseMainnet("mainnet");
+      if (currentChain && currentChain !== "0x2105") await switchToBaseMainnet();
       const calldata = encodeFunctionData({
         abi: INDEX_REGISTRY_ABI,
         functionName: "createIndex",
@@ -1643,7 +1636,13 @@ export default function StockMaxxingDashboard() {
     // /?tab=portfolio (drift alert notifications): open the portfolio, where the saved target and its plan are
     const fromUrl = TAB_BY_SLUG[new URLSearchParams(window.location.search).get("tab") || ""];
     if (fromUrl) setActiveTab(fromUrl);
-    const wanted = new URLSearchParams(window.location.search).get("stock");
+    const q = new URLSearchParams(window.location.search);
+    const urlPrompt = q.get("prompt")?.trim().slice(0, 500);
+    if (urlPrompt) {
+      setUserPrompt(urlPrompt);
+      setActiveTab("agent");
+    }
+    const wanted = q.get("stock");
     const match = BASE_TOKENIZED_STOCKS.find((s) => s.symbol.toLowerCase() === (wanted || "").toLowerCase());
     if (match) {
       setChartSelectedSymbol(match.symbol);
@@ -1653,7 +1652,6 @@ export default function StockMaxxingDashboard() {
     const shared = parseSharedBasket(window.location.search);
     if (!shared) return;
     setCustomWeights(shared.weightsBps);
-    const q = new URLSearchParams(window.location.search);
     const pay = q.get("pay");
     if (pay === "eth" || pay === "usdc") setBasketPayWith(pay);
     const sharedName = cleanIndexName(q.get("name"));
@@ -1682,23 +1680,48 @@ export default function StockMaxxingDashboard() {
     agentReport?.onchainExecution.attributedCalldata || attributionInfo.dataSuffix
   );
 
-  // Filter & Search B20 Equities for Tab 1 Table
-  const filteredStocks = stocks.filter((st) => {
-    const q = searchQuery.trim().toLowerCase();
-    const matchesSearch =
-      !q ||
-      st.symbol.toLowerCase().includes(q) ||
-      st.companyName.toLowerCase().includes(q) ||
-      st.isin.toLowerCase().includes(q) ||
-      st.sector.toLowerCase().includes(q);
-    const matchesSector =
-      selectedSectorFilter === "ALL" || st.sector === selectedSectorFilter;
-    const matchesSignal =
-      selectedSignalFilter === "ALL" ||
-      (selectedSignalFilter === "DIVIDEND" && st.uiMultiplier > 1.00001) ||
-      (selectedSignalFilter === "DISCOUNT" && st.weekendSignal === "BUY_DEX_DISCOUNT");
-    return matchesSearch && matchesSector && matchesSignal;
-  });
+  // Filter, Search & Sort B20 Equities for Tab 1 Table
+  const filteredStocks = stocks
+    .filter((st) => {
+      const q = searchQuery.trim().toLowerCase();
+      const matchesSearch =
+        !q ||
+        st.symbol.toLowerCase().includes(q) ||
+        st.companyName.toLowerCase().includes(q) ||
+        st.isin.toLowerCase().includes(q) ||
+        st.sector.toLowerCase().includes(q);
+      const matchesSector =
+        selectedSectorFilter === "ALL" || st.sector === selectedSectorFilter;
+      const matchesSignal =
+        selectedSignalFilter === "ALL" ||
+        (selectedSignalFilter === "DIVIDEND" && st.uiMultiplier > 1.00001) ||
+        (selectedSignalFilter === "DISCOUNT" && st.weekendSignal === "BUY_DEX_DISCOUNT");
+      return matchesSearch && matchesSector && matchesSignal;
+    })
+    .sort((a, b) => {
+      if (tableSort.col === "default") return 0;
+      const metric = (s: LiveTokenizedStock) =>
+        tableSort.col === "nav"
+          ? s.navPrice
+          : tableSort.col === "change"
+          ? s.change24hPct
+          : tableSort.col === "gap"
+          ? s.weekendGapPct ?? 0
+          : tableSort.col === "mult"
+          ? s.uiMultiplier
+          : tableSort.col === "vol"
+          ? s.dexVolume24hUsd ?? s.dexLiquidityUsd ?? 0
+          : s.onchainMarketCapUsd;
+      const diff = metric(a) - metric(b);
+      return tableSort.dir === "asc" ? diff : -diff;
+    });
+
+  const toggleSort = (col: "nav" | "change" | "gap" | "mult" | "vol" | "mcap") =>
+    setTableSort((prev) =>
+      prev.col === col
+        ? { col, dir: prev.dir === "desc" ? "asc" : "desc" }
+        : { col, dir: col === "gap" ? "asc" : "desc" }
+    );
 
   // Compute Build-in-Public X Post with live Base Mainnet telemetry
   // No made-up fallbacks: 0 until live data has loaded
@@ -1841,7 +1864,7 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
               <div className="flex items-center gap-2">
                 {chainIdHex && normalizeChainHex(chainIdHex) !== "0x2105" && (
                   <button
-                    onClick={() => switchToBaseMainnet("mainnet")}
+                    onClick={() => switchToBaseMainnet()}
                     className="rounded-xl bg-amber-500/20 border border-amber-500/40 px-3 py-2 text-xs font-semibold text-amber-300 hover:bg-amber-500/30 transition cursor-pointer"
                     title="Tokenized stocks are on Base Mainnet"
                   >
@@ -2105,53 +2128,40 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
 
       {/* Main Content Container */}
       <main className="relative z-10 mx-auto w-full max-w-7xl flex-1 px-3 sm:px-4 pt-4 sm:pt-6 pb-28 md:pb-10 space-y-5 sm:space-y-6">
-        {/* 3-step quick start (Market tab, until a wallet is connected) */}
+        {/* Compact dismissible 1-line quick start (Market tab, until a wallet is connected) */}
         {activeTab === "terminal" && !walletAddress && (
           <GuidedQuickStartBar
-            activeTab={activeTab}
             setActiveTab={setActiveTab}
-            proMode={proMode}
-            onToggleProMode={() => setProMode((p) => !p)}
             onQuickRunAgent={() => triggerStockAgent()}
-            onQuickBuy={() => setActiveTab("agent")}
           />
         )}
 
-        {/* Eligibility attestation & index registry status */}
-        <div className="glass-panel rounded-2xl px-4 py-3 hidden md:flex flex-row flex-wrap items-center justify-between gap-2 sm:gap-3">
-          <div className="flex flex-wrap items-center gap-3">
-            <span className="inline-flex items-center gap-2 rounded-xl border border-emerald-500/35 bg-emerald-500/10 px-3 py-1.5 text-xs text-emerald-200">
-              <ShieldCheck className="h-4 w-4 text-emerald-400 shrink-0" />
+        {/* Slim status pill row (saves vertical space above the fold) */}
+        <div className="hidden md:flex flex-wrap items-center justify-between gap-2 px-1 text-[11px] text-slate-400">
+          <div className="flex flex-wrap items-center gap-2.5">
+            <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/35 bg-emerald-500/10 px-2.5 py-1 text-emerald-200">
+              <ShieldCheck className="h-3.5 w-3.5 text-emerald-400 shrink-0" />
               Terms accepted
-              <a href="/terms" target="_blank" rel="noopener noreferrer" className="text-emerald-300/80 underline">
+              <a href="/terms" target="_blank" rel="noopener noreferrer" className="text-emerald-300/90 underline hover:text-white">
                 review
               </a>
             </span>
-
-            <span className="hidden sm:inline text-[11px] text-slate-400">
-              Base Mainnet only · non-custodial · you sign every transaction
-            </span>
+            <span>Base Mainnet · non-custodial · you sign every order</span>
           </div>
 
           {hasRegistry && (
-          <div className="flex flex-wrap items-center gap-2 text-xs">
-            <span className="text-slate-400 font-semibold">Index registry:</span>
-            {hasRegistry ? (
+            <div className="flex items-center gap-2">
+              <span className="font-semibold">Registry:</span>
               <a
                 href={`https://basescan.org/address/${registryAddress}`}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="inline-flex items-center gap-1 rounded-xl border border-cyan-500/40 bg-cyan-500/15 px-3 py-1.5 font-mono text-[11px] font-semibold text-cyan-300 hover:bg-cyan-500/25 transition"
+                className="inline-flex items-center gap-1 rounded-full border border-cyan-500/35 bg-cyan-500/10 px-2.5 py-0.5 font-mono text-[11px] font-semibold text-cyan-300 hover:bg-cyan-500/20 transition"
               >
                 {registryAddress.slice(0, 8)}…{registryAddress.slice(-6)}
                 <ExternalLink className="h-3 w-3" />
               </a>
-            ) : (
-              <span className="rounded-xl border border-amber-500/40 bg-amber-500/10 px-3 py-1.5 text-[11px] text-amber-200">
-                not deployed yet
-              </span>
-            )}
-          </div>
+            </div>
           )}
         </div>
 
@@ -2170,14 +2180,10 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                   <CheckCircle2 className="h-5 w-5 text-emerald-400 shrink-0" />
                   <div>
                     <p className="font-semibold">
-                      Onchain Transaction Broadcasted on{" "}
-                      {txTargetNetwork === "sepolia" ? "Base Sepolia Testnet" : "Base Mainnet"}{" "}
-                      with ERC-8021 Builder Code [{builderCode}]!
+                      Onchain Transaction Broadcasted on Base Mainnet with ERC-8021 Builder Code [{builderCode}]!
                     </p>
                     <a
-                      href={`https://${
-                        txTargetNetwork === "sepolia" ? "sepolia." : ""
-                      }basescan.org/tx/${txHash}`}
+                      href={`https://basescan.org/tx/${txHash}`}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="font-mono underline text-emerald-300 inline-flex items-center gap-1 mt-0.5"
@@ -2208,7 +2214,32 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
         {/* =====================================================================
             TAB 1: LIVE B20 EQUITIES & CHAINLINK TOTAL-RETURN ORACLE TERMINAL
            ===================================================================== */}
-        {activeTab === "terminal" && (
+        {activeTab === "terminal" && (() => {
+          const terminalChart = (
+            <InteractiveB20TradingChart
+              stocks={stocks}
+              selectedSymbol={chartSelectedSymbol}
+              onSelectSymbol={(sym) => setChartSelectedSymbol(sym)}
+              onSendToAgent={(sym) => {
+                const promptText = `Basket anchored around ${sym}, prefer stocks trading below NAV`;
+                setUserPrompt(promptText);
+                setActiveTab("agent");
+                triggerStockAgent(stocks, promptText);
+              }}
+              onBuy={(st, usd, payWith) => buyStocks([{ symbol: st.symbol, b20Address: st.b20Address, usd, payWith }], st.symbol)}
+              onSell={(st, tokens) => sellStocks([{ symbol: st.symbol, b20Address: st.b20Address, tokens }], st.symbol)}
+              tradeUsd={tradeUsd}
+              onTradeUsdChange={setTradeUsd}
+              usdcBalance={usdcBalance}
+              ethBalance={ethBalance}
+              ethUsd={ethUsd}
+              holdingTokens={walletBalances[chartSelectedSymbol]?.rawTokens ?? 0}
+              walletConnected={Boolean(walletAddress)}
+              pending={basketPending}
+              pendingLabel={basketStatus || "Working…"}
+            />
+          );
+          return (
           <div className="space-y-6">
             {savedTarget && targetOff && targetDrift && (
               <div data-testid="target-notice" className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-xs text-amber-100">
@@ -2234,7 +2265,38 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                 </button>
               </div>
             )}
-            {/* Institutional Hero Command Center + 4-Card Bento KPI Grid */}
+
+            {/* Market workspace switcher: Overview (Hero + Heatmap) vs Pro Terminal (Chart + Swap immediately above fold) */}
+            <div className="flex items-center justify-between gap-2">
+              <div className="text-[11px] text-slate-400">
+                {marketView === "terminal" ? "Pro Terminal · dual-feed chart, swap & 10-stock matrix" : "Overview · Agent quick-ask, heatmap & live market"}
+              </div>
+              <div className="inline-flex rounded-xl border border-slate-800 bg-[#050914] p-0.5 text-[11px]" role="group" aria-label="Market view">
+                {(
+                  [
+                    { id: "overview", label: "Overview" },
+                    { id: "terminal", label: "Pro Terminal" },
+                  ] as const
+                ).map((v) => (
+                  <button
+                    key={v.id}
+                    type="button"
+                    onClick={() => setMarketView(v.id)}
+                    aria-pressed={marketView === v.id}
+                    className={`rounded-lg px-2.5 py-1 font-bold transition cursor-pointer ${
+                      marketView === v.id ? "bg-[#4C6FFF] text-white" : "text-slate-400 hover:text-white"
+                    }`}
+                  >
+                    {v.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {marketView === "terminal" && terminalChart}
+
+            {/* Institutional Hero Command Center + 4-Card Bento KPI Grid (Overview mode) */}
+            {marketView === "overview" && (
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
               <div className="lg:col-span-7 glass-panel rounded-3xl p-6 sm:p-7 relative overflow-hidden flex flex-col justify-between">
                 <div className="pointer-events-none absolute -right-20 -top-20 h-64 w-64 rounded-full bg-[#4C6FFF]/20 blur-3xl" />
@@ -2426,6 +2488,7 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                 </div>
               </div>
             </div>
+            )}
 
             {stocks.length > 0 && <MarketHeatmap stocks={stocks} updatedAt={fetchedAt} />}
 
@@ -2455,7 +2518,7 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                           <img src={s.logoUrl} alt="" className="h-7 w-7 shrink-0 rounded-full border border-slate-700 bg-slate-900 object-cover" />
                           <div className="min-w-0">
                             <div className="font-mono text-xs font-bold text-white">{s.symbol}</div>
-                            <div className="font-mono text-[11px] text-slate-400">
+                            <div className="font-mono tabular-nums text-[11px] text-slate-400">
                               ${s.dexPrice24_7.toFixed(2)} <span className="text-emerald-300">{(s.weekendGapPct ?? 0).toFixed(2)}%</span>
                             </div>
                           </div>
@@ -2465,7 +2528,7 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                             setChartSelectedSymbol(s.symbol);
                             document.getElementById("swap-panel")?.scrollIntoView({ behavior: "smooth", block: "center" });
                           }}
-                          className="shrink-0 inline-flex items-center gap-1 rounded-lg bg-emerald-600 px-3 py-1.5 text-[11px] font-bold text-white hover:bg-emerald-500 cursor-pointer"
+                          className="shrink-0 inline-flex min-h-[34px] items-center gap-1 rounded-lg bg-emerald-600 px-3 py-1.5 text-[11px] font-bold text-white hover:bg-emerald-500 cursor-pointer"
                           aria-label={`Buy ${s.symbol}`}
                         >
                           <Zap className="h-3 w-3" />
@@ -2478,7 +2541,8 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
               );
             })()}
 
-            {/* Spotlight B20 Equity Bento Cards with Live SVG Sparklines (phones: the chart's stock picker covers this) */}
+            {/* Spotlight B20 Equity Bento Cards (Overview mode; phones use chart's stock picker) */}
+            {marketView === "overview" && (
             <div className="hidden sm:grid grid-cols-2 lg:grid-cols-4 gap-4">
               {(stocks.length > 0 ? stocks.slice(0, 4) : []).map((stock) => {
                 const isPos = stock.change24hPct >= 0;
@@ -2486,8 +2550,7 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                 return (
                   <div
                     key={stock.symbol}
-                    onClick={() => setChartSelectedSymbol(stock.symbol)}
-                    className={`glass-panel glass-panel-hover rounded-2xl p-4 relative overflow-hidden flex flex-col justify-between cursor-pointer ${
+                    className={`glass-panel glass-panel-hover rounded-2xl p-4 relative overflow-hidden flex flex-col justify-between ${
                       isChartActive ? "ring-2 ring-[#4C6FFF]/80" : ""
                     }`}
                   >
@@ -2495,78 +2558,84 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                       className="pointer-events-none absolute -right-10 -top-10 h-28 w-28 rounded-full opacity-20 blur-2xl"
                       style={{ backgroundColor: stock.color }}
                     />
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="flex items-center gap-2.5">
-                        <div className="relative h-10 w-10 shrink-0">
-                          <img
-                            src={stock.logoUrl}
-                            alt={stock.companyName}
-                            className="h-10 w-10 rounded-full border border-slate-700 bg-slate-900 object-cover shadow-md"
-                          />
-                        </div>
-                        <div>
-                          <div className="flex items-center gap-1.5">
-                            <span className="font-mono text-sm font-extrabold text-white">
-                              {stock.symbol}
-                            </span>
-                            {stock.uiMultiplier > 1.00001 && (
-                              <span className="rounded bg-emerald-500/15 border border-emerald-500/30 px-1.5 py-0.5 font-mono text-[9px] font-bold text-emerald-300">
-                                {stock.uiMultiplier.toFixed(4)}x
+                    <button
+                      type="button"
+                      onClick={() => setChartSelectedSymbol(stock.symbol)}
+                      className="text-left w-full cursor-pointer group"
+                      title={`Load ${stock.symbol} in chart`}
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="flex items-center gap-2.5">
+                          <div className="relative h-10 w-10 shrink-0">
+                            <img
+                              src={stock.logoUrl}
+                              alt={stock.companyName}
+                              className="h-10 w-10 rounded-full border border-slate-700 bg-slate-900 object-cover shadow-md"
+                            />
+                          </div>
+                          <div>
+                            <div className="flex items-center gap-1.5">
+                              <span className="font-mono text-sm font-extrabold text-white group-hover:text-cyan-200 transition">
+                                {stock.symbol}
                               </span>
-                            )}
+                              {stock.uiMultiplier > 1.00001 && (
+                                <span className="rounded bg-emerald-500/15 border border-emerald-500/30 px-1.5 py-0.5 font-mono tabular-nums text-[9px] font-bold text-emerald-300">
+                                  {stock.uiMultiplier.toFixed(4)}x
+                                </span>
+                              )}
+                            </div>
+                            <div className="text-[11px] text-slate-400 truncate max-w-[130px]">
+                              {stock.companyName}
+                            </div>
                           </div>
-                          <div className="text-[11px] text-slate-400 truncate max-w-[130px]">
-                            {stock.companyName}
+                        </div>
+                        <span
+                          className={`rounded-lg px-2 py-0.5 font-mono tabular-nums text-[11px] font-bold ${
+                            isPos
+                              ? "bg-emerald-500/15 text-emerald-400 border border-emerald-500/30"
+                              : "bg-rose-500/15 text-rose-400 border border-rose-500/30"
+                          }`}
+                        >
+                          {isPos ? "+" : ""}
+                          {stock.change24hPct.toFixed(2)}%
+                        </span>
+                      </div>
+
+                      <div className="my-3">
+                        <StockSparkline color={stock.color} symbol={stock.symbol} />
+                      </div>
+
+                      <div className="flex items-end justify-between border-t border-slate-800/80 pt-2.5">
+                        <div>
+                          <div className="text-[10px] uppercase text-slate-400 font-semibold">
+                            Chainlink NAV
+                          </div>
+                          <div className="font-mono tabular-nums text-lg font-extrabold text-white">
+                            ${stock.navPrice.toFixed(2)}
+                          </div>
+                        </div>
+                        <div className="text-right">
+                          <div className="text-[10px] uppercase text-slate-400 font-semibold">
+                            DEX price 24/7
+                          </div>
+                          <div className="font-mono tabular-nums text-xs font-bold text-cyan-300">
+                            ${stock.dexPrice24_7.toFixed(2)}{" "}
+                            <span className="text-[10px] text-slate-400">
+                              ({stock.weekendGapPct >= 0 ? "+" : ""}
+                              {stock.weekendGapPct.toFixed(2)}%)
+                            </span>
                           </div>
                         </div>
                       </div>
-                      <span
-                        className={`rounded-lg px-2 py-0.5 font-mono text-[11px] font-bold ${
-                          isPos
-                            ? "bg-emerald-500/15 text-emerald-400 border border-emerald-500/30"
-                            : "bg-rose-500/15 text-rose-400 border border-rose-500/30"
-                        }`}
-                      >
-                        {isPos ? "+" : ""}
-                        {stock.change24hPct.toFixed(2)}%
-                      </span>
-                    </div>
-
-                    <div className="my-3">
-                      <StockSparkline color={stock.color} symbol={stock.symbol} />
-                    </div>
-
-                    <div className="flex items-end justify-between border-t border-slate-800/80 pt-2.5">
-                      <div>
-                        <div className="text-[10px] uppercase text-slate-400 font-semibold">
-                          Chainlink NAV
-                        </div>
-                        <div className="font-mono text-lg font-extrabold text-white">
-                          ${stock.navPrice.toFixed(2)}
-                        </div>
-                      </div>
-                      <div className="text-right">
-                        <div className="text-[10px] uppercase text-slate-400 font-semibold">
-                          DEX price 24/7
-                        </div>
-                        <div className="font-mono text-xs font-bold text-cyan-300">
-                          ${stock.dexPrice24_7.toFixed(2)}{" "}
-                          <span className="text-[10px] text-slate-400">
-                            ({stock.weekendGapPct >= 0 ? "+" : ""}
-                            {stock.weekendGapPct.toFixed(2)}%)
-                          </span>
-                        </div>
-                      </div>
-                    </div>
+                    </button>
 
                     <div className="mt-3 pt-2.5 border-t border-slate-800/70 flex items-center justify-between gap-2">
                       <button
                         onClick={() => {
-                          // Open this stock in the Swap panel to choose the amount
                           setChartSelectedSymbol(stock.symbol);
                           document.getElementById("swap-panel")?.scrollIntoView({ behavior: "smooth", block: "center" });
                         }}
-                        className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-lg bg-[#4C6FFF]/20 hover:bg-[#4C6FFF]/35 border border-[#4C6FFF]/45 px-2.5 py-1.5 text-[11px] font-bold text-blue-200 transition cursor-pointer"
+                        className="flex-1 inline-flex min-h-[34px] items-center justify-center gap-1.5 rounded-lg bg-[#4C6FFF]/20 hover:bg-[#4C6FFF]/35 border border-[#4C6FFF]/45 px-2.5 py-1.5 text-[11px] font-bold text-blue-200 transition cursor-pointer"
                         title={`Buy or sell ${stock.symbol}: choose any amount in the Swap panel`}
                       >
                         <Zap className="h-3 w-3" />
@@ -2574,7 +2643,7 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                       </button>
                       <a
                         href={`/stock/${stock.symbol}`}
-                        className="rounded-lg border border-slate-700 bg-slate-800/80 px-2.5 py-1.5 text-[11px] font-semibold text-slate-300 hover:text-white transition"
+                        className="inline-flex min-h-[34px] items-center rounded-lg border border-slate-700 bg-slate-800/80 px-2.5 py-1.5 text-[11px] font-semibold text-slate-300 hover:text-white transition"
                         title={`${stock.symbol}: live NAV, DEX price, chart and token details`}
                       >
                         Details
@@ -2584,30 +2653,10 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                 );
               })}
             </div>
+            )}
 
-            {/* Real price history: Chainlink NAV vs DEX */}
-            <InteractiveB20TradingChart
-              stocks={stocks}
-              selectedSymbol={chartSelectedSymbol}
-              onSelectSymbol={(sym) => setChartSelectedSymbol(sym)}
-              onSendToAgent={(sym) => {
-                const promptText = `Basket anchored around ${sym}, prefer stocks trading below NAV`;
-                setUserPrompt(promptText);
-                setActiveTab("agent");
-                triggerStockAgent(stocks, promptText);
-              }}
-              onBuy={(st, usd, payWith) => buyStocks([{ symbol: st.symbol, b20Address: st.b20Address, usd, payWith }], st.symbol)}
-              onSell={(st, tokens) => sellStocks([{ symbol: st.symbol, b20Address: st.b20Address, tokens }], st.symbol)}
-              tradeUsd={tradeUsd}
-              onTradeUsdChange={setTradeUsd}
-              usdcBalance={usdcBalance}
-              ethBalance={ethBalance}
-              ethUsd={ethUsd}
-              holdingTokens={walletBalances[chartSelectedSymbol]?.rawTokens ?? 0}
-              walletConnected={Boolean(walletAddress)}
-              pending={basketPending}
-              pendingLabel={basketStatus || "Working…"}
-            />
+            {/* Real price history: Chainlink NAV vs DEX (Overview mode position) */}
+            {marketView === "overview" && terminalChart}
 
             {/* Live Tokenized Stocks Table with Official Stock Logos */}
             <div className="glass-panel rounded-3xl overflow-hidden">
@@ -2731,15 +2780,41 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                     <tr className="border-b border-slate-800/80 bg-[#070b14] text-[11px] font-semibold uppercase tracking-wider text-slate-400">
                       <th className="py-3.5 px-4">Asset / ISIN</th>
                       <th className="py-3.5 px-4">Sector</th>
-                      <th className="py-3.5 px-4 text-right">Chainlink 24/5 NAV</th>
-                      <th className="py-3.5 px-4 text-right">24/7 DEX vs Oracle Gap</th>
-                      <th className="py-3.5 px-4 text-right">B20 uiMultiplier</th>
+                      <th className="py-3.5 px-4 text-right">
+                        <button type="button" onClick={() => toggleSort("nav")} className="inline-flex items-center gap-1 hover:text-white cursor-pointer">
+                          Chainlink 24/5 NAV
+                          {tableSort.col === "nav" && <span>{tableSort.dir === "asc" ? "▲" : "▼"}</span>}
+                        </button>
+                        <button type="button" onClick={() => toggleSort("change")} className="ml-1.5 text-[10px] text-cyan-400 hover:text-white cursor-pointer" title="Sort by 24h change">
+                          24h{tableSort.col === "change" ? (tableSort.dir === "asc" ? "▲" : "▼") : ""}
+                        </button>
+                      </th>
+                      <th className="py-3.5 px-4 text-right">
+                        <button type="button" onClick={() => toggleSort("gap")} className="inline-flex items-center gap-1 hover:text-white cursor-pointer">
+                          24/7 DEX vs Gap
+                          {tableSort.col === "gap" && <span>{tableSort.dir === "asc" ? "▲" : "▼"}</span>}
+                        </button>
+                        <button type="button" onClick={() => toggleSort("vol")} className="ml-1.5 text-[10px] text-cyan-400 hover:text-white cursor-pointer" title="Sort by 24h DEX volume">
+                          Vol{tableSort.col === "vol" ? (tableSort.dir === "asc" ? "▲" : "▼") : ""}
+                        </button>
+                      </th>
+                      <th className="py-3.5 px-4 text-right">
+                        <button type="button" onClick={() => toggleSort("mult")} className="inline-flex items-center gap-1 hover:text-white cursor-pointer">
+                          B20 Multiplier
+                          {tableSort.col === "mult" && <span>{tableSort.dir === "asc" ? "▲" : "▼"}</span>}
+                        </button>
+                      </th>
                       <th className="py-3.5 px-4 text-right">Onchain Supply (Shares UI)</th>
-                      <th className="py-3.5 px-4 text-right">Base Market Cap</th>
+                      <th className="py-3.5 px-4 text-right">
+                        <button type="button" onClick={() => toggleSort("mcap")} className="inline-flex items-center gap-1 hover:text-white cursor-pointer">
+                          Base Market Cap
+                          {tableSort.col === "mcap" && <span>{tableSort.dir === "asc" ? "▲" : "▼"}</span>}
+                        </button>
+                      </th>
                       {Object.keys(walletBalances).length > 0 && (
                         <th className="py-3.5 px-4 text-right text-cyan-400">Wallet balanceOfUI</th>
                       )}
-                      <th className="py-3.5 px-4 text-center">Contracts & prospectus</th>
+                      <th className="py-3.5 px-4 text-center">Actions &amp; sources</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-800/60 text-xs">
@@ -2793,7 +2868,7 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                               {stock.sector}
                             </span>
                           </td>
-                          <td className="py-3.5 px-4 text-right font-mono">
+                          <td className="py-3.5 px-4 text-right font-mono tabular-nums">
                             <div className="inline-flex items-center justify-end gap-1.5 text-sm font-bold text-white">
                               ${stock.navPrice.toFixed(2)}
                             </div>
@@ -2806,13 +2881,13 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                               {stock.change24hPct.toFixed(2)}% ({fmtAge(stock.oracleAgeMinutes ?? 3)})
                             </div>
                           </td>
-                          <td className="py-3.5 px-4 text-right font-mono">
+                          <td className="py-3.5 px-4 text-right font-mono tabular-nums">
                             <div className="text-xs font-bold text-slate-200">
                               DEX: ${(stock.dexPrice24_7 ?? stock.navPrice).toFixed(2)} (
                               {(stock.weekendGapPct ?? 0) >= 0 ? "+" : ""}
                               {(stock.weekendGapPct ?? 0).toFixed(2)}%)
                             </div>
-                            <div className="flex items-center justify-end gap-1.5 mt-0.5">
+                            <div className="flex flex-wrap items-center justify-end gap-1.5 mt-0.5">
                               <span
                                 className={`inline-block rounded px-1.5 py-0.5 text-[10px] font-bold ${
                                   stock.weekendSignal === "BUY_DEX_DISCOUNT"
@@ -2828,15 +2903,21 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                                   ? "Above NAV"
                                   : "At NAV"}
                               </span>
+                              {stock.dexVolume24hUsd && (
+                                <span className="text-[10px] text-slate-400" title="24h Base DEX Volume">
+                                  ${stock.dexVolume24hUsd >= 1e6 ? `${(stock.dexVolume24hUsd / 1e6).toFixed(1)}M` : `${(stock.dexVolume24hUsd / 1e3).toFixed(0)}K`} vol
+                                </span>
+                              )}
                               {stock.dexLiquidityUsd && (
                                 <a
                                   href={stock.dexUrl || "#"}
                                   target="_blank"
                                   rel="noopener noreferrer"
+                                  onClick={(e) => e.stopPropagation()}
                                   className="text-[10px] text-cyan-400 hover:underline"
-                                  title="Live Aerodrome Base Pool Liquidity"
+                                  title="Live Base DEX Pool Liquidity"
                                 >
-                                  ${(stock.dexLiquidityUsd / 1e3).toFixed(0)}K Liq
+                                  ${stock.dexLiquidityUsd >= 1e6 ? `${(stock.dexLiquidityUsd / 1e6).toFixed(1)}M` : `${(stock.dexLiquidityUsd / 1e3).toFixed(0)}K`} liq
                                 </a>
                               )}
                             </div>
@@ -2887,29 +2968,40 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                           <td className="py-3.5 px-4">
                             <div className="flex items-center justify-center gap-1.5 flex-wrap">
                               <button
-                                onClick={() => {
+                                onClick={(e) => {
+                                  e.stopPropagation();
                                   setChartSelectedSymbol(stock.symbol);
                                   document.getElementById("swap-panel")?.scrollIntoView({ behavior: "smooth", block: "center" });
                                 }}
                                 title={`Buy or sell ${stock.symbol}: choose any amount in the Swap panel`}
-                                className="inline-flex items-center gap-1 rounded-md border border-[#4C6FFF]/50 bg-[#4C6FFF]/20 px-2 py-1 text-[11px] font-bold text-blue-200 hover:bg-[#4C6FFF]/35 disabled:opacity-60 transition cursor-pointer"
+                                className="inline-flex items-center gap-1 rounded-md border border-[#4C6FFF]/50 bg-[#4C6FFF]/20 px-2.5 py-1 text-[11px] font-bold text-blue-200 hover:bg-[#4C6FFF]/35 disabled:opacity-60 transition cursor-pointer"
                               >
                                 <Zap className="h-3 w-3" />
                                 Buy
                               </button>
                               <a
+                                href={`/stock/${stock.symbol}`}
+                                onClick={(e) => e.stopPropagation()}
+                                title={`Open ${stock.symbol} dossier`}
+                                className="inline-flex items-center rounded-md border border-slate-700 bg-slate-800/80 px-2 py-1 text-[11px] font-semibold text-slate-200 hover:border-cyan-400/50 hover:text-white transition"
+                              >
+                                Inspect
+                              </a>
+                              <a
                                 href={stock.basescanUrl}
                                 target="_blank"
                                 rel="noopener noreferrer"
+                                onClick={(e) => e.stopPropagation()}
                                 title="View B20 Precompile on BaseScan"
                                 className="inline-flex items-center gap-1.5 rounded-md border border-slate-700 bg-slate-800/70 px-2 py-1 font-mono text-[11px] text-slate-300 hover:border-[#4C6FFF] hover:text-white transition"
                               >
-                                {stock.b20Address.slice(0, 6)}..{stock.b20Address.slice(-4)}
+                                B20
                               </a>
                               <a
                                 href={`https://basescan.org/address/${stock.chainlinkFeed}`}
                                 target="_blank"
                                 rel="noopener noreferrer"
+                                onClick={(e) => e.stopPropagation()}
                                 title="View Chainlink Oracle Proxy on BaseScan"
                                 className="inline-flex items-center gap-1 rounded-md border border-slate-700 bg-slate-800/70 px-2 py-1 text-[11px] text-cyan-300 hover:border-cyan-400 transition"
                               >
@@ -2919,6 +3011,7 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                                 href={stock.prospectusUrl}
                                 target="_blank"
                                 rel="noopener noreferrer"
+                                onClick={(e) => e.stopPropagation()}
                                 title="Issuer prospectus (PDF, published by Coinbase)"
                                 className="inline-flex items-center gap-1 rounded-md border border-slate-700 bg-slate-800/70 px-2 py-1 text-[11px] text-amber-300 hover:border-amber-400 transition"
                               >
@@ -2952,7 +3045,8 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
               </div>
             </details>
           </div>
-        )}
+          );
+        })()}
 
         {/* =====================================================================
             TAB 2: BASKET AGENT (AGENTIC STOCK FINANCE)
@@ -3427,16 +3521,79 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                   {/* Live basket snapshot (no projections) */}
                   <BasketSnapshotCard allocations={agentReport.allocations} />
 
-                  {/* Allocations Table with Official Stock Logos */}
+                  {/* Allocations Table with Interactive Horizontal Allocation Bar + Official Stock Logos */}
                   <div>
                     <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-3">
                       Allocation and why each stock was picked
                     </h3>
+
+                    <div className="mb-3 rounded-xl border border-slate-800/90 bg-[#050914] p-3 space-y-2">
+                      <div className="flex h-6 w-full overflow-hidden rounded-lg bg-slate-900">
+                        {agentReport.allocations.map((alloc) => {
+                          const sharePct = alloc.capitalSharePct ?? (alloc.targetWeightBps / 100);
+                          const isHi = highlightedAlloc === alloc.symbol;
+                          return (
+                            <button
+                              key={`bar-${alloc.symbol}`}
+                              type="button"
+                              onMouseEnter={() => setHighlightedAlloc(alloc.symbol)}
+                              onMouseLeave={() => setHighlightedAlloc(null)}
+                              onClick={() => setHighlightedAlloc((prev) => (prev === alloc.symbol ? null : alloc.symbol))}
+                              style={{
+                                width: `${Math.max(2, sharePct)}%`,
+                                backgroundColor: alloc.color || STOCK_COLOR_MAP[alloc.symbol] || "#4C6FFF",
+                              }}
+                              className={`flex items-center justify-center text-[10px] font-mono font-bold text-white transition-all cursor-pointer border-r border-[#050914]/70 ${
+                                highlightedAlloc && !isHi ? "opacity-45" : "opacity-100"
+                              }`}
+                              title={`${alloc.symbol}: ${sharePct.toFixed(1)}% ($${alloc.usdAllocation.toFixed(2)})`}
+                            >
+                              {sharePct >= 12 ? `${alloc.symbol.replace(/c$/, "")} ${Math.round(sharePct)}%` : ""}
+                            </button>
+                          );
+                        })}
+                        {(agentReport.cashReservePct ?? 0) > 0 && (
+                          <div
+                            style={{ width: `${agentReport.cashReservePct}%` }}
+                            className="flex items-center justify-center bg-emerald-600/80 text-[10px] font-mono font-bold text-white"
+                            title={`USDC cash reserve: ${agentReport.cashReservePct}%`}
+                          >
+                            {(agentReport.cashReservePct ?? 0) >= 12 ? `USDC ${agentReport.cashReservePct}%` : ""}
+                          </div>
+                        )}
+                      </div>
+                      <div className="flex flex-wrap gap-x-3 gap-y-1 text-[10px] text-slate-400 font-mono tabular-nums">
+                        {agentReport.allocations.map((a) => (
+                          <button
+                            key={`lg-${a.symbol}`}
+                            type="button"
+                            onMouseEnter={() => setHighlightedAlloc(a.symbol)}
+                            onMouseLeave={() => setHighlightedAlloc(null)}
+                            onClick={() => setHighlightedAlloc((prev) => (prev === a.symbol ? null : a.symbol))}
+                            className={`inline-flex items-center gap-1 cursor-pointer ${highlightedAlloc === a.symbol ? "text-white font-bold" : "hover:text-slate-200"}`}
+                          >
+                            <span className="h-2 w-2 rounded-full" style={{ backgroundColor: a.color || STOCK_COLOR_MAP[a.symbol] || "#4C6FFF" }} />
+                            {a.symbol} {(a.capitalSharePct ?? (a.targetWeightBps / 100)).toFixed(1)}%
+                          </button>
+                        ))}
+                        {(agentReport.cashReservePct ?? 0) > 0 && (
+                          <span className="inline-flex items-center gap-1 text-emerald-300">
+                            <span className="h-2 w-2 rounded-full bg-emerald-500" />
+                            USDC {agentReport.cashReservePct}%
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
                     <div className="space-y-3">
                       {agentReport.allocations.map((alloc) => (
                         <div
                           key={alloc.symbol}
-                          className="rounded-xl border border-slate-800/90 bg-[#070b14] p-4 space-y-2"
+                          className={`rounded-xl border p-4 space-y-2 transition ${
+                            highlightedAlloc === alloc.symbol
+                              ? "border-cyan-400/70 bg-[#0b1326] ring-1 ring-cyan-400/40"
+                              : "border-slate-800/90 bg-[#070b14]"
+                          }`}
                         >
                           <div className="flex flex-wrap items-center justify-between gap-2">
                             <div className="flex items-center gap-3">
@@ -4244,6 +4401,19 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                   const totalCost = rowsPnl.reduce((a, x) => a + (x?.cost ?? 0), 0);
                   const totalPl = rowsPnl.reduce((a, x) => a + (x?.pl ?? 0), 0);
                   const anyEst = rowsPnl.some((x) => x?.est);
+                  const multSharesBoost = rows.reduce(
+                    (a, r) => a + Math.max(0, (r.bal?.sharesUI ?? 0) - (r.bal?.rawTokens ?? 0)),
+                    0
+                  );
+                  const multUsdGain = rows.reduce(
+                    (a, r) =>
+                      a + (r.st.uiMultiplier > 1.00001 && r.bal ? r.bal.usdValue * (1 - 1 / r.st.uiMultiplier) : 0),
+                    0
+                  );
+                  const topHold = rows.reduce<{ symbol: string; pct: number } | null>((best, r) => {
+                    const pct = totalUsd > 0 ? ((r.bal?.usdValue ?? 0) / totalUsd) * 100 : 0;
+                    return !best || pct > best.pct ? { symbol: r.st.symbol, pct } : best;
+                  }, null);
                   const money = (n: number) => `${n >= 0 ? "+" : "−"}$${Math.abs(n).toFixed(Math.abs(n) < 1 ? 4 : 2)}`;
                   const tone = (n: number) => (n > 0 ? "text-emerald-300" : n < 0 ? "text-rose-300" : "text-slate-300");
                   const pnlPlaceholder = pnlPending ? "…" : "—";
@@ -4260,7 +4430,26 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                           </button>
                         </div>
                       )}
-                      <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 font-mono">
+                      {rows.length > 0 && (multSharesBoost > 0 || (topHold && topHold.pct > 50)) && (
+                        <div className="flex flex-wrap items-center gap-2 text-[11px]">
+                          {multSharesBoost > 0 && (
+                            <span
+                              className="inline-flex items-center gap-1.5 rounded-xl border border-emerald-500/35 bg-emerald-500/10 px-3 py-1 text-emerald-200"
+                              title="Extra share-equivalent earned via B20 dividend/split multiplier (already included in live Stocks value)"
+                            >
+                              B20 multiplier captured:{" "}
+                              <strong className="font-mono tabular-nums text-white">+{multSharesBoost.toFixed(6)} sh</strong>{" "}
+                              {multUsdGain >= 0.005 && <span className="font-mono tabular-nums text-emerald-300">(≈ ${multUsdGain.toFixed(2)})</span>}
+                            </span>
+                          )}
+                          {topHold && topHold.pct > 50 && (
+                            <span className="inline-flex items-center gap-1.5 rounded-xl border border-amber-500/35 bg-amber-500/10 px-3 py-1 text-amber-200">
+                              Concentration notice: {topHold.symbol} is {topHold.pct.toFixed(0)}% of your stock value (&gt; 50% in one stock)
+                            </span>
+                          )}
+                        </div>
+                      )}
+                      <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 font-mono tabular-nums">
                         <div className="rounded-xl border border-slate-800 bg-[#070b14] p-3">
                           <div className="text-[10px] font-sans text-slate-400">Stocks value</div>
                           <div className="text-lg font-extrabold text-white">${totalUsd.toFixed(2)}</div>

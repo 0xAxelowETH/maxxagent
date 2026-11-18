@@ -19,8 +19,8 @@ export function SiteNav({ current }: { current?: "stats" | "verify" | "faq" | "t
             key={l.key}
             href={l.href}
             aria-current={current === l.key ? "page" : undefined}
-            className={`hidden sm:inline rounded-lg px-2.5 py-1.5 font-semibold ${
-              current === l.key ? "bg-slate-800 text-white" : "text-slate-400 hover:text-white"
+            className={`hidden sm:inline-flex min-h-[38px] items-center rounded-lg px-3 py-2 font-semibold transition ${
+              current === l.key ? "bg-slate-800/90 text-white border border-slate-700/80" : "text-slate-400 hover:text-white hover:bg-slate-800/50"
             }`}
           >
             {l.label}
@@ -28,7 +28,7 @@ export function SiteNav({ current }: { current?: "stats" | "verify" | "faq" | "t
         ))}
         <Link
           href="/"
-          className="rounded-xl bg-gradient-to-r from-[#4C6FFF] to-cyan-600 px-3.5 py-2 font-bold text-white shadow-lg shadow-[#4C6FFF]/25 hover:brightness-110"
+          className="inline-flex min-h-[38px] items-center rounded-xl bg-gradient-to-r from-[#4C6FFF] to-cyan-600 px-3.5 py-2 font-bold text-white shadow-lg shadow-[#4C6FFF]/25 hover:brightness-110"
         >
           Open app
         </Link>

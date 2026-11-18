@@ -1,7 +1,7 @@
 "use client";
 
 import { MarketStatus } from "./MarketStatus";
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   Activity,
   ArrowRight,
@@ -9,167 +9,87 @@ import {
   Calculator,
   CheckCircle2,
   ExternalLink,
-  Eye,
   FileText,
+  GitCompareArrows,
   HelpCircle,
+  Newspaper,
+  RotateCcw,
   Sparkles,
   TrendingUp,
+  X,
   Zap,
 } from "lucide-react";
 import { BASE_TOKENIZED_STOCKS, LiveTokenizedStock, MIN_BUY_USD, TokenizedStockMetadata } from "@/lib/tokenizedStocks";
 
 interface GuidedQuickStartBarProps {
-  activeTab: string;
   setActiveTab: (tab: "terminal" | "agent" | "indexes" | "traction" | "public") => void;
-  proMode: boolean;
-  onToggleProMode: () => void;
   onQuickRunAgent: () => void;
-  onQuickBuy: () => void;
 }
 
+const QUICKSTART_DISMISS_KEY = "maxxagent_quickstart_hidden";
+
 /**
- * 1. Interactive 3-Step Guided Onboarding Wizard + Demo Portfolio & Simple/Pro Mode Toggles
+ * 1. Compact 1-Line Dismissible Quick-Start Strip (keeps Hero & Agent input above the fold)
  */
 export function GuidedQuickStartBar({
-  activeTab,
   setActiveTab,
-  proMode,
-  onToggleProMode,
   onQuickRunAgent,
-  onQuickBuy,
 }: GuidedQuickStartBarProps) {
-  return (
-    <div className="hero-mesh-card rounded-3xl p-5 sm:p-6 relative overflow-hidden animate-fade-up">
-      <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4 pb-4 border-b border-slate-800/80">
-        <div className="space-y-1">
-          <div className="inline-flex items-center gap-2 rounded-full bg-cyan-500/15 border border-cyan-500/35 px-3 py-0.5 text-[11px] font-bold uppercase tracking-wider text-cyan-300">
-            <Sparkles className="h-3.5 w-3.5 text-cyan-400" />
-            Quick start
-          </div>
-          <h3 className="text-base sm:text-lg font-extrabold text-white tracking-tight pt-0.5">
-            Pick a basket of tokenized stocks and buy it in one click
-          </h3>
-        </div>
+  const [hidden, setHidden] = useState(false);
 
-        <div className="flex flex-wrap items-center gap-2.5 shrink-0">
-          {/* Simple View vs Pro / Developer View Toggle */}
-          <button
-            onClick={onToggleProMode}
-            className={`inline-flex items-center gap-2 rounded-xl px-3.5 py-2.5 text-xs font-semibold transition-all cursor-pointer border ${
-              proMode
-                ? "bg-[#4C6FFF]/25 text-blue-200 border-[#4C6FFF]/60 shadow-md shadow-[#4C6FFF]/20"
-                : "bg-[#060c1c] text-slate-300 border-slate-700/90 hover:border-slate-500 hover:text-white"
-            }`}
-            title="Toggle raw hex calldata & developer telemetry"
-          >
-            <Eye className="h-3.5 w-3.5 text-cyan-400" />
-            {proMode ? "View: Pro Developer Hex" : "View: Simple Guided"}
-          </button>
-        </div>
+  useEffect(() => {
+    try {
+      if (window.localStorage.getItem(QUICKSTART_DISMISS_KEY) === "1") setHidden(true);
+    } catch {
+      // ignore storage access issues
+    }
+  }, []);
+
+  if (hidden) return null;
+
+  return (
+    <div className="hero-mesh-card rounded-2xl px-4 py-2.5 flex flex-wrap items-center justify-between gap-2.5 animate-fade-up">
+      <div className="flex flex-wrap items-center gap-2 text-xs">
+        <span className="inline-flex items-center gap-1.5 rounded-full bg-cyan-500/15 border border-cyan-500/35 px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-cyan-300">
+          <Sparkles className="h-3 w-3 text-cyan-400" />
+          Quick start
+        </span>
+        <span className="text-slate-200 font-semibold">1. Explore 10 live stocks</span>
+        <span className="text-slate-500">·</span>
+        <span className="text-slate-300">2. Ask Agent for a basket</span>
+        <span className="text-slate-500 hidden sm:inline">·</span>
+        <span className="text-slate-300 hidden sm:inline">3. Review &amp; sign in your own wallet</span>
       </div>
 
-      {/* 3-Step Visual Action Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-4">
-        {/* Step 1 */}
-        <div
-          className={`rounded-2xl border p-4 transition-all flex flex-col justify-between gap-3 ${
-            activeTab === "terminal"
-              ? "border-[#4C6FFF]/70 bg-gradient-to-b from-[#0b1736]/95 to-[#060c1d]/95 shadow-lg shadow-[#4C6FFF]/15"
-              : "border-slate-800/90 bg-[#050a16]/85 hover:border-slate-700"
-          }`}
+      <div className="flex items-center gap-2 shrink-0 ml-auto">
+        <button
+          type="button"
+          onClick={() => {
+            setActiveTab("agent");
+            onQuickRunAgent();
+          }}
+          className="inline-flex min-h-[34px] items-center gap-1.5 rounded-xl bg-gradient-to-r from-[#4C6FFF] to-cyan-600 hover:brightness-110 px-3 py-1.5 text-xs font-bold text-white shadow-md shadow-[#4C6FFF]/25 transition cursor-pointer"
         >
-          <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <span className="inline-flex items-center gap-2 rounded-full bg-blue-500/20 border border-blue-400/40 px-2.5 py-0.5 font-mono text-[10px] font-extrabold text-blue-300">
-                <span className="h-1.5 w-1.5 rounded-full bg-blue-400 animate-pulse" />
-                STEP 01 • EXPLORE
-              </span>
-              <TrendingUp className="h-4 w-4 text-blue-400" />
-            </div>
-            <div className="text-sm font-bold text-white">
-              See 10 live tokenized stocks
-            </div>
-            <p className="text-xs text-slate-400 leading-relaxed">
-              Compare the 24/5 Chainlink NAV with 24/7 DEX prices, liquidity and dividend multipliers.
-            </p>
-          </div>
-          <button
-            onClick={() => setActiveTab("terminal")}
-            className="w-full inline-flex items-center justify-center gap-1.5 rounded-xl bg-slate-800/90 hover:bg-slate-700 border border-slate-700 px-3.5 py-2 text-xs font-bold text-cyan-300 transition cursor-pointer"
-          >
-            Open live market
-            <ArrowRight className="h-3.5 w-3.5" />
-          </button>
-        </div>
-
-        {/* Step 2 */}
-        <div
-          className={`rounded-2xl border p-4 transition-all flex flex-col justify-between gap-3 ${
-            activeTab === "agent"
-              ? "border-[#4C6FFF]/70 bg-gradient-to-b from-[#0b1736]/95 to-[#060c1d]/95 shadow-lg shadow-[#4C6FFF]/15"
-              : "border-slate-800/90 bg-[#050a16]/85 hover:border-slate-700"
-          }`}
+          <Bot className="h-3.5 w-3.5" />
+          Run Agent
+          <ArrowRight className="h-3.5 w-3.5" />
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            setHidden(true);
+            try {
+              window.localStorage.setItem(QUICKSTART_DISMISS_KEY, "1");
+            } catch {
+              // ignore storage issues
+            }
+          }}
+          aria-label="Dismiss quick start"
+          title="Dismiss"
+          className="inline-flex min-h-[34px] min-w-[34px] items-center justify-center rounded-xl border border-slate-700/80 bg-[#050a16] text-slate-400 hover:text-white hover:border-slate-500 transition cursor-pointer"
         >
-          <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <span className="inline-flex items-center gap-2 rounded-full bg-cyan-500/20 border border-cyan-400/40 px-2.5 py-0.5 font-mono text-[10px] font-extrabold text-cyan-300">
-                <span className="h-1.5 w-1.5 rounded-full bg-cyan-400 animate-pulse" />
-                STEP 02 • AGENT
-              </span>
-              <Bot className="h-4 w-4 text-cyan-400" />
-            </div>
-            <div className="text-sm font-bold text-white">
-              Get a basket proposal
-            </div>
-            <p className="text-xs text-slate-400 leading-relaxed">
-              Transparent rules score all 10 stocks on DEX vs NAV gap, liquidity, multiplier and your
-              risk profile.
-            </p>
-          </div>
-          <button
-            onClick={() => {
-              setActiveTab("agent");
-              onQuickRunAgent();
-            }}
-            className="w-full inline-flex items-center justify-center gap-1.5 rounded-xl bg-gradient-to-r from-[#4C6FFF] to-blue-600 hover:brightness-110 px-3.5 py-2 text-xs font-bold text-white shadow-md shadow-[#4C6FFF]/25 transition cursor-pointer"
-          >
-            Run the agent
-            <ArrowRight className="h-3.5 w-3.5" />
-          </button>
-        </div>
-
-        {/* Step 3 */}
-        <div
-          className={`rounded-2xl border p-4 transition-all flex flex-col justify-between gap-3 ${
-            activeTab === "indexes" || activeTab === "traction"
-              ? "border-[#4C6FFF]/70 bg-gradient-to-b from-[#0b1736]/95 to-[#060c1d]/95 shadow-lg shadow-[#4C6FFF]/15"
-              : "border-slate-800/90 bg-[#050a16]/85 hover:border-slate-700"
-          }`}
-        >
-          <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <span className="inline-flex items-center gap-2 rounded-full bg-emerald-500/20 border border-emerald-400/40 px-2.5 py-0.5 font-mono text-[10px] font-extrabold text-emerald-300">
-                <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                STEP 03 • BUY
-              </span>
-              <Zap className="h-4 w-4 text-emerald-400" />
-            </div>
-            <div className="text-sm font-bold text-white">
-              Buy the basket with USDC or ETH
-            </div>
-            <p className="text-xs text-slate-400 leading-relaxed">
-              One wallet confirmation swaps your USDC or ETH into each stock on Base. Stocks go straight to your
-              wallet — MAXXAGENT never holds funds.
-            </p>
-          </div>
-          <button
-            onClick={onQuickBuy}
-            className="w-full inline-flex items-center justify-center gap-1.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:brightness-110 px-3.5 py-2 text-xs font-bold text-white shadow-md shadow-emerald-600/25 transition cursor-pointer"
-          >
-            <CheckCircle2 className="h-3.5 w-3.5" />
-            Go to basket
-          </button>
-        </div>
+          <X className="h-3.5 w-3.5" />
+        </button>
       </div>
     </div>
   );
@@ -186,16 +106,60 @@ interface HistoryResponse {
   dex: [number, number][];
   dexPool: string | null;
 }
+interface NewsPin {
+  symbol: string;
+  kind: "news" | "filing" | "newsroom";
+  title: string;
+  url: string;
+  publishedAt: string;
+  pressRelease?: boolean;
+  changePct: number | null;
+}
+
+const PIN_COLOR: Record<string, string> = {
+  press: "#34d399",
+  newsroom: "#a5b4fc",
+  filing: "#94a3b8",
+  news: "#38bdf8",
+};
+const pinKind = (n: NewsPin) => (n.kind === "filing" ? (n.pressRelease ? "press" : "filing") : n.kind);
+const PIN_LABEL: Record<string, string> = {
+  press: "Press release",
+  newsroom: "Company news",
+  filing: "SEC filing",
+  news: "Headline",
+};
 
 // Client-side history cache shared by every chart instance: switching back to a stock is instant
 const HISTORY_TTL_MS = 5 * 60 * 1000;
 const historyCache = new Map<string, { at: number; data: HistoryResponse | null }>();
 const inflight = new Map<string, Promise<void>>();
+let newsCache: { at: number; items: NewsPin[] } | null = null;
+let newsInflight: Promise<NewsPin[]> | null = null;
 
-function loadHistory(symbol: string, tf: HistoryTf): Promise<void> {
+function loadNewsPins(): Promise<NewsPin[]> {
+  if (newsCache && Date.now() - newsCache.at < HISTORY_TTL_MS) return Promise.resolve(newsCache.items);
+  if (newsInflight) return newsInflight;
+  newsInflight = fetch("/api/news")
+    .then((r) => r.json())
+    .then((d) => {
+      if (d?.ok && Array.isArray(d.items)) {
+        newsCache = { at: Date.now(), items: d.items };
+        return d.items as NewsPin[];
+      }
+      return newsCache?.items ?? [];
+    })
+    .catch(() => newsCache?.items ?? [])
+    .finally(() => {
+      newsInflight = null;
+    });
+  return newsInflight;
+}
+
+function loadHistory(symbol: string, tf: HistoryTf, force = false): Promise<void> {
   const key = `${symbol}:${tf}`;
   const hit = historyCache.get(key);
-  if (hit && Date.now() - hit.at < HISTORY_TTL_MS) return Promise.resolve();
+  if (!force && hit && Date.now() - hit.at < HISTORY_TTL_MS) return Promise.resolve();
   const running = inflight.get(key);
   if (running) return running;
   const p = fetch(`/api/history?symbol=${symbol}&tf=${tf}`)
@@ -218,6 +182,29 @@ function nearest(series: [number, number][], t: number): [number, number] | null
   let best = series[0];
   for (const p of series) if (Math.abs(p[0] - t) < Math.abs(best[0] - t)) best = p;
   return best;
+}
+
+function interpAt(pts: [number, number][], t: number): number | null {
+  if (pts.length === 0) return null;
+  if (t <= pts[0][0]) return pts[0][1];
+  if (t >= pts[pts.length - 1][0]) return pts[pts.length - 1][1];
+  for (let i = 1; i < pts.length; i++) {
+    if (pts[i][0] >= t) {
+      const [t0, v0] = pts[i - 1];
+      const [t1, v1] = pts[i];
+      const frac = t1 > t0 ? (t - t0) / (t1 - t0) : 0;
+      return v0 + (v1 - v0) * frac;
+    }
+  }
+  return pts[pts.length - 1][1];
+}
+
+function toPctSeries(pts: [number, number][]): [number, number][] {
+  if (pts.length < 2) return [];
+  const sorted = [...pts].sort((a, b) => a[0] - b[0]);
+  const base = sorted[0][1];
+  if (!(base > 0)) return [];
+  return sorted.map(([t, v]) => [t, ((v - base) / base) * 100]);
 }
 
 export function InteractiveB20TradingChart({
@@ -258,18 +245,23 @@ export function InteractiveB20TradingChart({
 }) {
   const [timeframe, setTimeframe] = useState<HistoryTf>("7D");
   const [hoverT, setHoverT] = useState<number | null>(null);
+  const [peerSymbol, setPeerSymbol] = useState<string>("");
+  const [showPins, setShowPins] = useState<boolean>(true);
+  const [allNews, setAllNews] = useState<NewsPin[]>([]);
   // Bumped when a history response lands, so the chart re-reads the cache
   const [, setCacheTick] = useState(0);
 
   const stockList: TokenizedStockMetadata[] = stocks.length > 0 ? stocks : BASE_TOKENIZED_STOCKS;
   const activeStock = stockList.find((s) => s.symbol === selectedSymbol) || stockList[0];
   const liveActive = "navPrice" in activeStock ? (activeStock as LiveTokenizedStock) : null;
+  const peerStock = peerSymbol && peerSymbol !== activeStock.symbol ? stockList.find((s) => s.symbol === peerSymbol) ?? null : null;
 
   const key = `${activeStock.symbol}:${timeframe}`;
   // Only the history of the stock on screen is ever used: never the previous stock's series
   const cachedEntry = historyCache.get(key);
   const history = cachedEntry?.data ?? null;
   const loading = !cachedEntry || Date.now() - cachedEntry.at > HISTORY_TTL_MS;
+  const peerHistory = peerStock ? historyCache.get(`${peerStock.symbol}:${timeframe}`)?.data ?? null : null;
 
   useEffect(() => {
     let cancelled = false;
@@ -280,6 +272,28 @@ export function InteractiveB20TradingChart({
       cancelled = true;
     };
   }, [activeStock.symbol, timeframe]);
+
+  useEffect(() => {
+    if (!peerStock) return;
+    let cancelled = false;
+    loadHistory(peerStock.symbol, timeframe).finally(() => {
+      if (!cancelled) setCacheTick((n) => n + 1);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [peerStock, timeframe]);
+
+  useEffect(() => {
+    if (!showPins) return;
+    let cancelled = false;
+    loadNewsPins().then((items) => {
+      if (!cancelled) setAllNews(items);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [showPins]);
 
   // Warm the cache for the other stocks in the background (one at a time, gently)
   const symbolsKey = stockList.map((s) => s.symbol).join(",");
@@ -299,37 +313,49 @@ export function InteractiveB20TradingChart({
     };
   }, [symbolsKey, timeframe]);
 
-  const nav = history?.nav ?? [];
-  const dex = history?.dex ?? [];
-  const all = [...nav, ...dex];
+  const navRaw = useMemo(() => [...(history?.nav ?? [])].sort((a, b) => a[0] - b[0]), [history]);
+  const dexRaw = useMemo(() => [...(history?.dex ?? [])].sort((a, b) => a[0] - b[0]), [history]);
+  const peerNavRaw = useMemo(() => [...(peerHistory?.nav ?? [])].sort((a, b) => a[0] - b[0]), [peerHistory]);
+
+  const nav = useMemo(() => (peerStock ? toPctSeries(navRaw) : navRaw), [peerStock, navRaw]);
+  const peerSeries = useMemo(() => (peerStock ? toPctSeries(peerNavRaw) : []), [peerStock, peerNavRaw]);
+  const dex = useMemo(() => (peerStock ? [] : dexRaw), [peerStock, dexRaw]);
+
+  const all = [...nav, ...dex, ...peerSeries];
   const hasData = all.length >= 2;
 
   const svgWidth = 760;
-  // Taller plot: the card is as tall as the Swap panel next to it, so a short chart left a big empty band
-  const svgHeight = 330;
-  const padX = 16;
-  const padY = 20;
-  const plotW = svgWidth - padX * 2;
-  const plotH = svgHeight - padY * 2;
+  const svgHeight = 312;
+  const padL = 14;
+  const padR = 58;
+  const padT = 18;
+  const padB = 26;
+  const plotW = svgWidth - padL - padR;
+  const plotH = svgHeight - padT - padB;
 
   const tMin = hasData ? Math.min(...all.map((p) => p[0])) : 0;
   const tMax = hasData ? Math.max(...all.map((p) => p[0])) : 1;
-  const vMin = hasData ? Math.min(...all.map((p) => p[1])) * 0.998 : 0;
-  const vMax = hasData ? Math.max(...all.map((p) => p[1])) * 1.002 : 1;
-  const x = (t: number) => padX + ((t - tMin) / Math.max(1, tMax - tMin)) * plotW;
-  const y = (v: number) => padY + plotH - ((v - vMin) / Math.max(1e-9, vMax - vMin)) * plotH;
+  const rawMin = hasData ? Math.min(...all.map((p) => p[1])) : 0;
+  const rawMax = hasData ? Math.max(...all.map((p) => p[1])) : 1;
+  const span = Math.max(peerStock ? 0.5 : 0.01, rawMax - rawMin);
+  const vMin = peerStock ? rawMin - span * 0.1 : rawMin * 0.998;
+  const vMax = peerStock ? rawMax + span * 0.1 : rawMax * 1.002;
+  const x = (t: number) => padL + ((t - tMin) / Math.max(1, tMax - tMin)) * plotW;
+  const y = (v: number) => padT + plotH - ((v - vMin) / Math.max(1e-9, vMax - vMin)) * plotH;
   const toPoints = (s: [number, number][]) => s.map(([t, v]) => `${x(t).toFixed(1)},${y(v).toFixed(1)}`).join(" ");
 
   const navPointsStr = toPoints(nav);
   const dexPointsStr = toPoints(dex);
+  const peerPointsStr = toPoints(peerSeries);
   const areaPointsStr =
-    nav.length >= 2
-      ? `${x(nav[0][0])},${svgHeight - padY} ${navPointsStr} ${x(nav[nav.length - 1][0])},${svgHeight - padY}`
+    !peerStock && nav.length >= 2
+      ? `${x(nav[0][0])},${padT + plotH} ${navPointsStr} ${x(nav[nav.length - 1][0])},${padT + plotH}`
       : "";
 
   const cursorT = hoverT ?? tMax;
   const navAt = nearest(nav, cursorT);
   const dexAt = nearest(dex, cursorT);
+  const peerAt = peerStock ? nearest(peerSeries, cursorT) : null;
   const displayedNav = hoverT !== null ? (navAt ? navAt[1] : liveActive?.navPrice ?? 0) : liveActive?.navPrice ?? (navAt ? navAt[1] : 0);
   const displayedDex = hoverT !== null ? (dexAt ? dexAt[1] : liveActive?.dexPrice24_7 ?? 0) : liveActive?.dexPrice24_7 ?? (dexAt ? dexAt[1] : 0);
   const gapAtCursor =
@@ -343,11 +369,41 @@ export function InteractiveB20TradingChart({
   const liquidityUsd = liveActive?.dexLiquidityUsd;
   const volume24hUsd = liveActive?.dexVolume24hUsd;
 
-  const onMove = (e: React.MouseEvent<SVGSVGElement>) => {
-    if (!hasData) return;
-    const rect = e.currentTarget.getBoundingClientRect();
-    const px = ((e.clientX - rect.left) / rect.width) * svgWidth;
-    const ratio = Math.min(1, Math.max(0, (px - padX) / plotW));
+  // Historical DEX vs NAV spread histogram across overlapping window
+  const spreadBars = useMemo(() => {
+    if (peerStock || navRaw.length < 2 || dexRaw.length < 2) return [];
+    const sStart = Math.max(navRaw[0][0], dexRaw[0][0]);
+    const sEnd = Math.min(navRaw[navRaw.length - 1][0], dexRaw[dexRaw.length - 1][0]);
+    if (!(sEnd > sStart)) return [];
+    const count = 42;
+    const out: { t: number; pct: number }[] = [];
+    for (let i = 0; i < count; i++) {
+      const ts = sStart + (i / (count - 1)) * (sEnd - sStart);
+      const nv = interpAt(navRaw, ts);
+      const dx = interpAt(dexRaw, ts);
+      if (nv && dx && nv > 0) out.push({ t: ts, pct: ((dx - nv) / nv) * 100 });
+    }
+    return out;
+  }, [peerStock, navRaw, dexRaw]);
+
+  const spreadAmp = spreadBars.length > 0 ? Math.max(0.5, ...spreadBars.map((b) => Math.abs(b.pct))) : 1;
+
+  // News / SEC pin markers along primary curve
+  const pinLine = dexRaw.length >= 2 ? dexRaw : navRaw;
+  const newsMarks = useMemo(() => {
+    if (!showPins || peerStock || !hasData || pinLine.length < 2) return [];
+    return allNews
+      .filter((n) => n.symbol === activeStock.symbol)
+      .map((n) => ({ n, t: Date.parse(n.publishedAt) / 1000 }))
+      .filter(({ t }) => Number.isFinite(t) && t >= tMin && t <= tMax)
+      .sort((a, b) => Number(a.n.kind === "news") - Number(b.n.kind === "news"))
+      .slice(0, 12);
+  }, [showPins, peerStock, hasData, pinLine.length, allNews, activeStock.symbol, tMin, tMax]);
+
+  const scrub = (clientX: number, rect: DOMRect) => {
+    if (!hasData || rect.width <= 0) return;
+    const px = ((clientX - rect.left) / rect.width) * svgWidth;
+    const ratio = Math.min(1, Math.max(0, (px - padL) / plotW));
     setHoverT(tMin + ratio * (tMax - tMin));
   };
 
@@ -359,18 +415,25 @@ export function InteractiveB20TradingChart({
       minute: timeframe === "24H" ? "2-digit" : undefined,
     });
 
+  const fmtAxis = (v: number) => (peerStock ? `${v >= 0 ? "+" : ""}${v.toFixed(1)}%` : `$${v >= 1000 ? v.toFixed(0) : v.toFixed(2)}`);
+  const cursorLeftPct = hasData ? (x(cursorT) / svgWidth) * 100 : 50;
+  const gaugePosPct = 50 + Math.max(-1, Math.min(1, gapAtCursor / 2)) * 50;
+
   return (
     <div className="glass-panel rounded-3xl p-5 sm:p-6 space-y-5 animate-fade-up">
-      {/* Stock selector */}
-      <div className="flex items-center justify-between gap-3 overflow-x-auto pb-2 border-b border-slate-800/80">
-        <div className="flex items-center gap-1.5 shrink-0">
+      {/* Stock selector + Compare Peer + Pin toggle + Timeframe */}
+      <div className="flex flex-wrap items-center justify-between gap-3 pb-2 border-b border-slate-800/80">
+        <div className="flex items-center gap-1.5 overflow-x-auto pb-1 sm:pb-0">
           {stockList.map((st) => {
             const isSel = st.symbol === activeStock.symbol;
             return (
               <button
                 key={st.symbol}
-                onClick={() => onSelectSymbol(st.symbol)}
-                className={`inline-flex items-center gap-2 rounded-xl px-3 py-1.5 text-xs font-mono font-bold transition-all cursor-pointer border ${
+                onClick={() => {
+                  if (peerSymbol === st.symbol) setPeerSymbol("");
+                  onSelectSymbol(st.symbol);
+                }}
+                className={`inline-flex min-h-[36px] shrink-0 items-center gap-2 rounded-xl px-3 py-1.5 text-xs font-mono font-bold transition-all cursor-pointer border ${
                   isSel
                     ? "bg-[#4C6FFF] text-white border-blue-400 shadow-lg shadow-[#4C6FFF]/30 scale-[1.02]"
                     : "bg-[#050a18] text-slate-300 border-slate-800 hover:border-slate-600 hover:text-white"
@@ -383,21 +446,62 @@ export function InteractiveB20TradingChart({
           })}
         </div>
 
-        <div className="inline-flex rounded-xl border border-slate-800 bg-[#040814] p-1 shrink-0">
-          {(["24H", "7D", "30D"] as const).map((tf) => (
-            <button
-              key={tf}
-              onClick={() => {
-                setTimeframe(tf);
+        <div className="flex flex-wrap items-center gap-2 shrink-0">
+          <label className="inline-flex items-center gap-1.5 rounded-xl border border-slate-800 bg-[#040814] px-2.5 py-1 text-[11px] text-slate-300">
+            <GitCompareArrows className="h-3.5 w-3.5 text-cyan-400" />
+            <select
+              aria-label="Compare peer stock"
+              value={peerStock ? peerStock.symbol : ""}
+              onChange={(e) => {
+                setPeerSymbol(e.target.value);
                 setHoverT(null);
               }}
-              className={`rounded-lg px-2.5 py-1 font-mono text-[11px] font-bold transition cursor-pointer ${
-                timeframe === tf ? "bg-[#4C6FFF] text-white" : "text-slate-400 hover:text-white"
+              className="bg-transparent font-mono text-[11px] font-bold text-slate-200 focus:outline-none cursor-pointer"
+            >
+              <option value="" className="bg-[#040814]">vs DEX (USD)</option>
+              {stockList
+                .filter((st) => st.symbol !== activeStock.symbol)
+                .map((st) => (
+                  <option key={st.symbol} value={st.symbol} className="bg-[#040814]">
+                    Compare {st.symbol}
+                  </option>
+                ))}
+            </select>
+          </label>
+
+          {!peerStock && (
+            <button
+              type="button"
+              onClick={() => setShowPins((p) => !p)}
+              aria-pressed={showPins}
+              title="Toggle press releases and SEC filings on chart"
+              className={`inline-flex min-h-[32px] items-center gap-1 rounded-xl border px-2.5 py-1 text-[11px] font-semibold transition cursor-pointer ${
+                showPins
+                  ? "border-emerald-500/45 bg-emerald-500/15 text-emerald-200"
+                  : "border-slate-800 bg-[#040814] text-slate-400 hover:text-white"
               }`}
             >
-              {tf}
+              <Newspaper className="h-3 w-3" />
+              Pins
             </button>
-          ))}
+          )}
+
+          <div className="inline-flex rounded-xl border border-slate-800 bg-[#040814] p-0.5">
+            {(["24H", "7D", "30D"] as const).map((tf) => (
+              <button
+                key={tf}
+                onClick={() => {
+                  setTimeframe(tf);
+                  setHoverT(null);
+                }}
+                className={`min-h-[30px] rounded-lg px-2.5 py-1 font-mono text-[11px] font-bold transition cursor-pointer ${
+                  timeframe === tf ? "bg-[#4C6FFF] text-white" : "text-slate-400 hover:text-white"
+                }`}
+              >
+                {tf}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
 
@@ -427,95 +531,301 @@ export function InteractiveB20TradingChart({
               </div>
             </div>
 
-            <div className="text-right font-mono">
-              <div className="flex items-center justify-end gap-2">
-                <span className="text-2xl font-extrabold text-white">${displayedNav.toFixed(2)}</span>
-                {hoverT === null && (
-                  <span
-                    className={`rounded-lg px-2 py-0.5 text-xs font-bold ${
-                      change24h >= 0
-                        ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/35"
-                        : "bg-rose-500/20 text-rose-300 border border-rose-500/35"
-                    }`}
-                    title="24h DEX price change"
-                  >
-                    {change24h >= 0 ? "+" : ""}
-                    {change24h.toFixed(2)}%
+            {peerStock ? (
+              <div className="text-right font-mono tabular-nums">
+                <div className="text-sm font-extrabold text-white">
+                  {activeStock.symbol}{" "}
+                  <span className={(navAt?.[1] ?? 0) >= 0 ? "text-emerald-300" : "text-rose-300"}>
+                    {(navAt?.[1] ?? 0) >= 0 ? "+" : ""}
+                    {(navAt?.[1] ?? 0).toFixed(2)}%
                   </span>
-                )}
+                </div>
+                <div className="text-xs text-pink-300 mt-0.5">
+                  {peerStock.symbol}:{" "}
+                  <strong>
+                    {(peerAt?.[1] ?? 0) >= 0 ? "+" : ""}
+                    {(peerAt?.[1] ?? 0).toFixed(2)}%
+                  </strong>
+                </div>
+                {hoverT !== null && <div className="text-[10px] text-slate-400">{fmtTime(hoverT)}</div>}
               </div>
-              <div className="text-[11px] text-cyan-300 mt-0.5">
-                DEX: <strong>${displayedDex.toFixed(2)}</strong> ({gapAtCursor >= 0 ? "+" : ""}
-                {gapAtCursor.toFixed(2)}% vs NAV)
+            ) : (
+              <div className="text-right font-mono tabular-nums">
+                <div className="flex items-center justify-end gap-2">
+                  <span className="text-2xl font-extrabold text-white">${displayedNav.toFixed(2)}</span>
+                  {hoverT === null && (
+                    <span
+                      className={`rounded-lg px-2 py-0.5 text-xs font-bold ${
+                        change24h >= 0
+                          ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/35"
+                          : "bg-rose-500/20 text-rose-300 border border-rose-500/35"
+                      }`}
+                      title="24h DEX price change"
+                    >
+                      {change24h >= 0 ? "+" : ""}
+                      {change24h.toFixed(2)}%
+                    </span>
+                  )}
+                </div>
+                <div className="text-[11px] text-cyan-300 mt-0.5">
+                  DEX: <strong>${displayedDex.toFixed(2)}</strong> ({gapAtCursor >= 0 ? "+" : ""}
+                  {gapAtCursor.toFixed(2)}% vs NAV)
+                </div>
+                {hoverT !== null && <div className="text-[10px] text-slate-400">{fmtTime(hoverT)}</div>}
               </div>
-              {hoverT !== null && <div className="text-[10px] text-slate-500">{fmtTime(hoverT)}</div>}
-            </div>
+            )}
           </div>
 
-          <div className="my-4 relative select-none">
+          <div className="my-3 relative select-none">
             {hasData ? (
-              <svg
-                viewBox={`0 0 ${svgWidth} ${svgHeight}`}
-                className="w-full h-auto overflow-visible cursor-crosshair"
-                onMouseMove={onMove}
-                onMouseLeave={() => setHoverT(null)}
-              >
-                <defs>
-                  <linearGradient id="chart-nav-fill" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor={activeStock.color} stopOpacity="0.32" />
-                    <stop offset="100%" stopColor={activeStock.color} stopOpacity="0" />
-                  </linearGradient>
-                </defs>
-                {[0.2, 0.5, 0.8].map((ratio) => (
-                  <line
-                    key={ratio}
-                    x1={padX}
-                    x2={svgWidth - padX}
-                    y1={padY + plotH * ratio}
-                    y2={padY + plotH * ratio}
-                    stroke="rgba(51, 65, 85, 0.35)"
-                    strokeDasharray="4 4"
-                  />
-                ))}
-                {areaPointsStr && <polygon points={areaPointsStr} fill="url(#chart-nav-fill)" />}
-                {dex.length >= 2 && (
-                  <polyline
-                    fill="none"
-                    stroke="#22d3ee"
-                    strokeWidth="2"
-                    strokeDasharray="5 4"
-                    points={dexPointsStr}
-                    opacity="0.9"
-                  />
+              <>
+                <div className="relative">
+                  <svg
+                    viewBox={`0 0 ${svgWidth} ${svgHeight}`}
+                    className="w-full h-auto overflow-visible cursor-crosshair touch-pan-y"
+                    onMouseMove={(e) => scrub(e.clientX, e.currentTarget.getBoundingClientRect())}
+                    onTouchMove={(e) => e.touches[0] && scrub(e.touches[0].clientX, e.currentTarget.getBoundingClientRect())}
+                    onMouseLeave={() => setHoverT(null)}
+                  >
+                    <defs>
+                      <linearGradient id="chart-nav-fill" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%" stopColor={activeStock.color} stopOpacity="0.32" />
+                        <stop offset="100%" stopColor={activeStock.color} stopOpacity="0" />
+                      </linearGradient>
+                    </defs>
+
+                    {/* Horizontal gridlines + Y-axis labels */}
+                    {[0, 0.5, 1].map((ratio) => {
+                      const val = vMax - (vMax - vMin) * ratio;
+                      const gy = padT + plotH * ratio;
+                      return (
+                        <g key={ratio}>
+                          <line
+                            x1={padL}
+                            x2={svgWidth - padR}
+                            y1={gy}
+                            y2={gy}
+                            stroke="rgba(51, 65, 85, 0.35)"
+                            strokeDasharray="4 4"
+                          />
+                          <text
+                            x={svgWidth - 4}
+                            y={gy + 3}
+                            textAnchor="end"
+                            fill="rgba(148, 163, 184, 0.85)"
+                            fontSize="10"
+                            fontFamily="ui-monospace, SFMono-Regular, monospace"
+                          >
+                            {fmtAxis(val)}
+                          </text>
+                        </g>
+                      );
+                    })}
+
+                    {/* Zero baseline when comparing peer % change */}
+                    {peerStock && vMin <= 0 && vMax >= 0 && (
+                      <line
+                        x1={padL}
+                        x2={svgWidth - padR}
+                        y1={y(0)}
+                        y2={y(0)}
+                        stroke="rgba(148, 163, 184, 0.5)"
+                        strokeDasharray="2 3"
+                      />
+                    )}
+
+                    {/* Bottom X-axis time ticks */}
+                    {[0, 0.5, 1].map((ratio) => {
+                      const ts = tMin + (tMax - tMin) * ratio;
+                      return (
+                        <text
+                          key={ratio}
+                          x={padL + plotW * ratio}
+                          y={svgHeight - 6}
+                          textAnchor={ratio === 0 ? "start" : ratio === 1 ? "end" : "middle"}
+                          fill="rgba(148, 163, 184, 0.75)"
+                          fontSize="9.5"
+                          fontFamily="ui-monospace, SFMono-Regular, monospace"
+                        >
+                          {fmtTime(ts)}
+                        </text>
+                      );
+                    })}
+
+                    {areaPointsStr && <polygon points={areaPointsStr} fill="url(#chart-nav-fill)" />}
+                    {dex.length >= 2 && (
+                      <polyline
+                        fill="none"
+                        stroke="#22d3ee"
+                        strokeWidth="2"
+                        strokeDasharray="5 4"
+                        points={dexPointsStr}
+                        opacity="0.9"
+                      />
+                    )}
+                    {peerSeries.length >= 2 && (
+                      <polyline
+                        fill="none"
+                        stroke="#f472b6"
+                        strokeWidth="2.2"
+                        strokeDasharray="5 3"
+                        points={peerPointsStr}
+                      />
+                    )}
+                    {nav.length >= 2 && (
+                      <polyline
+                        fill="none"
+                        stroke={activeStock.color}
+                        strokeWidth="3"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        points={navPointsStr}
+                      />
+                    )}
+                    {newsMarks.map(({ n, t }) => (
+                      <line
+                        key={`pl-${n.url}`}
+                        x1={x(t)}
+                        x2={x(t)}
+                        y1={padT}
+                        y2={padT + plotH}
+                        stroke={PIN_COLOR[pinKind(n)] ?? "#94a3b8"}
+                        strokeOpacity="0.28"
+                        strokeDasharray="2 3"
+                      />
+                    ))}
+                    {hoverT !== null && (
+                      <line
+                        x1={x(hoverT)}
+                        x2={x(hoverT)}
+                        y1={padT}
+                        y2={padT + plotH}
+                        stroke="rgba(148, 163, 184, 0.55)"
+                        strokeDasharray="3 3"
+                      />
+                    )}
+                    {navAt && (
+                      <circle cx={x(navAt[0])} cy={y(navAt[1])} r="5" fill={activeStock.color} stroke="#fff" strokeWidth="2" />
+                    )}
+                    {dexAt && <circle cx={x(dexAt[0])} cy={y(dexAt[1])} r="4" fill="#22d3ee" stroke="#fff" strokeWidth="1.5" />}
+                    {peerAt && <circle cx={x(peerAt[0])} cy={y(peerAt[1])} r="4.5" fill="#f472b6" stroke="#fff" strokeWidth="1.5" />}
+                  </svg>
+
+                  {/* Interactive news/SEC pin dots */}
+                  {newsMarks.map(({ n, t }) => {
+                    const pVal = interpAt(pinLine, t);
+                    if (pVal === null) return null;
+                    const left = (x(t) / svgWidth) * 100;
+                    const top = (y(pVal) / svgHeight) * 100;
+                    const k = pinKind(n);
+                    return (
+                      <a
+                        key={`pd-${n.url}`}
+                        href={n.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="group absolute -translate-x-1/2 -translate-y-1/2 z-10"
+                        style={{ left: `${left}%`, top: `${top}%` }}
+                        aria-label={`${PIN_LABEL[k] ?? "News"}: ${n.title}`}
+                      >
+                        <span
+                          className="block h-3 w-3 rounded-full border-2 border-[#040814] shadow transition-transform group-hover:scale-125"
+                          style={{ backgroundColor: PIN_COLOR[k] ?? "#94a3b8" }}
+                        />
+                        <span
+                          className={`pointer-events-none absolute bottom-4 z-20 hidden w-56 rounded-lg border border-slate-700 bg-[#050811] p-2 text-[10px] leading-snug text-slate-200 shadow-xl group-hover:block group-focus:block ${
+                            left > 60 ? "right-0" : "left-0"
+                          }`}
+                        >
+                          <span className="block font-bold text-white">{n.title}</span>
+                          <span className="mt-0.5 block text-slate-400">
+                            {PIN_LABEL[k] ?? "News"} · {new Date(n.publishedAt).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "America/New_York" })}
+                            {n.changePct !== null ? ` · ${n.changePct >= 0 ? "+" : ""}${n.changePct.toFixed(2)}% since` : ""}
+                          </span>
+                        </span>
+                      </a>
+                    );
+                  })}
+
+                  {/* Floating crosshair tooltip */}
+                  {hoverT !== null && (
+                    <div
+                      className={`pointer-events-none absolute top-2 z-20 rounded-xl border border-slate-700/90 bg-[#070d1d]/95 px-2.5 py-1.5 font-mono tabular-nums text-[10px] text-slate-200 shadow-xl backdrop-blur-md ${
+                        cursorLeftPct > 60 ? "right-16" : "left-3"
+                      }`}
+                    >
+                      <div className="text-slate-400">{fmtTime(hoverT)}</div>
+                      {peerStock ? (
+                        <div className="flex gap-2.5">
+                          <span className="text-white">{activeStock.symbol}: {(navAt?.[1] ?? 0).toFixed(2)}%</span>
+                          <span className="text-pink-300">{peerStock.symbol}: {(peerAt?.[1] ?? 0).toFixed(2)}%</span>
+                        </div>
+                      ) : (
+                        <div className="flex flex-wrap gap-x-2.5">
+                          <span>NAV: <strong className="text-white">${displayedNav.toFixed(2)}</strong></span>
+                          {dexAt && <span>DEX: <strong className="text-cyan-300">${displayedDex.toFixed(2)}</strong></span>}
+                          <span className={gapAtCursor <= 0 ? "text-emerald-300" : "text-amber-300"}>
+                            {gapAtCursor >= 0 ? "+" : ""}{gapAtCursor.toFixed(2)}%
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                {/* DEX vs NAV historical spread histogram sub-chart */}
+                {spreadBars.length > 0 && (
+                  <div className="mt-2 rounded-xl border border-slate-800/80 bg-[#050a18]/80 px-3 py-2">
+                    <div className="mb-1 flex items-center justify-between text-[10px] text-slate-400">
+                      <span className="font-semibold text-slate-300">DEX vs NAV Spread History (%)</span>
+                      <span className="font-mono tabular-nums">
+                        <span className="text-emerald-300">Below NAV</span> · <span className="text-amber-300">Above NAV</span>
+                      </span>
+                    </div>
+                    <svg viewBox={`0 0 ${svgWidth} 44`} className="w-full h-11 overflow-visible">
+                      <line x1={padL} x2={svgWidth - padR} y1={22} y2={22} stroke="rgba(148, 163, 184, 0.35)" strokeDasharray="3 3" />
+                      <text x={svgWidth - 4} y={25} textAnchor="end" fill="rgba(148, 163, 184, 0.7)" fontSize="9" fontFamily="ui-monospace, monospace">
+                        0%
+                      </text>
+                      {spreadBars.map((b) => {
+                        const bx = x(b.t);
+                        const h = Math.max(2, (Math.abs(b.pct) / spreadAmp) * 18);
+                        const barW = Math.max(4, (plotW / spreadBars.length) * 0.68);
+                        const by = b.pct >= 0 ? 22 - h : 22;
+                        return (
+                          <rect
+                            key={b.t}
+                            x={bx - barW / 2}
+                            y={by}
+                            width={barW}
+                            height={h}
+                            rx={1.5}
+                            fill={b.pct <= 0 ? "#34d399" : "#fbbf24"}
+                            fillOpacity={0.78}
+                          >
+                            <title>{`${fmtTime(b.t)}: ${b.pct >= 0 ? "+" : ""}${b.pct.toFixed(2)}% vs NAV`}</title>
+                          </rect>
+                        );
+                      })}
+                    </svg>
+                  </div>
                 )}
-                {nav.length >= 2 && (
-                  <polyline
-                    fill="none"
-                    stroke={activeStock.color}
-                    strokeWidth="3"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    points={navPointsStr}
-                  />
-                )}
-                {hoverT !== null && (
-                  <line
-                    x1={x(hoverT)}
-                    x2={x(hoverT)}
-                    y1={padY}
-                    y2={svgHeight - padY}
-                    stroke="rgba(148, 163, 184, 0.45)"
-                    strokeDasharray="3 3"
-                  />
-                )}
-                {navAt && (
-                  <circle cx={x(navAt[0])} cy={y(navAt[1])} r="5" fill={activeStock.color} stroke="#fff" strokeWidth="2" />
-                )}
-                {dexAt && <circle cx={x(dexAt[0])} cy={y(dexAt[1])} r="4" fill="#22d3ee" stroke="#fff" strokeWidth="1.5" />}
-              </svg>
+              </>
             ) : (
-              <div className="h-52 flex items-center justify-center rounded-xl border border-dashed border-slate-800 text-xs text-slate-400 px-4 text-center">
-                {loading ? "Loading real price history…" : "Price history unavailable right now — no synthetic data is shown."}
+              <div className="h-56 flex flex-col items-center justify-center gap-3 rounded-xl border border-dashed border-slate-800 text-xs text-slate-400 px-4 text-center">
+                <span>{loading ? "Loading real price history…" : "Price history unavailable right now — no synthetic data is shown."}</span>
+                {!loading && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      loadHistory(activeStock.symbol, timeframe, true).finally(() => setCacheTick((n) => n + 1));
+                    }}
+                    className="inline-flex min-h-[34px] items-center gap-1.5 rounded-xl border border-slate-700 bg-slate-800/90 px-3 py-1.5 text-xs font-semibold text-white hover:border-[#4C6FFF] cursor-pointer"
+                  >
+                    <RotateCcw className="h-3.5 w-3.5" />
+                    Retry
+                  </button>
+                )}
               </div>
             )}
           </div>
@@ -524,14 +834,38 @@ export function InteractiveB20TradingChart({
             <div className="flex flex-wrap items-center gap-4">
               <span className="inline-flex items-center gap-1.5 text-slate-300 font-medium">
                 <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: activeStock.color }} />
-                Chainlink NAV ({nav.length} rounds, 24/5)
+                {peerStock ? `${activeStock.symbol} NAV %` : `Chainlink NAV (${nav.length} rounds, 24/5)`}
               </span>
-              <span className="inline-flex items-center gap-1.5 text-cyan-300 font-medium">
-                <span className="h-0.5 w-4 bg-cyan-400 inline-block" />
-                DEX price ({dex.length} candles, 24/7)
-              </span>
+              {peerStock ? (
+                <span className="inline-flex items-center gap-1.5 text-pink-300 font-medium">
+                  <span className="h-0.5 w-4 bg-pink-400 inline-block" />
+                  {peerStock.symbol} NAV %
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-1.5 text-cyan-300 font-medium">
+                  <span className="h-0.5 w-4 bg-cyan-400 inline-block" />
+                  DEX price ({dex.length} candles, 24/7)
+                </span>
+              )}
             </div>
-            <span className="font-mono text-[11px] text-slate-500">Sources: Chainlink onchain · GeckoTerminal</span>
+
+            {!peerStock && hasData ? (
+              <div className="flex items-center gap-2 text-[10px]">
+                <span className="text-emerald-300">Below NAV</span>
+                <div className="relative h-2 w-24 rounded-full bg-gradient-to-r from-emerald-500/40 via-slate-700 to-amber-500/40">
+                  <span className="absolute left-1/2 top-0 h-2 w-px bg-slate-300/60" />
+                  <span
+                    className={`absolute top-1/2 h-2.5 w-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full border border-white ${
+                      gapAtCursor <= -0.05 ? "bg-emerald-400" : gapAtCursor >= 0.05 ? "bg-amber-400" : "bg-cyan-300"
+                    }`}
+                    style={{ left: `${gaugePosPct}%` }}
+                  />
+                </div>
+                <span className="text-amber-300">Above NAV</span>
+              </div>
+            ) : (
+              <span className="font-mono text-[11px] text-slate-500">Sources: Chainlink onchain · GeckoTerminal</span>
+            )}
           </div>
         </div>
 
@@ -615,6 +949,7 @@ export function InteractiveB20TradingChart({
             <SwapPanel
               stock={activeStock}
               price={liveActive ? liveActive.dexPrice24_7 || liveActive.navPrice : 0}
+              dexLiquidityUsd={liquidityUsd}
               tradeUsd={tradeUsd}
               onTradeUsdChange={onTradeUsdChange}
               usdcBalance={usdcBalance}
@@ -652,6 +987,7 @@ const ETH_GAS_RESERVE = 0.0001;
 function SwapPanel({
   stock,
   price,
+  dexLiquidityUsd,
   tradeUsd,
   onTradeUsdChange,
   usdcBalance,
@@ -666,6 +1002,7 @@ function SwapPanel({
 }: {
   stock: TokenizedStockMetadata;
   price: number;
+  dexLiquidityUsd?: number;
   tradeUsd: number;
   onTradeUsdChange: (usd: number) => void;
   usdcBalance: number | null;
@@ -833,9 +1170,36 @@ function SwapPanel({
             </div>
           )}
           <div className="text-[11px] text-slate-400">
-            You receive ≈ <span className="font-mono text-slate-200">{price > 0 ? estTokens.toFixed(6) : "…"} {stock.symbol}</span>
-            <span className="text-slate-500"> (exact amount quoted before you sign)</span>
+            You receive ≈ <span className="font-mono tabular-nums text-slate-200">{price > 0 ? estTokens.toFixed(6) : "…"} {stock.symbol}</span>
+            <span className="text-slate-400"> (exact amount quoted before you sign)</span>
           </div>
+          {dexLiquidityUsd && dexLiquidityUsd > 0 && tradeUsd > 0 && (
+            (() => {
+              const impactPct = (tradeUsd / dexLiquidityUsd) * 100;
+              return (
+                <div className="space-y-1 rounded-lg border border-slate-800/80 bg-[#040814] px-2.5 py-1.5 text-[10px]">
+                  <div className="flex items-center justify-between text-slate-400">
+                    <span>Pool depth impact</span>
+                    <span
+                      className={`font-mono tabular-nums font-bold ${
+                        impactPct > 1.5 ? "text-rose-300" : impactPct > 0.5 ? "text-amber-300" : "text-emerald-300"
+                      }`}
+                    >
+                      {impactPct.toFixed(3)}% of pool
+                    </span>
+                  </div>
+                  <div className="h-1 w-full overflow-hidden rounded-full bg-slate-800">
+                    <div
+                      className={`h-full rounded-full ${
+                        impactPct > 1.5 ? "bg-rose-400" : impactPct > 0.5 ? "bg-amber-400" : "bg-emerald-400"
+                      }`}
+                      style={{ width: `${Math.min(100, Math.max(4, (impactPct / 2) * 100))}%` }}
+                    />
+                  </div>
+                </div>
+              );
+            })()
+          )}
         </>
       ) : (
         <>
@@ -1257,11 +1621,8 @@ export function OnchainActivityLogPanel({
 
       <div className="space-y-2.5 max-h-64 overflow-y-auto pr-1">
         {entries.map((entry) => {
-          const isSepolia = entry.network.includes("Sepolia");
           const isMainnet = entry.network.includes("Mainnet");
-          const explorerUrl = isSepolia
-            ? `https://sepolia.basescan.org/tx/${entry.txHash}`
-            : `https://basescan.org/tx/${entry.txHash}`;
+          const explorerUrl = `https://basescan.org/tx/${entry.txHash}`;
 
           return (
             <div
@@ -1277,13 +1638,13 @@ export function OnchainActivityLogPanel({
                   <span className="rounded bg-slate-800 px-2 py-0.5 font-mono text-[10px] text-cyan-300">
                     {entry.network}
                   </span>
-                  <span className="font-mono text-[11px] text-slate-500">{entry.timestamp}</span>
+                  <span className="font-mono text-[11px] text-slate-400">{entry.timestamp}</span>
                 </div>
                 <div className="text-xs font-bold text-white font-mono">{entry.action}</div>
               </div>
 
               <div className="flex items-center gap-2 shrink-0">
-                {isSepolia || isMainnet ? (
+                {isMainnet ? (
                   <a
                     href={explorerUrl}
                     target="_blank"

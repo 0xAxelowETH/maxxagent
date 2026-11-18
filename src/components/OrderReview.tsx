@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { AlertTriangle, RefreshCw, ShieldCheck, X } from "lucide-react";
+import { AlertTriangle, ArrowRight, RefreshCw, ShieldCheck, X } from "lucide-react";
 import type { PreparedOrder } from "@/lib/basketExecutor";
 
 // Fixed en-US format: the rest of the app uses toFixed (dot decimals), so the locale must not switch to "1,00"
@@ -60,6 +60,7 @@ export function OrderReview({
 
   const isBuy = order.side === "buy";
   const secondsLeft = Math.max(0, Math.ceil((order.preparedAt + ttlMs - now) / 1000));
+  const ttlPct = Math.max(0, Math.min(100, (secondsLeft / Math.max(1, Math.ceil(ttlMs / 1000))) * 100));
   const expired = secondsLeft === 0;
   const swaps = order.legs.length;
   const actions = order.approvals + swaps;
@@ -79,9 +80,44 @@ export function OrderReview({
               {isBuy ? "Buy" : "Sell"} {label}
             </h2>
           </div>
-          <button onClick={onCancel} disabled={busy} aria-label="Cancel" className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-800 hover:text-white cursor-pointer disabled:opacity-40">
+          <button
+            onClick={onCancel}
+            disabled={busy}
+            aria-label="Cancel"
+            className="inline-flex min-h-[40px] min-w-[40px] items-center justify-center rounded-xl text-slate-400 hover:bg-slate-800 hover:text-white cursor-pointer disabled:opacity-40"
+          >
             <X className="h-4 w-4" />
           </button>
+        </div>
+
+        {/* Non-custodial 3-node route flow + quote countdown progress */}
+        <div className="space-y-2 rounded-2xl border border-slate-800 bg-[#060b16] p-3">
+          <div className="flex items-center justify-between gap-1.5 text-[10px] font-semibold">
+            <span className="rounded-lg border border-slate-700 bg-slate-900 px-2 py-1 text-slate-200">
+              {isBuy ? "Your Wallet (USDC/ETH)" : "Your Wallet (B20)"}
+            </span>
+            <ArrowRight className="h-3 w-3 shrink-0 text-cyan-400" />
+            <span className="rounded-lg border border-[#4C6FFF]/40 bg-[#4C6FFF]/10 px-2 py-1 font-mono text-blue-200 truncate">
+              Router · bc_ewm6gcvz
+            </span>
+            <ArrowRight className="h-3 w-3 shrink-0 text-emerald-400" />
+            <span className="rounded-lg border border-emerald-500/35 bg-emerald-500/10 px-2 py-1 text-emerald-200">
+              {isBuy ? "Direct B20 Stocks" : "Direct USDC"}
+            </span>
+          </div>
+          <div className="flex items-center gap-2 text-[10px] text-slate-400">
+            <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-slate-800">
+              <div
+                className={`h-full rounded-full transition-all duration-500 ${
+                  expired ? "bg-slate-600" : secondsLeft <= 15 ? "bg-amber-400" : "bg-emerald-400"
+                }`}
+                style={{ width: `${ttlPct}%` }}
+              />
+            </div>
+            <span className="font-mono tabular-nums text-[10px] text-slate-300">
+              {expired ? "Quote expired" : `${secondsLeft}s valid`}
+            </span>
+          </div>
         </div>
 
         {/* Legs */}
@@ -147,7 +183,7 @@ export function OrderReview({
         )}
 
         {/* Totals */}
-        <div className="grid grid-cols-2 gap-2 font-mono text-xs">
+        <div className="grid grid-cols-2 gap-2 font-mono tabular-nums text-xs">
           <div className="rounded-xl border border-slate-800 bg-[#070b14] p-3">
             <div className="font-sans text-[10px] text-slate-400">{isBuy ? "You pay" : "You sell (value)"}</div>
             <div className="text-base font-extrabold text-white">
@@ -178,7 +214,7 @@ export function OrderReview({
                       onClick={() => !active && onSlippageChange(bps)}
                       disabled={busy}
                       aria-pressed={active}
-                      className={`rounded-md border px-1.5 py-0.5 text-[11px] font-bold cursor-pointer disabled:opacity-50 ${
+                      className={`min-h-[32px] rounded-md border px-2 py-1 text-[11px] font-bold cursor-pointer disabled:opacity-50 ${
                         active ? "border-cyan-400 bg-cyan-500/15 text-cyan-200" : "border-slate-700 text-slate-400 hover:border-slate-500"
                       }`}
                     >

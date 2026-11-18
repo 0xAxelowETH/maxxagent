@@ -103,38 +103,55 @@ export function AgentTrace({ report, running }: { report: AgentAnalysisReport | 
           {running && <MaxxLoader size={22} label="Researching…" />}
         </div>
         <p className="text-[11px] text-slate-400">Every step it took for your request, with receipts: open them to check the source yourself.</p>
-        <ol className="mt-3 space-y-2.5">
+        <ol className="mt-4 space-y-3">
           {names.map((name, i) => {
             const step = steps[i];
             const done = !running && report && i < shown;
             const active = running && i === tick % names.length;
+            const isLast = i === names.length - 1;
             return (
-              <li key={name} className={`flex gap-3 transition-opacity duration-300 ${done || active ? "opacity-100" : "opacity-40"}`}>
-                <span className="mt-0.5 shrink-0">
+              <li
+                key={name}
+                className={`relative flex gap-3.5 transition-opacity duration-300 ${done || active ? "opacity-100" : "opacity-45"}`}
+              >
+                {!isLast && (
+                  <span
+                    aria-hidden="true"
+                    className={`absolute left-[11px] top-6 -bottom-3 w-px transition-colors duration-300 ${
+                      done ? "bg-emerald-500/45" : active ? "bg-cyan-400/50" : "bg-slate-800"
+                    }`}
+                  />
+                )}
+                <span className="relative z-10 mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[#060c18] ring-2 ring-[#0b1120]">
                   {done ? (
                     <CheckCircle2 className="h-4 w-4 text-emerald-400" />
                   ) : active ? (
                     <Loader2 className="h-4 w-4 animate-spin text-cyan-300" />
                   ) : (
-                    <span className="block h-4 w-4 rounded-full border border-slate-600" />
+                    <span className="h-2.5 w-2.5 rounded-full border border-slate-600 bg-slate-800" />
                   )}
                 </span>
-                <div className="min-w-0">
-                  <div className="text-xs font-semibold text-slate-100">{name}</div>
+                <div className="min-w-0 flex-1 pb-1">
+                  <div className="flex items-center gap-2">
+                    <span className="font-mono text-[10px] font-bold text-slate-500 tabular-nums">
+                      0{i + 1}
+                    </span>
+                    <span className="text-xs font-semibold text-slate-100">{name}</span>
+                  </div>
                   {done && step && (
                     <>
-                      <div className="text-[11px] leading-relaxed text-slate-400">{step.detail}</div>
+                      <div className="mt-0.5 text-[11px] leading-relaxed text-slate-300">{step.detail}</div>
                       {step.receipts.length > 0 && (
-                        <div className="mt-1 flex flex-wrap gap-1.5">
+                        <div className="mt-1.5 flex flex-wrap gap-1.5">
                           {step.receipts.map((rc) => (
                             <a
                               key={rc.url}
                               href={rc.url}
                               target="_blank"
                               rel="noopener noreferrer"
-                              className="inline-flex items-center gap-1 rounded-md border border-slate-700 bg-slate-800/60 px-1.5 py-0.5 font-mono text-[10px] text-cyan-200 hover:border-cyan-400 hover:text-white"
+                              className="inline-flex items-center gap-1 rounded-md border border-cyan-500/30 bg-cyan-500/10 px-2 py-0.5 font-mono text-[10px] font-semibold text-cyan-200 hover:border-cyan-400 hover:bg-cyan-500/20 hover:text-white transition"
                             >
-                              <Receipt className="h-2.5 w-2.5" />
+                              <Receipt className="h-2.5 w-2.5 shrink-0" />
                               {rc.label}
                             </a>
                           ))}
@@ -154,7 +171,14 @@ export function AgentTrace({ report, running }: { report: AgentAnalysisReport | 
           <h3 className="text-sm font-bold text-white">What I won&apos;t do, and why</h3>
           <div className="mt-3 grid gap-2.5 sm:grid-cols-2">
             {refusals.map((l) => (
-              <div key={l.label} className={`rounded-xl border p-3 ${l.status === "not possible" ? "border-rose-500/40 bg-[#14070c]" : "border-amber-500/40 bg-[#141006]"}`}>
+              <div
+                key={l.label}
+                className={`rounded-xl border border-l-4 p-3 ${
+                  l.status === "not possible"
+                    ? "border-rose-500/35 border-l-rose-400 bg-[#14070c]"
+                    : "border-amber-500/35 border-l-amber-400 bg-[#141006]"
+                }`}
+              >
                 <div className="flex items-center gap-2 text-xs font-bold text-white">
                   {l.status === "not possible" ? <Ban className="h-4 w-4 text-rose-300" /> : <Hand className="h-4 w-4 text-amber-300" />}
                   {l.status === "not possible" ? `Won't do: ${l.label}` : `Changed: ${l.label}`}

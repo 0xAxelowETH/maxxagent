@@ -236,23 +236,31 @@ export function MarketHeatmap({ stocks, updatedAt, links = true }: { stocks: Hea
               title={`${s.companyName} (${s.symbol}) · ${s.change24hPct >= 0 ? "+" : ""}${s.change24hPct.toFixed(2)}% 24h · ${live(s) ? `${(s.weekendGapPct ?? 0).toFixed(2)}% vs NAV` : "no live DEX quote"} · DEX $${s.dexPrice24_7.toFixed(2)} · NAV $${s.navPrice.toFixed(2)} · ${
                 sizeBy === "value" ? `onchain value ${usdShort(size)}` : `24h volume ${usdShort(size)}`
               }`}
-              className="absolute flex flex-col items-center justify-center gap-1 border border-[#02050c] text-center text-white transition-[filter] hover:brightness-125"
-              style={{ left: r.x, top: r.y, width: r.w, height: r.h, background: heat(v, colorBy === "gap" ? 1.5 : 3), transition: "left .4s, top .4s, width .4s, height .4s" }}
+              className="group overflow-hidden absolute flex flex-col items-center justify-center gap-1 border border-[#02050c] text-center text-white transition-[filter,transform] duration-300 hover:brightness-125 hover:z-10"
+              style={{ left: r.x, top: r.y, width: r.w, height: r.h, background: heat(v, colorBy === "gap" ? 1.5 : 3), transition: "left .35s, top .35s, width .35s, height .35s" }}
             >
+              {big && (
+                <img
+                  src={s.logoUrl}
+                  alt=""
+                  aria-hidden="true"
+                  className="pointer-events-none absolute -bottom-3 -right-3 h-24 w-24 rounded-full opacity-[0.09] grayscale-[20%] transition-transform duration-300 group-hover:scale-110"
+                />
+              )}
               {logo && (
                 <img
                   src={s.logoUrl}
                   alt=""
-                  className="rounded-full bg-white/90 p-0.5 shadow"
+                  className="relative rounded-full bg-white/90 p-0.5 shadow"
                   style={{ width: big ? Math.min(72, m * 0.28) : Math.min(40, m * 0.3), height: big ? Math.min(72, m * 0.28) : Math.min(40, m * 0.3) }}
                 />
               )}
               {text && (
                 <>
-                  <span className="font-extrabold leading-none" style={{ fontSize: Math.max(11, Math.min(34, m * 0.16)) }}>
+                  <span className="relative font-extrabold leading-none" style={{ fontSize: Math.max(11, Math.min(34, m * 0.16)) }}>
                     {s.symbol}
                   </span>
-                  <span className="font-mono font-bold leading-none opacity-95" style={{ fontSize: Math.max(10, Math.min(28, m * 0.13)) }}>
+                  <span className="relative font-mono tabular-nums font-bold leading-none opacity-95" style={{ fontSize: Math.max(10, Math.min(28, m * 0.13)) }}>
                     {pct}
                   </span>
                   {colorBy === "gap" && m > 60 && <span className="text-[10px] uppercase tracking-wider text-white/70">vs NAV</span>}

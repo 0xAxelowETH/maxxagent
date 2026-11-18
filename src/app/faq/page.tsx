@@ -201,8 +201,8 @@ const FAQ: { q: string; a: React.ReactNode }[] = [
 
 export default function FaqPage() {
   return (
-    <main className="min-h-screen bg-[#03060e] px-4 py-10">
-      <div className="mx-auto max-w-2xl space-y-8">
+    <main className="min-h-screen bg-[#02050c] bg-cyber-grid px-4 py-10">
+      <div className="mx-auto max-w-3xl space-y-8">
         <SiteNav current="faq" />
         <div>
           <h1 className="text-2xl font-extrabold text-white">Frequently asked questions</h1>
