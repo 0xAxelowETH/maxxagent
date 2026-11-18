@@ -7,7 +7,7 @@ const FRAME_HOSTS = "https://farcaster.xyz https://*.farcaster.xyz https://warpc
 const securityHeaders = [
   {
     key: "Content-Security-Policy",
-    value: `default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://va.vercel-scripts.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self' https: wss:; frame-ancestors 'self' ${FRAME_HOSTS}; base-uri 'self'; form-action 'self'; object-src 'none'`,
+    value: `default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://va.vercel-scripts.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data: https://fonts.reown.com; connect-src 'self' https: wss:; frame-src 'self' https://verify.walletconnect.org https://verify.walletconnect.com https://secure.walletconnect.org https://keys.coinbase.com; frame-ancestors 'self' ${FRAME_HOSTS}; base-uri 'self'; form-action 'self'; object-src 'none'`,
   },
   { key: "Cross-Origin-Opener-Policy", value: "same-origin-allow-popups" },
   { key: "X-Content-Type-Options", value: "nosniff" },
@@ -35,6 +35,10 @@ const nextConfig = {
       destination: tab === "market" ? "/" : `/?tab=${tab}`,
       permanent: false,
     }));
+  },
+  // Mobile DApp browsers (OKX, Bitget, Binance, Zerion) probe /favicon.ico when bookmarking or listing history
+  async rewrites() {
+    return [{ source: "/favicon.ico", destination: "/brand/maxxagent-mark-512.png" }];
   },
 };
 

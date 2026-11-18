@@ -297,13 +297,25 @@ async function waitForReceipt(eth: EthProvider, hash: string, timeoutMs = 120_00
   throw new Error(`Timed out waiting for ${hash}`);
 }
 
+function nestedErrorCode(err: unknown): number | undefined {
+  const e = err as { code?: number; data?: { originalError?: { code?: number }; code?: number }; cause?: { code?: number } };
+  return e?.code ?? e?.data?.originalError?.code ?? e?.data?.code ?? e?.cause?.code;
+}
+
 function isUnsupportedMethod(err: unknown) {
-  const e = err as { code?: number; message?: string };
+  const code = nestedErrorCode(err);
+  const e = err as { message?: string };
   return (
-    e?.code === 4200 ||
-    e?.code === -32601 ||
-    /not supported|unsupported|does not exist|unknown method/i.test(e?.message || "")
+    code === 4200 ||
+    code === -32601 ||
+    /not supported|unsupported|does not exist|unknown method|method not found|missing or invalid|wallet_sendcalls/i.test(e?.message || "")
   );
+}
+
+function isChainMissingError(err: unknown) {
+  const code = nestedErrorCode(err);
+  const e = err as { message?: string };
+  return code === 4902 || /unrecognized chain|unknown chain|chain.*not.*added|\b4902\b/i.test(e?.message || "");
 }
 
 async function ensureBase(eth: EthProvider, onStatus: StatusFn) {
@@ -317,8 +329,7 @@ async function ensureBase(eth: EthProvider, onStatus: StatusFn) {
     try {
       await eth.request({ method: "wallet_switchEthereumChain", params: [{ chainId: BASE_CHAIN_HEX }] });
     } catch (err) {
-      const code = (err as { code?: number })?.code;
-      if (code === 4902) {
+      if (isChainMissingError(err)) {
         await eth.request({
           method: "wallet_addEthereumChain",
           params: [
@@ -440,23 +451,37 @@ export interface FailedLeg {
   error: string;
 }
 
+export interface WalletHint {
+  name?: string;
+  rdns?: string;
+  external?: "coinbase" | "walletconnect" | "browser";
+}
+
 /**
- * Mobile/multi-chain wallets like Bitget Wallet (BitKeep) and OKX Wallet can either return a stub batchId
- * or reject `wallet_sendCalls` with 4001 ("Transaksi dibatalkan") instead of -32601.
- * Skip EIP-5792 batching on those providers and go straight to `eth_sendTransaction` (which prompts immediately).
+ * Mobile/multi-chain wallets like Bitget Wallet (BitKeep), OKX Wallet, and Binance Web3 MPC Wallet can
+ * return stub batchIds, throw non-standard errors, or reject `wallet_sendCalls` with 4001 ("Transaksi dibatalkan")
+ * instead of -32601. Skip EIP-5792 batching on those providers and go straight to `eth_sendTransaction`.
  */
-function preferSequentialWallet(eth: EthProvider): boolean {
+function preferSequentialWallet(eth: EthProvider, hint?: WalletHint): boolean {
+  if (hint?.external === "coinbase") return false;
   const p = eth as {
     isBitKeep?: boolean;
     isBitgetWallet?: boolean;
     isOkxWallet?: boolean;
     isOKExWallet?: boolean;
+    isBinance?: boolean;
+    isBinanceWeb3?: boolean;
     providerInfo?: { name?: string; rdns?: string };
     session?: { peer?: { metadata?: { name?: string; url?: string } } };
   };
-  if (p?.isBitKeep || p?.isBitgetWallet || p?.isOkxWallet || p?.isOKExWallet) return true;
-  if (/bitkeep|bitget|okx|okex|okapp/i.test(`${p?.providerInfo?.name || ""} ${p?.providerInfo?.rdns || ""} ${p?.session?.peer?.metadata?.name || ""} ${p?.session?.peer?.metadata?.url || ""}`)) return true;
-  if (typeof navigator !== "undefined" && /bitkeep|bitget|okx|okex|okapp/i.test(navigator.userAgent || "")) return true;
+  if (p?.isBitKeep || p?.isBitgetWallet || p?.isOkxWallet || p?.isOKExWallet || p?.isBinance || p?.isBinanceWeb3) return true;
+  if (typeof window !== "undefined") {
+    const w = window as unknown as { binancew3w?: { ethereum?: unknown }; okxwallet?: unknown; bitkeep?: { ethereum?: unknown } };
+    if ((w.binancew3w?.ethereum && w.binancew3w.ethereum === eth) || w.okxwallet === eth || w.bitkeep?.ethereum === eth) return true;
+  }
+  const meta = `${hint?.name || ""} ${hint?.rdns || ""} ${p?.providerInfo?.name || ""} ${p?.providerInfo?.rdns || ""} ${p?.session?.peer?.metadata?.name || ""} ${p?.session?.peer?.metadata?.url || ""}`;
+  if (/bitkeep|bitget|okx|okex|okapp|binance|w3w/i.test(meta)) return true;
+  if (hint?.external !== "walletconnect" && typeof navigator !== "undefined" && /bitkeep|bitget|okx|okex|okapp|binance/i.test(navigator.userAgent || "")) return true;
   return false;
 }
 
@@ -476,7 +501,8 @@ async function sendCalls(
   /** token and amount each swap call spends (same order as swapCalls) */
   swapSpend: { token: string; amount: bigint }[],
   /** tokens expected to Transfer(to = sender) onchain, used as direct Base RPC fallback if wallet_getCallsStatus hangs */
-  receiveTokens: string[] = []
+  receiveTokens: string[] = [],
+  walletHint?: WalletHint
 ): Promise<{ mode: "batch" | "sequential"; txHashes: string[]; failed: FailedLeg[] }> {
   const calls = [...approveCalls, ...swapCalls];
   const balancesOf = () => Promise.all(spend.map((t) => readErc20(eth, t, "balanceOf", [sender as `0x${string}`]).catch(() => null)));
@@ -485,15 +511,16 @@ async function sendCalls(
     ethSpendTotal > 0n
       ? (rpcRead(eth, "eth_getBalance", [sender, "latest"]) as Promise<string>).then((h) => BigInt(h)).catch(() => null)
       : Promise.resolve(null);
-  const [before, ethBefore] = await Promise.all([balancesOf(), ethBalanceOf()]);
   // Nonce = number of txs this address has sent: covers ETH-paid EOA orders (no token balance to compare)
   const nonceOf = () =>
     (rpcRead(eth, "eth_getTransactionCount", [sender, "latest"]) as Promise<string>).then((n) => BigInt(n)).catch(() => null);
   const uniqueReceive = [...new Set(receiveTokens.map((t) => t.toLowerCase()))];
-  const [nonceBefore, startBlockHex, receiveBefore] = await Promise.all([
+  const [before, ethBefore, nonceBefore, startBlockHex, receiveBefore] = await Promise.all([
+    balancesOf(),
+    ethBalanceOf(),
     nonceOf(),
-    (basePublicRpc("eth_blockNumber", []).catch(() => null)) as Promise<string | null>,
-    Promise.all(uniqueReceive.map((t) => readErc20Public(t, sender))),
+    (withTimeout(basePublicRpc("eth_blockNumber", []), 2000).catch(() => null)) as Promise<string | null>,
+    Promise.all(uniqueReceive.map((t) => withTimeout(readErc20Public(t, sender), 2500).catch(() => null))),
   ]);
   const startBlock = startBlockHex ? BigInt(startBlockHex) : null;
   onStatus(`Confirm ${calls.length} action${calls.length > 1 ? "s" : ""} in one wallet prompt…`);
@@ -502,7 +529,7 @@ async function sendCalls(
   const base = { version: "2.0.0", chainId: BASE_CHAIN_HEX, from: sender, atomicRequired: false, calls };
 
   let batchId: string | undefined;
-  if (preferSequentialWallet(eth)) {
+  if (preferSequentialWallet(eth, walletHint)) {
     onStatus("Confirming each step in your wallet…");
   } else {
     try {
@@ -668,11 +695,13 @@ async function sendCalls(
     sendPromise.catch(() => {});
     const watchAllowance = (async () => {
       await sleep(4000);
-      while (!settled && spender && targetAmt > 0n) {
+      const started = Date.now();
+      while (!settled && spender && targetAmt > 0n && Date.now() - started < 120_000) {
         const current = await readAllowancePublic(c.to, sender, spender);
         if (current !== null && current >= targetAmt) return { kind: "onchain" as const };
         await sleep(2000);
       }
+      if (!settled) throw new Error("Timed out waiting for approval confirmation in your wallet. Please retry.");
       return new Promise<never>(() => {});
     })();
     try {
@@ -728,26 +757,30 @@ async function sendCalls(
     sendSwapPromise.catch(() => {});
     const watchSwapOnchain = (async () => {
       await sleep(5000);
-      while (!swapSettled && legStartBlock !== null && watchToken) {
-        try {
-          const latestHex = (await basePublicRpc("eth_blockNumber", []).catch(() => null)) as string | null;
-          const latest = latestHex ? BigInt(latestHex) : null;
-          const fromBlock = latest !== null && latest - legStartBlock > 1500n ? latest - 1500n : legStartBlock;
-          const logs = (await basePublicRpc("eth_getLogs", [
-            {
-              address: watchToken,
-              fromBlock: toHex(fromBlock),
-              toBlock: "latest",
-              topics: isSellLeg ? [TRANSFER_TOPIC, senderTopic, null] : [TRANSFER_TOPIC, null, senderTopic],
-            },
-          ])) as { transactionHash?: string }[] | null;
-          const hit = (logs || []).find(
-            (l) => /^0x[0-9a-fA-F]{64}$/.test(l?.transactionHash || "") && !seenHashes.has(l.transactionHash!.toLowerCase())
-          );
-          if (hit?.transactionHash) return { kind: "onchain" as const, hash: hit.transactionHash };
-        } catch {}
+      const started = Date.now();
+      while (!swapSettled && Date.now() - started < 120_000) {
+        if (legStartBlock !== null && watchToken) {
+          try {
+            const latestHex = (await basePublicRpc("eth_blockNumber", []).catch(() => null)) as string | null;
+            const latest = latestHex ? BigInt(latestHex) : null;
+            const fromBlock = latest !== null && latest - legStartBlock > 1500n ? latest - 1500n : legStartBlock;
+            const logs = (await basePublicRpc("eth_getLogs", [
+              {
+                address: watchToken,
+                fromBlock: toHex(fromBlock),
+                toBlock: "latest",
+                topics: isSellLeg ? [TRANSFER_TOPIC, senderTopic, null] : [TRANSFER_TOPIC, null, senderTopic],
+              },
+            ])) as { transactionHash?: string }[] | null;
+            const hit = (logs || []).find(
+              (l) => /^0x[0-9a-fA-F]{64}$/.test(l?.transactionHash || "") && !seenHashes.has(l.transactionHash!.toLowerCase())
+            );
+            if (hit?.transactionHash) return { kind: "onchain" as const, hash: hit.transactionHash };
+          } catch {}
+        }
         await sleep(2500);
       }
+      if (!swapSettled) throw new Error(`Timed out waiting for ${labels[j]} in your wallet. If no prompt appeared, open your wallet app or retry.`);
       return new Promise<never>(() => {});
     })();
     try {
@@ -790,8 +823,9 @@ export async function sendContractCall(params: {
   data: `0x${string}`;
   builderCode: string;
   onStatus?: StatusFn;
+  walletHint?: WalletHint;
 }): Promise<string> {
-  const { eth, sender, to, builderCode, onStatus = () => {} } = params;
+  const { eth, sender, to, builderCode, onStatus = () => {}, walletHint } = params;
   await ensureBase(eth, onStatus);
   const suffix = builderSuffix(builderCode);
   const call = { to, data: alignedWithSuffix(params.data, suffix), value: "0x0" };
@@ -805,7 +839,7 @@ export async function sendContractCall(params: {
   onStatus("Confirm in your wallet…");
   const base = { version: "2.0.0", chainId: BASE_CHAIN_HEX, from: sender, atomicRequired: false, calls: [call] };
   let batchId: string | undefined;
-  if (preferSequentialWallet(eth)) {
+  if (preferSequentialWallet(eth, walletHint)) {
     onStatus("Confirming in your wallet…");
   } else {
     try {
@@ -974,7 +1008,7 @@ const toSwapCall = (q: LegQuote): Call => ({ to: q.tx!.to, data: q.tx!.data, val
 // ---------------------------------------------------------------- orders (quote -> review -> submit)
 
 /** Quotes are re-fetched if the user takes longer than this to confirm the review */
-export const QUOTE_TTL_MS = 45_000;
+export const QUOTE_TTL_MS = 90_000;
 
 /** A quoted, balance-checked order the user can review before anything is sent to the wallet. */
 export interface PreparedOrder {
@@ -1132,13 +1166,13 @@ export async function submitOrder(params: {
   order: PreparedOrder;
   builderCode: string;
   onStatus?: StatusFn;
+  walletHint?: WalletHint;
 }): Promise<BasketResult> {
-  const { eth, order, builderCode, onStatus = () => {} } = params;
+  const { eth, order, builderCode, onStatus = () => {}, walletHint } = params;
   if (Date.now() - order.preparedAt > QUOTE_TTL_MS) throw new Error("Quote expired. Refresh the quote and review again.");
   const { side, sender, legs, skipped } = order;
-  await ensureBase(eth, onStatus);
-
-  const approveCalls = await buildApprovals(eth, sender, legs, builderCode);
+  // Run network check and allowance reads in parallel right before prompting so mobile browsers retain user activation
+  const [, approveCalls] = await Promise.all([ensureBase(eth, onStatus), buildApprovals(eth, sender, legs, builderCode)]);
   const verb = side === "buy" ? "Buy" : "Sell";
   // Native ETH is excluded from the double-trade guard: gas also lowers it, which would stop valid orders
   const spend = [...new Set(legs.map((q) => q.tokenIn!).filter((t) => !isNative(t)))];
@@ -1154,7 +1188,8 @@ export async function submitOrder(params: {
     builderCode,
     spend,
     swapSpend,
-    receiveTokens
+    receiveTokens,
+    walletHint
   );
   onStatus("Reading what you received onchain…");
   const watch =

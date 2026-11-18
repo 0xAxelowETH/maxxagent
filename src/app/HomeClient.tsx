@@ -59,6 +59,7 @@ import {
   BasketResult,
   PreparedOrder,
   SellLeg,
+  type WalletHint,
 } from "@/lib/basketExecutor";
 import { MaxxAgentLogo, MaxxAgentMark } from "@/components/BrandLogo";
 import { OrderReview } from "@/components/OrderReview";
@@ -101,6 +102,100 @@ interface EthereumProvider {
 interface Eip6963ProviderDetail {
   info: { uuid: string; name: string; icon: string; rdns: string };
   provider: EthereumProvider;
+}
+
+type WindowWithWallets = {
+  ethereum?: EthereumProvider;
+  binancew3w?: { ethereum?: EthereumProvider };
+  okxwallet?: EthereumProvider;
+  bitkeep?: { ethereum?: EthereumProvider };
+};
+
+function getInjectedFallback(): EthereumProvider | null {
+  if (typeof window === "undefined") return null;
+  const w = window as unknown as WindowWithWallets;
+  return w.binancew3w?.ethereum ?? w.okxwallet ?? w.bitkeep?.ethereum ?? w.ethereum ?? null;
+}
+
+function detectInjectedName(eth: EthereumProvider | null): string {
+  if (!eth || typeof window === "undefined") return "Browser wallet";
+  const w = window as unknown as WindowWithWallets;
+  const p = eth as unknown as Record<string, unknown>;
+  if (p.isBinance || p.isBinanceWeb3 || eth === w.binancew3w?.ethereum) return "Binance Web3 Wallet";
+  if (p.isOkxWallet || p.isOKExWallet || eth === w.okxwallet) return "OKX Wallet";
+  if (p.isBitKeep || p.isBitgetWallet || eth === w.bitkeep?.ethereum) return "Bitget Wallet";
+  if (p.isZerion) return "Zerion";
+  if (p.isRainbow) return "Rainbow";
+  return "Browser wallet";
+}
+
+function hasErrorCode(err: unknown, targetCode: number, depth = 0): boolean {
+  if (!err || typeof err !== "object" || depth > 4) return false;
+  const e = err as Record<string, unknown>;
+  if (e.code === targetCode) return true;
+  return (
+    hasErrorCode(e.data, targetCode, depth + 1) ||
+    hasErrorCode(e.originalError, targetCode, depth + 1) ||
+    hasErrorCode(e.cause, targetCode, depth + 1)
+  );
+}
+
+function isMissingChainError(err: unknown): boolean {
+  if (hasErrorCode(err, 4902)) return true;
+  const msg = err instanceof Error ? err.message : String((err as { message?: unknown })?.message ?? err ?? "");
+  return /unrecognized chain|unknown chain|chain .*not.*added|missing.*chain|4902/i.test(msg);
+}
+
+const BASE_CHAIN_PARAMS = {
+  mainnet: {
+    chainId: "0x2105",
+    chainName: "Base Mainnet",
+    nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
+    rpcUrls: ["https://mainnet.base.org"],
+    blockExplorerUrls: ["https://basescan.org"],
+  },
+  sepolia: {
+    chainId: "0x14a34",
+    chainName: "Base Sepolia Testnet",
+    nativeCurrency: { name: "Sepolia Ether", symbol: "ETH", decimals: 18 },
+    rpcUrls: ["https://sepolia.base.org"],
+    blockExplorerUrls: ["https://sepolia.basescan.org"],
+  },
+};
+
+async function switchOrAddBaseChain(eth: EthereumProvider, mode: "mainnet" | "sepolia"): Promise<string> {
+  const target = BASE_CHAIN_PARAMS[mode];
+  try {
+    await eth.request({
+      method: "wallet_switchEthereumChain",
+      params: [{ chainId: target.chainId }],
+    });
+  } catch (switchErr: unknown) {
+    if (!isMissingChainError(switchErr)) throw switchErr;
+    await eth.request({
+      method: "wallet_addEthereumChain",
+      params: [target],
+    });
+  }
+  return target.chainId;
+}
+
+function useDismissMenu(open: boolean, ref: React.RefObject<HTMLDivElement | null>, onClose: () => void) {
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (!ref.current?.contains(e.target as Node)) onClose();
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    document.addEventListener("mousedown", onDown);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [open, ref, onClose]);
 }
 
 const STOCK_LOGO_MAP: Record<string, string> = Object.fromEntries(
@@ -325,26 +420,19 @@ export default function StockMaxxingDashboard() {
   // EIP-6963: discover every installed wallet instead of trusting window.ethereum
   const [walletProviders, setWalletProviders] = useState<Eip6963ProviderDetail[]>([]);
   const [showWalletMenu, setShowWalletMenu] = useState<boolean>(false);
+  const walletMenuRef = useRef<HTMLDivElement>(null);
   // Connected-wallet dropdown (copy address, BaseScan, switch, disconnect)
   const [accountMenuOpen, setAccountMenuOpen] = useState<boolean>(false);
   const [addressCopied, setAddressCopied] = useState<boolean>(false);
   const accountMenuRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!accountMenuOpen) return;
-    const onDown = (e: MouseEvent) => {
-      if (!accountMenuRef.current?.contains(e.target as Node)) setAccountMenuOpen(false);
-    };
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setAccountMenuOpen(false);
-    document.addEventListener("mousedown", onDown);
-    window.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", onDown);
-      window.removeEventListener("keydown", onKey);
-    };
-  }, [accountMenuOpen]);
+  const closeAccountMenu = useCallback(() => setAccountMenuOpen(false), []);
+  const closeWalletMenu = useCallback(() => setShowWalletMenu(false), []);
+  useDismissMenu(accountMenuOpen, accountMenuRef, closeAccountMenu);
+  useDismissMenu(showWalletMenu, walletMenuRef, closeWalletMenu);
   const [connectedWalletName, setConnectedWalletName] = useState<string>("");
   const [connectingWallet, setConnectingWallet] = useState<boolean>(false);
   const providerRef = useRef<EthereumProvider | null>(null);
+  const walletMetaRef = useRef<WalletHint | undefined>(undefined);
   const detachListenersRef = useRef<(() => void) | null>(null);
   useEffect(() => {
     const onAnnounce = (event: Event) => {
@@ -354,10 +442,20 @@ export default function StockMaxxingDashboard() {
     };
     window.addEventListener("eip6963:announceProvider", onAnnounce);
     window.dispatchEvent(new Event("eip6963:requestProvider"));
-    return () => window.removeEventListener("eip6963:announceProvider", onAnnounce);
+    // Mobile WebViews often inject their EIP-6963 listener asynchronously after first paint
+    const retryTimer = window.setTimeout(() => {
+      window.dispatchEvent(new Event("eip6963:requestProvider"));
+    }, 400);
+    return () => {
+      window.clearTimeout(retryTimer);
+      window.removeEventListener("eip6963:announceProvider", onAnnounce);
+    };
   }, []);
+  useEffect(() => {
+    if (showWalletMenu) window.dispatchEvent(new Event("eip6963:requestProvider"));
+  }, [showWalletMenu]);
   const getEthProvider = useCallback((): EthereumProvider | null => {
-    return providerRef.current ?? (window as unknown as { ethereum?: EthereumProvider }).ethereum ?? null;
+    return providerRef.current ?? getInjectedFallback();
   }, []);
   /** The account that will actually sign. Swaps send tokens to this address, so never use a stale one. */
   const resolveSender = useCallback(async (eth: EthereumProvider): Promise<string> => {
@@ -777,7 +875,13 @@ export default function StockMaxxingDashboard() {
     setReview(null);
     setBasketPending(true);
     try {
-      const result = await submitOrder({ eth, order, builderCode, onStatus: setBasketStatus });
+      const result = await submitOrder({
+        eth,
+        order,
+        builderCode,
+        onStatus: setBasketStatus,
+        walletHint: walletMetaRef.current,
+      });
       if (walletRef.current === targetSender) recordResult(result, label);
     } catch (err: unknown) {
       if (walletRef.current === targetSender) {
@@ -960,7 +1064,10 @@ export default function StockMaxxingDashboard() {
 
   // Remember the wallet the user picked, so a page refresh reconnects silently (no popup)
   const WALLET_STORAGE_KEY = "maxxagent_wallet";
-  type SavedWallet = { kind: "injected"; rdns: string; name: string } | { kind: ExternalWalletKind };
+  type SavedWallet =
+    | { kind: "injected"; rdns: string; name: string }
+    | { kind: "browser"; name: string }
+    | { kind: ExternalWalletKind };
   const saveWallet = (w: SavedWallet | null) => {
     try {
       if (w) localStorage.setItem(WALLET_STORAGE_KEY, JSON.stringify(w));
@@ -1008,6 +1115,9 @@ export default function StockMaxxingDashboard() {
       if (next) fetchLiveStocks(next);
       else {
         setChainIdHex("");
+        setConnectedWalletName("");
+        walletMetaRef.current = undefined;
+        if (!inMiniApp) providerRef.current = null;
         saveWallet(null); // disconnected from inside the wallet: don't auto-reconnect
       }
     };
@@ -1036,6 +1146,7 @@ export default function StockMaxxingDashboard() {
     } catch {}
     await disconnectExternalWallets();
     if (!inMiniApp) providerRef.current = null; // in a mini app the host wallet stays the provider
+    walletMetaRef.current = undefined;
     setWalletAddress("");
     setInspectAddress("");
     setWalletBalances({});
@@ -1057,16 +1168,24 @@ export default function StockMaxxingDashboard() {
     setShowWalletMenu(false);
     let candidateEth: EthereumProvider | null = picked?.provider ?? null;
     let candidateName = picked?.info.name ?? "";
+    let candidateMeta: WalletHint | undefined = picked
+      ? { name: picked.info.name, rdns: picked.info.rdns }
+      : undefined;
     if (external) {
       // Coinbase Smart Wallet (passkey popup) or WalletConnect (QR / mobile deep link)
       setConnectingWallet(true);
       try {
         candidateEth = (await connectExternalWallet(external)) as EthereumProvider;
         candidateName = external === "coinbase" ? "Coinbase Smart Wallet" : "WalletConnect";
+        candidateMeta = { name: candidateName, external };
       } catch (err: unknown) {
         setConnectingWallet(false);
         const msg = err instanceof Error ? err.message : "";
-        setTxError(/reject|closed|cancel/i.test(msg) ? "Wallet connection cancelled." : "Could not connect the wallet. Please try again.");
+        setTxError(
+          /request reset|reject|closed|cancel/i.test(msg)
+            ? "Wallet connection cancelled."
+            : "Could not connect the wallet. Please try again."
+        );
         return;
       }
     }
@@ -1078,6 +1197,14 @@ export default function StockMaxxingDashboard() {
       );
       return;
     }
+    if (!candidateMeta) {
+      if (inMiniApp) {
+        candidateMeta = { name: "Mini app wallet" };
+      } else {
+        candidateName = candidateName || detectInjectedName(eth);
+        candidateMeta = { name: candidateName, external: "browser" };
+      }
+    }
     try {
       const accounts = (await eth.request({
         method: "eth_requestAccounts",
@@ -1085,11 +1212,11 @@ export default function StockMaxxingDashboard() {
       let chainId = normalizeChainHex(await eth.request({ method: "eth_chainId" }).catch(() => ""));
       if (accounts && accounts[0]) {
         providerRef.current = eth;
+        walletMetaRef.current = candidateMeta;
         if (candidateName) setConnectedWalletName(candidateName);
         if (chainId && chainId !== "0x2105") {
           try {
-            await eth.request({ method: "wallet_switchEthereumChain", params: [{ chainId: "0x2105" }] });
-            chainId = "0x2105";
+            chainId = await switchOrAddBaseChain(eth, "mainnet");
           } catch {
             // Keep connected even if user postpones switching until trade time
           }
@@ -1097,9 +1224,15 @@ export default function StockMaxxingDashboard() {
         attachWallet(eth, accounts[0], chainId || "0x2105");
         if (external) saveWallet({ kind: external });
         else if (picked) saveWallet({ kind: "injected", rdns: picked.info.rdns, name: picked.info.name });
+        else if (!inMiniApp) saveWallet({ kind: "browser", name: candidateName || detectInjectedName(eth) });
       }
     } catch (err: unknown) {
-      setTxError(err instanceof Error ? err.message : "Wallet connection rejected");
+      const msg = err instanceof Error ? err.message : "";
+      setTxError(
+        /request reset|reject|closed|cancel/i.test(msg)
+          ? "Wallet connection cancelled."
+          : msg || "Wallet connection rejected"
+      );
     } finally {
       setConnectingWallet(false);
     }
@@ -1116,6 +1249,7 @@ export default function StockMaxxingDashboard() {
       restoreTried.current = true; // the host wallet replaces any saved browser wallet
       const eth = found.provider as EthereumProvider;
       providerRef.current = eth;
+      walletMetaRef.current = { name: "Mini app wallet" };
       setInMiniApp(true);
       setConnectedWalletName("Mini app wallet");
       try {
@@ -1143,11 +1277,13 @@ export default function StockMaxxingDashboard() {
       restoreTried.current = true;
       return;
     }
-    const finish = async (eth: EthereumProvider, name: string) => {
+    let cancelled = false;
+    const finish = async (eth: EthereumProvider, name: string, meta: WalletHint) => {
       const accounts = (await eth.request({ method: "eth_accounts" }).catch(() => [])) as string[];
-      if (!accounts?.[0]) return; // the wallet no longer authorizes this site: stay disconnected
+      if (cancelled || !accounts?.[0]) return; // the wallet no longer authorizes this site: stay disconnected
       const chainId = (await eth.request({ method: "eth_chainId" }).catch(() => "")) as string;
       providerRef.current = eth;
+      walletMetaRef.current = meta;
       setConnectedWalletName(name);
       attachWallet(eth, accounts[0], chainId);
     };
@@ -1156,61 +1292,56 @@ export default function StockMaxxingDashboard() {
       const match = walletProviders.find((p) => p.info.rdns === (saved as { rdns: string }).rdns);
       if (!match) return; // re-runs when walletProviders updates
       restoreTried.current = true;
-      finish(match.provider as EthereumProvider, match.info.name);
-    } else {
-      restoreTried.current = true;
-      const kind = saved.kind;
-      restoreExternalWallet(kind).then((p) => {
-        if (p) finish(p as EthereumProvider, kind === "coinbase" ? "Coinbase Smart Wallet" : "WalletConnect");
+      finish(match.provider as EthereumProvider, match.info.name, {
+        name: match.info.name,
+        rdns: match.info.rdns,
       });
+      return;
     }
+    if (saved.kind === "browser") {
+      const savedName = (saved as { name?: string }).name || "";
+      const tryBrowser = (): boolean => {
+        const eth = getInjectedFallback();
+        if (!eth) return false;
+        restoreTried.current = true;
+        const resolvedName = savedName && savedName !== "Browser wallet" ? savedName : detectInjectedName(eth);
+        finish(eth, resolvedName, { name: resolvedName, external: "browser" });
+        return true;
+      };
+      if (tryBrowser()) return;
+      // Mobile WebViews may finish injecting window.ethereum / window.binancew3w slightly after hydration
+      const timer = window.setTimeout(() => {
+        if (cancelled || restoreTried.current) return;
+        restoreTried.current = true;
+        tryBrowser();
+      }, 450);
+      return () => {
+        cancelled = true;
+        window.clearTimeout(timer);
+      };
+    }
+    restoreTried.current = true;
+    const kind = saved.kind;
+    const externalName = kind === "coinbase" ? "Coinbase Smart Wallet" : "WalletConnect";
+    restoreExternalWallet(kind).then((p) => {
+      if (p) finish(p as EthereumProvider, externalName, { name: externalName, external: kind });
+    });
+    return () => {
+      cancelled = true;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [walletProviders, walletAddress, termsAccepted]);
 
   const switchToBaseMainnet = async (modeOverride?: "sepolia" | "mainnet") => {
     const mode = modeOverride || txTargetNetwork;
-    const targetChainHex = mode === "sepolia" ? "0x14a34" : "0x2105";
     const eth = getEthProvider();
     if (!eth) return;
     try {
-      await eth.request({
-        method: "wallet_switchEthereumChain",
-        params: [{ chainId: targetChainHex }],
-      });
-      setChainIdHex(targetChainHex);
-    } catch (switchErr: unknown) {
-      const code = (switchErr as { code?: number })?.code;
-      if (code !== 4902) {
-        const msg = switchErr instanceof Error ? switchErr.message : "Failed to switch to Base network";
-        setTxError(msg);
-        throw switchErr;
-      }
-      try {
-        await eth.request({
-          method: "wallet_addEthereumChain",
-          params: [
-            mode === "sepolia"
-              ? {
-                  chainId: "0x14a34",
-                  chainName: "Base Sepolia Testnet",
-                  nativeCurrency: { name: "Sepolia Ether", symbol: "ETH", decimals: 18 },
-                  rpcUrls: ["https://sepolia.base.org"],
-                  blockExplorerUrls: ["https://sepolia.basescan.org"],
-                }
-              : {
-                  chainId: "0x2105",
-                  chainName: "Base Mainnet",
-                  nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
-                  rpcUrls: ["https://mainnet.base.org"],
-                  blockExplorerUrls: ["https://basescan.org"],
-                },
-          ],
-        });
-        setChainIdHex(targetChainHex);
-      } catch (e: unknown) {
-        setTxError(e instanceof Error ? e.message : "Failed to switch to Base network");
-        throw e;
-      }
+      const switchedHex = await switchOrAddBaseChain(eth, mode);
+      setChainIdHex(switchedHex);
+    } catch (err: unknown) {
+      setTxError(err instanceof Error ? err.message : "Failed to switch to Base network");
+      throw err;
     }
   };
 
@@ -1298,7 +1429,15 @@ export default function StockMaxxingDashboard() {
         };
         throw new Error(`The registry would reject this index${reason ? `: ${nice[reason] || reason}` : ""}. Nothing was sent.`);
       }
-      const hash = await sendContractCall({ eth, sender, to: registryAddress, data: calldata, builderCode, onStatus: setPublishStatus });
+      const hash = await sendContractCall({
+        eth,
+        sender,
+        to: registryAddress,
+        data: calldata,
+        builderCode,
+        onStatus: setPublishStatus,
+        walletHint: walletMetaRef.current,
+      });
       setTxHash(hash);
       recordOnchainActivity(`PUBLISH_INDEX ${cleanTicker}`, hash, "Base Mainnet (8453)");
       loadPublishedIndexes();
@@ -1678,7 +1817,7 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                 </div>
               </div>
             ) : (
-              <div className="relative">
+              <div className="relative" ref={walletMenuRef}>
                 <button
                   // Inside a mini app the host wallet is the only option: connect to it directly
                   onClick={() => (inMiniApp ? connectWallet() : setShowWalletMenu((v) => !v))}
@@ -1707,15 +1846,19 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                         {p.info.name}
                       </button>
                     ))}
-                    {walletProviders.length === 0 && typeof window !== "undefined" && Boolean((window as { ethereum?: unknown }).ethereum) && (
-                      <button
-                        onClick={() => connectWallet()}
-                        className="w-full flex items-center gap-2.5 rounded-xl px-2.5 py-2 text-left text-xs font-semibold text-slate-200 hover:bg-slate-800 cursor-pointer"
-                      >
-                        <Wallet className="h-4 w-4 text-cyan-300" />
-                        Browser wallet
-                      </button>
-                    )}
+                    {(() => {
+                      const fallbackEth = walletProviders.length === 0 ? getInjectedFallback() : null;
+                      if (!fallbackEth) return null;
+                      return (
+                        <button
+                          onClick={() => connectWallet()}
+                          className="w-full flex items-center gap-2.5 rounded-xl px-2.5 py-2 text-left text-xs font-semibold text-slate-200 hover:bg-slate-800 cursor-pointer"
+                        >
+                          <Wallet className="h-4 w-4 text-cyan-300" />
+                          {detectInjectedName(fallbackEth)}
+                        </button>
+                      );
+                    })()}
                     {walletProviders.length > 0 && (
                       <div className="px-2 pt-2 pb-1 text-[10px] font-bold uppercase tracking-wider text-slate-500">
                         No extension? Use one of these
