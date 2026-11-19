@@ -17,13 +17,14 @@ export async function generateMetadata({ searchParams }: { searchParams: Search 
   const weights = parseBasketParam(first(q.basket));
   if (!weights) return {};
   const name = cleanIndexName(first(q.name), 48) || "Custom stock index";
+  const ticker = cleanIndexName(first(q.ticker), 24);
   const legs = Object.entries(weights)
     .sort((a, b) => b[1] - a[1])
     .map(([s, w]) => `${s} ${Number((w / 100).toFixed(1))}%`)
     .join(", ");
   const title = `${name} — tokenized stock index on Base`;
   const description = `${legs}. Buy the whole basket from your own wallet with USDC or ETH on MAXXAGENT. Not financial advice.`;
-  const image = basketImagePath(weights, { name });
+  const image = basketImagePath(weights, { name, ticker: ticker || undefined });
   return {
     title: `${title} — MAXXAGENT`,
     description,
@@ -33,7 +34,7 @@ export async function generateMetadata({ searchParams }: { searchParams: Search 
     other: miniappEmbedTags({
       siteUrl: SITE,
       buttonTitle: "Buy this basket",
-      imageUrl: `${SITE}${basketImagePath(weights, { name, tall: true })}`,
+      imageUrl: `${SITE}${basketImagePath(weights, { name, ticker: ticker || undefined, tall: true })}`,
     }),
   };
 }

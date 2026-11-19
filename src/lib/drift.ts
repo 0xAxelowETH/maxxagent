@@ -112,3 +112,28 @@ export const ALERT_PCT_CHOICES = [2, 5, 10];
 export const DRIFT_ALERT_PCT = 5;
 /** The threshold of a target: the one place both the page and the daily server check read it from */
 export const alertPctOf = (t: { alertPct?: number } | null | undefined) => t?.alertPct ?? DRIFT_ALERT_PCT;
+
+/** One finished rebalance step, kept in this browser per wallet */
+export interface RebalanceLogEntry {
+  at: string;
+  side: "sell" | "buy";
+  summary: string;
+  txHashes: string[];
+}
+
+/** "NVDAc +6.2 pts" for the largest differences, overweight first (a broken limit comes first of all) */
+export function driftSummary(drift: Drift, maxWeightPct?: number): string {
+  if (drift.breaches.length && maxWeightPct)
+    return drift.breaches
+      .slice(0, 2)
+      .map((r) => `${r.symbol} is ${r.currentPct.toFixed(1)}% of your stocks, above your ${maxWeightPct}% limit`)
+      .join(" · ");
+  const part = (label: string, rows: Drift["over"]) =>
+    rows.length
+      ? `${label}: ${rows
+          .slice(0, 2)
+          .map((r) => `${r.symbol} ${r.diffPct > 0 ? "+" : "−"}${Math.abs(r.diffPct).toFixed(1)} pts`)
+          .join(", ")}`
+      : "";
+  return [part("Overweight", drift.over), part("Underweight", drift.under)].filter(Boolean).join(" · ");
+}

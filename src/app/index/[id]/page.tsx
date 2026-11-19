@@ -29,7 +29,8 @@ export async function generateMetadata({ params }: { params: Promise<{ id: strin
   const title = `${ix.name} (${ix.ticker}) — onchain stock index on Base`;
   const description = `${legs}. A tokenized stock index published onchain on Base; buy the whole basket from your own wallet with USDC or ETH. Not financial advice.`;
   const weights = Object.fromEntries(ix.constituents.map((c) => [c.symbol, c.weightBps]));
-  const card = { name: ix.name, ticker: `${ix.ticker} · onchain index #${ix.id}` };
+  const shortAddr = `${ix.creator.slice(0, 6)}…${ix.creator.slice(-4)}`;
+  const card = { name: ix.name, ticker: `${ix.ticker} · onchain index #${ix.id}`, creator: shortAddr };
   const image = basketImagePath(weights, card);
   return {
     title: `${title} — MAXXAGENT`,

@@ -4,17 +4,9 @@ import { useState } from "react";
 import { ExternalLink, Target as TargetIcon, Trash2 } from "lucide-react";
 import { RebalancePanel } from "@/components/RebalancePanel";
 import { DriftAlerts } from "@/components/DriftAlerts";
-import { ALERT_PCT_CHOICES, alertPctOf, type Drift, type SavedTarget } from "@/lib/drift";
+import { ALERT_PCT_CHOICES, alertPctOf, driftSummary, type Drift, type RebalanceLogEntry, type SavedTarget } from "@/lib/drift";
 
-export { alertPctOf };
-
-/** One finished rebalance step, kept in this browser per wallet */
-export interface RebalanceLogEntry {
-  at: string;
-  side: "sell" | "buy";
-  summary: string;
-  txHashes: string[];
-}
+export { alertPctOf, driftSummary, type RebalanceLogEntry };
 
 interface StockPrice {
   symbol: string;
@@ -23,23 +15,6 @@ interface StockPrice {
 }
 
 const pct = (n: number) => `${n.toFixed(n < 10 ? 1 : 0)}%`;
-
-/** "NVDAc +6.2 pts" for the largest differences, overweight first (a broken limit comes first of all) */
-export function driftSummary(drift: Drift, maxWeightPct?: number): string {
-  if (drift.breaches.length && maxWeightPct)
-    return drift.breaches
-      .slice(0, 2)
-      .map((r) => `${r.symbol} is ${r.currentPct.toFixed(1)}% of your stocks, above your ${maxWeightPct}% limit`)
-      .join(" · ");
-  const part = (label: string, rows: Drift["over"]) =>
-    rows.length
-      ? `${label}: ${rows
-          .slice(0, 2)
-          .map((r) => `${r.symbol} ${r.diffPct > 0 ? "+" : "−"}${Math.abs(r.diffPct).toFixed(1)} pts`)
-          .join(", ")}`
-      : "";
-  return [part("Overweight", drift.over), part("Underweight", drift.under)].filter(Boolean).join(" · ");
-}
 
 /**
  * The saved target of the connected wallet, checked against what the wallet holds right now.

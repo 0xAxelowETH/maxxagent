@@ -50,7 +50,10 @@ export function cleanIndexName(raw: string | null | undefined, max = 64): string
 }
 
 /** Path of the share card image for a basket (see /api/og) */
-export function basketImagePath(weightsBps: Record<string, number>, opts: { name?: string; ticker?: string; tall?: boolean } = {}): string {
+export function basketImagePath(
+  weightsBps: Record<string, number>,
+  opts: { name?: string; ticker?: string; creator?: string; tall?: boolean } = {}
+): string {
   const q = new URLSearchParams({
     basket: Object.entries(weightsBps)
       .filter(([, w]) => w > 0)
@@ -59,6 +62,7 @@ export function basketImagePath(weightsBps: Record<string, number>, opts: { name
   });
   if (opts.name) q.set("name", opts.name);
   if (opts.ticker) q.set("ticker", opts.ticker);
+  if (opts.creator) q.set("creator", opts.creator);
   if (opts.tall) q.set("h", "800");
   return `/api/og?${q.toString()}`;
 }
