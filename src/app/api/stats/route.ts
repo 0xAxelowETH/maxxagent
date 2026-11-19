@@ -33,7 +33,13 @@ const USDC = "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913";
 const NATIVE_ETH = "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
 // Team test wallet(s): excluded from public stats (comma-separated extra addresses via STATS_EXCLUDE)
 const EXCLUDED = new Set(
-  ["0xD986C711F575C71dA22Bd08742b9DB2091Ba9e33", ...(process.env.STATS_EXCLUDE || "").split(",")].map((a) => a.trim().toLowerCase()).filter(Boolean)
+  [
+    "0xD986C711F575C71dA22Bd08742b9DB2091Ba9e33",
+    "0xA711F79634Bbc4e99736cd95431EB6536C30fDb8",
+    ...(process.env.STATS_EXCLUDE || "").split(","),
+  ]
+    .map((a) => a.trim().toLowerCase())
+    .filter(Boolean)
 );
 const ENTRY_POINTS = new Set([entryPoint06Address, entryPoint07Address, entryPoint08Address].map((a) => a.toLowerCase()));
 const STOCKS = new Map(BASE_TOKENIZED_STOCKS.map((s) => [s.b20Address.toLowerCase(), s]));
