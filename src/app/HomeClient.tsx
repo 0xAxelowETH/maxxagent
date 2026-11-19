@@ -924,6 +924,9 @@ export default function StockMaxxingDashboard() {
   const [userPrompt, setUserPrompt] = useState<string>(
     "AI and cloud compute leaders (NVDAc, MSFTc, GOOGLc, SNDKc), prefer stocks trading below NAV"
   );
+  const [mandateHistory, setMandateHistory] = useState<string[]>([]);
+  const mandateHistoryRef = useRef<string[]>([]);
+  const [followUpPrompt, setFollowUpPrompt] = useState<string>("");
   const [riskProfile, setRiskProfile] = useState<"Conservative" | "Balanced" | "Aggressive">(
     "Balanced"
   );
@@ -931,6 +934,8 @@ export default function StockMaxxingDashboard() {
   // Single-stock trade amount (Swap panel), separate from the basket capital in the Agent tab
   const [tradeUsd, setTradeUsd] = useState<number>(10);
   const [agentReport, setAgentReport] = useState<AgentAnalysisReport | null>(null);
+  const agentReportPromptRef = useRef<string>("");
+  agentReportPromptRef.current = agentReport?.userPrompt || "";
   const [heroPrompt, setHeroPrompt] = useState<string>("");
   // The hero's Ask button waits for hydration: a submit before it would reload the page instead of asking
   const [hydrated, setHydrated] = useState(false);
@@ -953,6 +958,8 @@ export default function StockMaxxingDashboard() {
     MSFTc: 1800,
     AAPLc: 1600,
   });
+  const [builderView, setBuilderView] = useState<"selected-first" | "selected-only" | "all">("selected-first");
+  const [builderPinned, setBuilderPinned] = useState<string[]>(() => ["NVDAc", "SPCXc", "TSLAc", "MSFTc", "AAPLc"]);
 
   // Onchain Tx & Copy Feedback State
   const [txHash, setTxHash] = useState<string>("");
@@ -1398,7 +1405,25 @@ export default function StockMaxxingDashboard() {
   // Only the newest run may set the report: an older one finishing later (e.g. the first-visit proposal) is ignored
   const agentRunId = useRef(0);
   const triggerStockAgent = useCallback(
-    async (stocksData?: LiveTokenizedStock[], promptOverride?: string) => {
+    async (
+      stocksData?: LiveTokenizedStock[],
+      promptOverride?: string,
+      options?: { followUp?: string; riskOverride?: "Conservative" | "Balanced" | "Aggressive" }
+    ) => {
+      const follow = options?.followUp?.trim();
+      const baseHistory =
+        mandateHistoryRef.current.length > 0
+          ? mandateHistoryRef.current
+          : [
+              (agentReportPromptRef.current || userPrompt).trim() ||
+                "AI and cloud compute leaders, prefer stocks trading below NAV",
+            ];
+      const nextSteps = follow
+        ? [...baseHistory, follow].slice(-6)
+        : [
+            (promptOverride ?? userPrompt).trim() ||
+              "AI and cloud compute leaders, prefer stocks trading below NAV",
+          ];
       const runId = ++agentRunId.current;
       setRunningAgent(true);
       setAgentError("");
@@ -1408,8 +1433,9 @@ export default function StockMaxxingDashboard() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             stocks: stocksData || stocks,
-            userPrompt: promptOverride ?? userPrompt,
-            riskProfile,
+            userPrompt: nextSteps[nextSteps.length - 1],
+            promptSteps: nextSteps.length > 1 ? nextSteps : undefined,
+            riskProfile: options?.riskOverride ?? riskProfile,
             capitalUsd,
             builderCode,
           }),
@@ -1418,6 +1444,9 @@ export default function StockMaxxingDashboard() {
         if (runId !== agentRunId.current) return;
         if (data?.ok && data.report) {
           setAgentReport(data.report);
+          mandateHistoryRef.current = nextSteps;
+          setMandateHistory(nextSteps);
+          if (follow) setFollowUpPrompt("");
         } else {
           setAgentError(data?.error || "Could not run the stock agent right now. Please retry.");
         }
@@ -2040,6 +2069,15 @@ export default function StockMaxxingDashboard() {
     return (bStats?.volumeUsd ?? 0) - (aStats?.volumeUsd ?? 0) || (bStats?.buys ?? 0) - (aStats?.buys ?? 0) || b.id - a.id;
   });
 
+  const applyCustomWeights = useCallback((next: Record<string, number>) => {
+    setCustomWeights(next);
+    const active = Object.entries(next)
+      .filter(([, w]) => w > 0)
+      .map(([s]) => s);
+    setBuilderPinned(active);
+    if (active.length === 0) setBuilderView((v) => (v === "selected-only" ? "selected-first" : v));
+  }, []);
+
   const normalizeCustomWeights = () => {
     const entries = Object.entries(customWeights).filter(([, w]) => w > 0);
     if (entries.length === 0) return;
@@ -2049,7 +2087,7 @@ export default function StockMaxxingDashboard() {
     entries.forEach(([sym], idx) => {
       next[sym] = rounded[idx];
     });
-    setCustomWeights(next);
+    applyCustomWeights(next);
   };
 
   const equalizeCustomWeights = () => {
@@ -2063,10 +2101,10 @@ export default function StockMaxxingDashboard() {
     targets.forEach((sym, idx) => {
       next[sym] = rounded[idx];
     });
-    setCustomWeights(next);
+    applyCustomWeights(next);
   };
 
-  const clearCustomWeights = () => setCustomWeights({});
+  const clearCustomWeights = () => applyCustomWeights({});
 
   const totalCustomWeightBps = Object.values(customWeights).reduce((a, b) => a + b, 0);
 
@@ -2092,7 +2130,7 @@ export default function StockMaxxingDashboard() {
     }
     const shared = parseSharedBasket(window.location.search);
     if (!shared) return;
-    setCustomWeights(shared.weightsBps);
+    applyCustomWeights(shared.weightsBps);
     const pay = q.get("pay");
     if (pay === "eth" || pay === "usdc") setBasketPayWith(pay);
     const sharedName = cleanIndexName(q.get("name"));
@@ -2769,9 +2807,8 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                   </h2>
 
                   <p className="text-xs sm:text-sm text-slate-300 leading-snug sm:leading-relaxed max-w-2xl">
-                    Buy tokenized US stock exposure from anywhere outside the US, from about $1.50, in your own wallet. Tell the agent what you
-                    want: it researches from Chainlink, SEC filings and DEX pools, shows every step with its source, and says
-                    what it won&apos;t do. No wallet needed to try.
+                    Self-custody exposure to 10 tokenized US stocks on Base (non-US eligible, from ~$1.50). Ask the agent
+                    for a transparent, source-backed basket — no wallet needed to try.
                   </p>
 
                   {/* Try the agent right here: no wallet, the result opens on the Agent tab */}
@@ -3841,6 +3878,105 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                     </div>
                   </div>
 
+                  {/* Follow-up refinement bar: iterate on the current mandate without starting over */}
+                  <div
+                    data-testid="agent-followup"
+                    className="rounded-2xl border border-slate-800 bg-[#070b14] p-3.5 space-y-2.5"
+                  >
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <span className="text-[11px] font-bold uppercase tracking-wider text-slate-300">
+                        Refine this basket
+                      </span>
+                      {mandateHistory.length > 1 && (
+                        <div className="flex flex-wrap items-center gap-1.5 text-[10px]">
+                          <span className="font-mono text-cyan-300">
+                            {mandateHistory.length} steps applied
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const base = mandateHistory[0] || userPrompt;
+                              setFollowUpPrompt("");
+                              triggerStockAgent(stocks, base);
+                            }}
+                            disabled={runningAgent}
+                            className="rounded-md border border-slate-700 bg-slate-800/80 px-2 py-0.5 text-[10px] font-semibold text-slate-300 hover:border-slate-500 hover:text-white cursor-pointer disabled:opacity-50"
+                          >
+                            Reset to step 1
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                    {mandateHistory.length > 1 && (
+                      <div className="flex flex-wrap items-center gap-1.5 text-[10px] text-slate-400">
+                        {mandateHistory.map((stepText, idx) => (
+                          <span
+                            key={`${idx}-${stepText}`}
+                            className="inline-flex max-w-full items-center gap-1 rounded-md border border-slate-800 bg-[#050811] px-2 py-0.5"
+                          >
+                            <span className="font-mono text-cyan-300">{idx + 1}.</span>
+                            <span className="truncate max-w-[210px]">{stepText}</span>
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                    <form
+                      onSubmit={(e) => {
+                        e.preventDefault();
+                        const text = followUpPrompt.trim();
+                        if (!text || runningAgent) return;
+                        triggerStockAgent(stocks, undefined, { followUp: text });
+                      }}
+                      className="flex gap-2"
+                    >
+                      <input
+                        id="agent-followup-input"
+                        data-testid="agent-followup-input"
+                        value={followUpPrompt}
+                        onChange={(e) => setFollowUpPrompt(e.target.value.slice(0, 300))}
+                        placeholder='Refine: e.g. "no Tesla", "max 25% per stock", "keep 15% cash", "equal weight"'
+                        aria-label="Follow-up refinement instruction"
+                        className="min-w-0 flex-1 rounded-xl border border-slate-700 bg-[#050811] px-3 py-2 text-xs text-white placeholder-slate-500 focus:border-[#4C6FFF] focus:outline-none"
+                      />
+                      <button
+                        type="submit"
+                        data-testid="agent-followup-submit"
+                        disabled={runningAgent || !followUpPrompt.trim()}
+                        className="shrink-0 rounded-xl bg-[#4C6FFF] px-3.5 py-2 text-xs font-bold text-white hover:bg-blue-500 disabled:opacity-40 transition cursor-pointer"
+                      >
+                        Refine
+                      </button>
+                    </form>
+                    <div className="flex flex-wrap gap-1.5">
+                      {[
+                        { label: "Max 25% per stock", cmd: "max 25% per stock" },
+                        { label: "Equal weight", cmd: "equal weight" },
+                        (agentReport.cashReservePct ?? 0) > 0
+                          ? { label: "0% cash", cmd: "0% cash" }
+                          : { label: "Keep 15% in USDC", cmd: "keep 15% in cash" },
+                        { label: "Prefer below NAV", cmd: "prefer below NAV" },
+                        { label: "Safer / low vol", cmd: "safer low risk", risk: "Conservative" as const },
+                        { label: "No crypto", cmd: "no crypto" },
+                      ].map((chip) => (
+                        <button
+                          key={chip.label}
+                          type="button"
+                          disabled={runningAgent}
+                          onClick={() => {
+                            if (chip.risk) setRiskProfile(chip.risk);
+                            triggerStockAgent(stocks, undefined, {
+                              followUp: chip.cmd,
+                              riskOverride: chip.risk,
+                            });
+                          }}
+                          className="rounded-lg border border-slate-700 bg-slate-800/70 px-2.5 py-1 text-[11px] font-medium text-slate-300 hover:border-[#4C6FFF] hover:text-white disabled:opacity-40 transition cursor-pointer"
+                        >
+                          {chip.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
                   {/* Buy this basket in-app: USDC -> B20 stocks, straight to the user's wallet */}
                   <div className="rounded-2xl border border-emerald-500/35 bg-emerald-500/5 p-4 space-y-3">
                     <div className="flex flex-wrap items-end justify-between gap-3">
@@ -4318,7 +4454,7 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                   preset.allocations.forEach((a) => {
                     map[a.symbol] = a.weightBps;
                   });
-                  setCustomWeights(map);
+                  applyCustomWeights(map);
                 };
                 return (
                   <div
@@ -4500,76 +4636,149 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                         {(totalCustomWeightBps / 100).toFixed(0)}% allocated
                       </strong>
                     </span>
-                    <button
-                      type="button"
-                      onClick={() => document.getElementById("builder-actions")?.scrollIntoView({ behavior: "smooth", block: "center" })}
-                      className="inline-flex items-center gap-1 rounded-lg border border-cyan-500/35 bg-cyan-500/10 px-2.5 py-1 text-[11px] font-semibold text-cyan-300 hover:bg-cyan-500/20 transition cursor-pointer"
-                    >
-                      Amount &amp; Buy / Publish
-                      <ChevronDown className="h-3.5 w-3.5" />
-                    </button>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <div
+                        data-testid="builder-view-filter"
+                        className="inline-flex rounded-lg border border-slate-800 bg-[#040814] p-0.5 text-[11px]"
+                        role="group"
+                        aria-label="Filter stock sliders"
+                      >
+                        {(
+                          [
+                            { id: "selected-first", label: "Selected first" },
+                            {
+                              id: "selected-only",
+                              label: `Selected (${Object.values(customWeights).filter((w) => w > 0).length})`,
+                            },
+                            { id: "all", label: "All (10)" },
+                          ] as const
+                        ).map((opt) => (
+                          <button
+                            key={opt.id}
+                            type="button"
+                            aria-pressed={builderView === opt.id}
+                            onClick={() => {
+                              if (opt.id === "selected-first") {
+                                setBuilderPinned(
+                                  Object.entries(customWeights)
+                                    .filter(([, w]) => w > 0)
+                                    .map(([s]) => s)
+                                );
+                              }
+                              setBuilderView(opt.id);
+                            }}
+                            className={`rounded-md px-2 py-1 font-medium transition cursor-pointer ${
+                              builderView === opt.id
+                                ? "bg-[#4C6FFF] text-white"
+                                : "text-slate-400 hover:text-white"
+                            }`}
+                          >
+                            {opt.label}
+                          </button>
+                        ))}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => document.getElementById("builder-actions")?.scrollIntoView({ behavior: "smooth", block: "center" })}
+                        className="inline-flex items-center gap-1 rounded-lg border border-cyan-500/35 bg-cyan-500/10 px-2.5 py-1 text-[11px] font-semibold text-cyan-300 hover:bg-cyan-500/20 transition cursor-pointer"
+                      >
+                        Amount &amp; Buy / Publish
+                        <ChevronDown className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
                   </div>
                 </div>
 
                 {/* Sliders for the 10 supported Coinbase B20 tokenized stocks, with official logos */}
-                <div className={`grid grid-cols-1 gap-3 ${hasRegistry ? "" : "xl:grid-cols-2"}`}>
-                  {(stocks.length > 0 ? stocks : BASE_TOKENIZED_STOCKS).map((stock) => {
-                    const weightBps = customWeights[stock.symbol] || 0;
-                    const nav = "navPrice" in stock ? (stock as LiveTokenizedStock).navPrice : null;
+                {(() => {
+                  const baseList = stocks.length > 0 ? stocks : BASE_TOKENIZED_STOCKS;
+                  const pinnedSet = new Set(builderPinned);
+                  const visibleStocks =
+                    builderView === "selected-only"
+                      ? baseList.filter((s) => (customWeights[s.symbol] || 0) > 0)
+                      : builderView === "selected-first"
+                      ? [...baseList.filter((s) => pinnedSet.has(s.symbol)), ...baseList.filter((s) => !pinnedSet.has(s.symbol))]
+                      : baseList;
+
+                  if (visibleStocks.length === 0) {
                     return (
-                      <div
-                        key={stock.symbol}
-                        className="rounded-xl border border-slate-800/80 bg-[#070b14] p-3 flex items-center justify-between gap-3 sm:gap-4"
-                      >
-                        <div className="flex items-center gap-2.5 w-28 sm:w-44 shrink-0">
-                          <img
-                            src={stock.logoUrl}
-                            alt={stock.companyName}
-                            className="h-8 w-8 rounded-full border border-slate-700 bg-slate-900 object-cover shrink-0"
-                          />
-                          <div className="min-w-0">
-                            <div className="flex items-center gap-1.5">
-                              <span className="font-mono text-xs font-bold text-white">
-                                {stock.symbol}
-                              </span>
-                              {nav !== null && (
-                                <span className="font-mono text-[11px] text-slate-400">
-                                  ${nav.toFixed(0)}
-                                </span>
-                              )}
-                            </div>
-                            <div className="text-[10px] text-slate-500 truncate">
-                              {stock.companyName}
-                            </div>
-                          </div>
-                        </div>
-
-                        <input
-                          type="range"
-                          min={0}
-                          max={10000}
-                          step={100}
-                          value={weightBps}
-                          onChange={(e) =>
-                            setCustomWeights((prev) => ({
-                              ...prev,
-                              [stock.symbol]: Number(e.target.value),
-                            }))
-                          }
-                          className="flex-1 min-w-0 accent-[#4C6FFF] cursor-pointer"
-                          aria-label={`${stock.symbol} weight`}
-                        />
-
-                        <div className="w-16 sm:w-28 shrink-0 whitespace-nowrap text-right font-mono tabular-nums text-xs font-bold text-white">
-                          {(weightBps / 100).toFixed(1)}%
-                          <span className="hidden sm:inline text-[10px] font-normal text-slate-400">
-                            {" "}({weightBps} bps)
-                          </span>
-                        </div>
+                      <div className="rounded-xl border border-dashed border-slate-800 bg-[#070b14] p-5 text-center text-xs text-slate-400 space-y-2">
+                        <p>No stocks selected above 0% right now.</p>
+                        <button
+                          type="button"
+                          onClick={() => setBuilderView("all")}
+                          className="rounded-lg border border-slate-700 bg-slate-800/80 px-3 py-1.5 text-xs font-semibold text-white hover:border-[#4C6FFF] cursor-pointer"
+                        >
+                          Show all 10 stocks
+                        </button>
                       </div>
                     );
-                  })}
-                </div>
+                  }
+
+                  return (
+                    <div className={`grid grid-cols-1 gap-3 ${hasRegistry ? "" : "xl:grid-cols-2"}`}>
+                      {visibleStocks.map((stock) => {
+                        const weightBps = customWeights[stock.symbol] || 0;
+                        const nav = "navPrice" in stock ? (stock as LiveTokenizedStock).navPrice : null;
+                        const isActive = weightBps > 0;
+                        return (
+                          <div
+                            key={stock.symbol}
+                            className={`rounded-xl border bg-[#070b14] p-3 flex items-center justify-between gap-3 sm:gap-4 transition ${
+                              isActive ? "border-[#4C6FFF]/60" : "border-slate-800/80 opacity-85"
+                            }`}
+                          >
+                            <div className="flex items-center gap-2.5 w-28 sm:w-44 shrink-0">
+                              <img
+                                src={stock.logoUrl}
+                                alt={stock.companyName}
+                                className="h-8 w-8 rounded-full border border-slate-700 bg-slate-900 object-cover shrink-0"
+                              />
+                              <div className="min-w-0">
+                                <div className="flex items-center gap-1.5">
+                                  <span className="font-mono text-xs font-bold text-white">
+                                    {stock.symbol}
+                                  </span>
+                                  {nav !== null && (
+                                    <span className="font-mono text-[11px] text-slate-400">
+                                      ${nav.toFixed(0)}
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="text-[10px] text-slate-500 truncate">
+                                  {stock.companyName}
+                                </div>
+                              </div>
+                            </div>
+
+                            <input
+                              type="range"
+                              min={0}
+                              max={10000}
+                              step={100}
+                              value={weightBps}
+                              onChange={(e) =>
+                                setCustomWeights((prev) => ({
+                                  ...prev,
+                                  [stock.symbol]: Number(e.target.value),
+                                }))
+                              }
+                              className="flex-1 min-w-0 accent-[#4C6FFF] cursor-pointer"
+                              aria-label={`${stock.symbol} weight`}
+                            />
+
+                            <div className="w-16 sm:w-28 shrink-0 whitespace-nowrap text-right font-mono tabular-nums text-xs font-bold text-white">
+                              {(weightBps / 100).toFixed(1)}%
+                              <span className="hidden sm:inline text-[10px] font-normal text-slate-400">
+                                {" "}({weightBps} bps)
+                              </span>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  );
+                })()}
 
                 <div id="builder-actions" className="pt-2 border-t border-slate-800 scroll-mt-40">{amountControl}</div>
 
@@ -4869,7 +5078,7 @@ Agent-picked baskets of tokenized stocks, bought from your own wallet. Not finan
                               const baseName = ix.name.replace(/\s*\(Remix\)$/i, "").trim();
                               setCustomIndexName(`${clampUtf8(baseName, 56)} (Remix)`);
                               setCustomIndexTicker(clampUtf8(ix.ticker, 16));
-                              setCustomWeights(map);
+                              applyCustomWeights(map);
                               document.getElementById("index-builder")?.scrollIntoView({ behavior: "smooth", block: "start" });
                             }}
                             className="rounded-xl border border-slate-700 px-3 py-2.5 text-xs font-semibold text-cyan-200 hover:border-cyan-400/60 hover:text-white cursor-pointer"

@@ -2,7 +2,7 @@ import { LiveTokenizedStock } from "./tokenizedStocks";
 import { appendBuilderCodeToCalldata, toErc8021DataSuffix } from "./builderCode";
 import { INDEX_REGISTRY_ABI } from "./contracts/StockMaxxIndexRegistryABI";
 import { encodeFunctionData, keccak256, toHex } from "viem";
-import { THEMES, parseMandate } from "./mandate";
+import { THEMES, parseMandate, parseMandateSteps } from "./mandate";
 import { capWeightsBps, roundWeightsBps } from "./weights";
 import { usMarketStatus } from "./marketHours";
 import { SEC_CIK, type SecFundamentals } from "./secFundamentals";
@@ -157,6 +157,8 @@ export function scoresToWeightsBps(scores: number[]): number[] {
 export function runAutonomousStockAgent(params: {
   stocks: LiveTokenizedStock[];
   userPrompt: string;
+  /** Optional multi-turn mandate steps (`[initial, followUp1, ...]`); when > 1, merged incrementally. */
+  promptSteps?: string[];
   riskProfile: "Conservative" | "Balanced" | "Aggressive";
   capitalUsd: number;
   builderCode: string;
@@ -168,8 +170,8 @@ export function runAutonomousStockAgent(params: {
   /** live volatility and drawdown from each Chainlink feed (optional, server-computed) */
   risk?: Record<string, RiskStats | null>;
 }): AgentAnalysisReport {
-  const { stocks, userPrompt, capitalUsd, builderCode, currentWeights = {}, fundamentals = {}, unsupportedLive = {}, risk = {} } = params;
-  const mandate = parseMandate(userPrompt);
+  const { stocks, userPrompt, promptSteps, capitalUsd, builderCode, currentWeights = {}, fundamentals = {}, unsupportedLive = {}, risk = {} } = params;
+  const mandate = promptSteps && promptSteps.length > 0 ? parseMandateSteps(promptSteps) : parseMandate(userPrompt);
   // Words in the request ("safe", "aggressive") refine the selected profile only when it was left on Balanced
   const riskProfile = params.riskProfile === "Balanced" && mandate.riskHint ? mandate.riskHint : params.riskProfile;
   const interpretation = mandate.notes.filter((n) => !n.startsWith("Risk read"));

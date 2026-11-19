@@ -388,8 +388,9 @@ html[data-theme="light"] .text-slate-300 {
   color: #334155 !important;
 }
 html[data-theme="light"] .text-slate-400,
+html[data-theme="light"] .text-slate-400\/90,
 html[data-theme="light"] .text-slate-500 {
-  color: #475569 !important;
+  color: #3b4a60 !important;
 }
 
 html[data-theme="light"] .text-emerald-100,
@@ -451,7 +452,7 @@ html[data-theme="light"] .bg-\[\#4C6FFF\] img[src$="/logos/brands/x.svg"] {
 }
 
 html[data-theme="light"] svg text {
-  fill: #475569 !important;
+  fill: #334155 !important;
 }
 
 html[data-theme="light"] ::-webkit-scrollbar-track {

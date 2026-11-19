@@ -12,14 +12,14 @@ const cleanup = () => {
   rmSync(dirA, { recursive: true, force: true });
   rmSync(dirB, { recursive: true, force: true });
 };
-let parseMandate, capWeightsBps, roundWeightsBps;
+let parseMandate, parseMandateSteps, capWeightsBps, roundWeightsBps;
 try {
   const js = ts.transpileModule(readFileSync("src/lib/mandate.ts", "utf8"), {
     compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
   }).outputText;
   const file = join(dirA, "mandate.mjs");
   writeFileSync(file, js);
-  ({ parseMandate } = await import(pathToFileURL(file).href));
+  ({ parseMandate, parseMandateSteps } = await import(pathToFileURL(file).href));
   const wjs = ts.transpileModule(readFileSync("src/lib/weights.ts", "utf8"), {
     compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
   }).outputText;
@@ -276,6 +276,23 @@ m = parseMandate("no safe stocks, buy aggressive AI");
 ok(
   m.riskHint === "Aggressive" && m.themes.includes("ai"),
   `negated conservative term does not override aggressive hint -> risk=${m.riskHint}`,
+);
+
+// Stage 3 follow-up mandate merging
+m = parseMandateSteps(["AI and cloud, 4 stocks, keep 20% in cash", "no Tesla, max 25% per stock"]);
+ok(
+  m.themes.includes("ai") && m.themes.includes("cloud") && m.count === 4 && m.cashPct === 20 && m.maxWeightPct === 25 && m.exclude.includes("TSLAc"),
+  `follow-up preserves themes/count/cash and adds cap+exclude -> ${JSON.stringify({ themes: m.themes, c: m.count, cash: m.cashPct, max: m.maxWeightPct, excl: m.exclude })}`,
+);
+m = parseMandateSteps(["60% Apple 40% Microsoft, no Tesla", "equal weight, include Tesla, 0% cash", "remove cap"]);
+ok(
+  m.equalWeight && !Object.keys(m.weightsPct).length && m.include.includes("TSLAc") && !m.exclude.includes("TSLAc") && m.cashPct === undefined && m.maxWeightPct === undefined,
+  `follow-up equal weight resets custom weights, restores TSLA, clears cash/cap -> ${JSON.stringify({ eq: m.equalWeight, w: m.weightsPct, incl: m.include, excl: m.exclude })}`,
+);
+m = parseMandateSteps(["AI and Netflix, 3 stocks, max 30% per stock", "no cap, keep 15% in usdc, prefer below nav"]);
+ok(
+  m.maxWeightPct === undefined && m.cashPct === 15 && m.prefersDiscount && m.unavailable.some((u) => u.token === "NFLXc") && m.count === 3,
+  `follow-up removes cap cleanly while keeping unavailable & adding cash+discount -> ${JSON.stringify({ max: m.maxWeightPct, cash: m.cashPct, disc: m.prefersDiscount })}`,
 );
 
 console.log(fail ?`\n❌ ${fail} check(s) failed` : "\n✅ All mandate checks passed");

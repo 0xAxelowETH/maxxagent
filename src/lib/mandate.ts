@@ -214,7 +214,6 @@ function explicitWeights(text: string): Record<string, number> {
 
 export function parseMandate(input: string): ParsedMandate {
   const text = ` ${(input || "").toLowerCase().replace(/\s+/g, " ")} `;
-  const notes: string[] = [];
 
   // 1) Exclusions: "no tesla", "without crypto", "except NVDA and META", "tanpa tesla dan meta", "no tesla, no meta"
   const exclude = new Set<string>();
@@ -385,30 +384,7 @@ export function parseMandate(input: string): ParsedMandate {
   const prefersProfitable = has(positive, ["profitable", "profitability", "profit", "profits", "earnings", "money-making", "untung", "laba", "menguntungkan"]);
   const prefersGrowth = has(positive, ["growth", "growing", "fast-growing", "fast growing", "high growth", "high-growth", "revenue growth", "tumbuh", "bertumbuh", "pertumbuhan"]);
 
-  // 5) Explain
-  for (const u of unavailable)
-    notes.push(
-      u.sector
-        ? `None of the 10 stocks MAXXAGENT supports is in ${u.name}, so it was left out.`
-        : `${u.name}${u.token ? ` (${u.token})` : ""} is not one of the 10 stocks MAXXAGENT supports${u.closest ? `: using the closest supported, ${u.closest}` : ", so it was left out"}.`
-    );
-  if (include.length) notes.push(`You named ${include.join(", ")}: always included.`);
-  if (themes.length) notes.push(`Themes: ${themes.map((t) => THEMES.find((x) => x.id === t)!.label).join(", ")}${only ? " (only these)" : ""}.`);
-  if (exclude.size) notes.push(`Left out: ${[...exclude].join(", ")} (from "${clauses.join('", "')}").`);
-  if (count) notes.push(`${count} stock${count > 1 ? "s" : ""} requested.`);
-  if (equalWeight) notes.push("Equal weights.");
-  if (riskHint) notes.push(`Risk read from your words: ${riskHint.toLowerCase()}.`);
-  if (prefersDiscount) notes.push("Prefers stocks trading below their NAV.");
-  if (prefersDividends) notes.push("Prefers stocks with reinvested dividends.");
-  if (prefersLiquidity) notes.push("Prefers the deepest liquidity (lower swap cost).");
-  if (prefersProfitable) notes.push("Only companies with a profit in their last annual report (SEC 10-K).");
-  if (prefersGrowth) notes.push("Prefers fast revenue growth (SEC 10-K, last fiscal year).");
-  if (maxWeightPct) notes.push(`At most ${maxWeightPct}% of your money in any one stock.`);
-  if (cashPct) notes.push(`Keep ${cashPct}% in USDC.`);
-  if (Object.keys(weightsPct).length)
-    notes.push(`Weights you set: ${Object.entries(weightsPct).map(([s, w]) => `${s} ${w}%`).join(", ")}.`);
-
-  return {
+  const core: Omit<ParsedMandate, "notes"> = {
     themes,
     include,
     exclude: [...exclude],
@@ -425,6 +401,142 @@ export function parseMandate(input: string): ParsedMandate {
     cashPct,
     weightsPct,
     unavailable,
-    notes,
   };
+  return {
+    ...core,
+    notes: buildMandateNotes(core, clauses.join('", "')),
+  };
+}
+
+function buildMandateNotes(m: Omit<ParsedMandate, "notes">, excludedClauses?: string): string[] {
+  const notes: string[] = [];
+  for (const u of m.unavailable)
+    notes.push(
+      u.sector
+        ? `None of the 10 stocks MAXXAGENT supports is in ${u.name}, so it was left out.`
+        : `${u.name}${u.token ? ` (${u.token})` : ""} is not one of the 10 stocks MAXXAGENT supports${u.closest ? `: using the closest supported, ${u.closest}` : ", so it was left out"}.`
+    );
+  if (m.include.length) notes.push(`You named ${m.include.join(", ")}: always included.`);
+  if (m.themes.length)
+    notes.push(`Themes: ${m.themes.map((t) => THEMES.find((x) => x.id === t)!.label).join(", ")}${m.only ? " (only these)" : ""}.`);
+  if (m.exclude.length)
+    notes.push(`Left out: ${m.exclude.join(", ")}${excludedClauses ? ` (from "${excludedClauses}")` : ""}.`);
+  if (m.count) notes.push(`${m.count} stock${m.count > 1 ? "s" : ""} requested.`);
+  if (m.equalWeight) notes.push("Equal weights.");
+  if (m.riskHint) notes.push(`Risk read from your words: ${m.riskHint.toLowerCase()}.`);
+  if (m.prefersDiscount) notes.push("Prefers stocks trading below their NAV.");
+  if (m.prefersDividends) notes.push("Prefers stocks with reinvested dividends.");
+  if (m.prefersLiquidity) notes.push("Prefers the deepest liquidity (lower swap cost).");
+  if (m.prefersProfitable) notes.push("Only companies with a profit in their last annual report (SEC 10-K).");
+  if (m.prefersGrowth) notes.push("Prefers fast revenue growth (SEC 10-K, last fiscal year).");
+  if (m.maxWeightPct) notes.push(`At most ${m.maxWeightPct}% of your money in any one stock.`);
+  if (m.cashPct) notes.push(`Keep ${m.cashPct}% in USDC.`);
+  if (Object.keys(m.weightsPct).length)
+    notes.push(`Weights you set: ${Object.entries(m.weightsPct).map(([s, w]) => `${s} ${w}%`).join(", ")}.`);
+  return notes;
+}
+
+/**
+ * Merges a conversational follow-up instruction ("no Tesla", "max 25% per stock", "equal weight", "0% cash")
+ * into a previously parsed mandate without losing earlier selections, exclusions, or limits.
+ */
+export function applyMandateFollowUp(base: ParsedMandate, followUpInput: string): ParsedMandate {
+  const trimmed = (followUpInput || "").trim();
+  if (!trimmed) return base;
+  const follow = parseMandate(trimmed);
+  const raw = trimmed.toLowerCase();
+
+  const clearCap =
+    /\b(?:no|remove|clear|without|drop)\s+(?:the\s+)?(?:per[- ]stock\s+|weight\s+|single[- ]stock\s+)?(?:cap|limit|max(?:imum)?)\b|\b(?:tanpa|hapus)\s+(?:batas|limit)\b/.test(raw);
+  const clearCash =
+    /\b(?:0\s*%|zero|no|remove|clear|without|drop)\s+(?:in\s+|as\s+)?(?:cash|usdc|reserve|stablecoins?)\b|\bfully invested\b|\binvest (?:all|100%)\b|\b(?:tanpa|hapus)\s+(?:kas|cash|usdc)\b/.test(raw);
+  const clearEqual = /\b(?:score[- ]weighted|by score|not equal|unequal|unequal weight)\b/.test(raw);
+  const broadenScope = /\b(?:all themes|all stocks|any sector|broaden|remove only)\b/.test(raw);
+
+  const excludeSet = new Set(base.exclude);
+  const includeSet = new Set(base.include);
+  const weightsPct: Record<string, number> = { ...base.weightsPct };
+  const followExcludeSet = new Set(follow.exclude);
+
+  for (const sym of follow.exclude) {
+    excludeSet.add(sym);
+    includeSet.delete(sym);
+    delete weightsPct[sym];
+  }
+  for (const sym of follow.include) {
+    if (!followExcludeSet.has(sym)) {
+      excludeSet.delete(sym);
+      includeSet.add(sym);
+    }
+  }
+
+  let themesSet = new Set(base.themes);
+  if (follow.only && (follow.themes.length > 0 || follow.include.length > 0)) {
+    themesSet = new Set(follow.themes);
+  } else {
+    for (const th of follow.themes) themesSet.add(th);
+  }
+  // Drop any theme whose every constituent stock is currently excluded
+  for (const thId of [...themesSet]) {
+    const def = THEMES.find((x) => x.id === thId);
+    if (def && def.symbols.every((s) => excludeSet.has(s))) {
+      themesSet.delete(thId);
+    }
+  }
+  const themes = THEMES.map((t) => t.id).filter((id) => themesSet.has(id));
+  const only = broadenScope ? false : follow.only || (base.only && !(follow.themes.length > 0 && !follow.only));
+
+  let equalWeight = base.equalWeight;
+  if (follow.equalWeight) {
+    for (const k of Object.keys(weightsPct)) delete weightsPct[k];
+    equalWeight = true;
+  } else if (Object.keys(follow.weightsPct).length > 0) {
+    for (const [sym, w] of Object.entries(follow.weightsPct)) {
+      if (!excludeSet.has(sym)) weightsPct[sym] = w;
+    }
+    equalWeight = false;
+  } else if (clearEqual) {
+    equalWeight = false;
+  }
+
+  const unavailableMap = new Map<string, ParsedMandate["unavailable"][number]>();
+  for (const u of [...base.unavailable, ...follow.unavailable]) {
+    unavailableMap.set(u.name, u);
+  }
+
+  const mergedCore: Omit<ParsedMandate, "notes"> = {
+    themes,
+    include: [...includeSet],
+    exclude: [...excludeSet],
+    only,
+    count: follow.count ?? base.count,
+    equalWeight,
+    riskHint: follow.riskHint ?? base.riskHint,
+    prefersDiscount: base.prefersDiscount || follow.prefersDiscount,
+    prefersDividends: base.prefersDividends || follow.prefersDividends,
+    prefersLiquidity: base.prefersLiquidity || follow.prefersLiquidity,
+    prefersProfitable: base.prefersProfitable || follow.prefersProfitable,
+    prefersGrowth: base.prefersGrowth || follow.prefersGrowth,
+    maxWeightPct: clearCap ? undefined : (follow.maxWeightPct ?? base.maxWeightPct),
+    cashPct: clearCash ? undefined : (follow.cashPct ?? base.cashPct),
+    weightsPct,
+    unavailable: [...unavailableMap.values()],
+  };
+  return {
+    ...mergedCore,
+    notes: buildMandateNotes(mergedCore),
+  };
+}
+
+/**
+ * Evaluates a chain of one initial prompt plus zero or more follow-up refinements.
+ */
+export function parseMandateSteps(steps: string[]): ParsedMandate {
+  const cleaned = steps.map((s) => (s || "").trim()).filter(Boolean);
+  if (cleaned.length === 0) return parseMandate("");
+  let current = parseMandate(cleaned[0]);
+  for (let i = 1; i < cleaned.length; i++) {
+    current = applyMandateFollowUp(current, cleaned[i]);
+  }
+  return current;
 }

@@ -5,7 +5,7 @@ import { GET as getStocks } from "../stocks/route";
 import { getSecFundamentals, secFundamentalsPending } from "@/lib/secFundamentals";
 import { getRiskStats, riskStatsPending } from "@/lib/riskStats";
 import { getUnsupportedLive } from "@/lib/unsupportedStocks";
-import { parseMandate } from "@/lib/mandate";
+import { parseMandateSteps } from "@/lib/mandate";
 
 /**
  * Runs the rule-based stock agent over LIVE market data only.
@@ -83,8 +83,15 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    const userPrompt = String(body.userPrompt ?? "AI and cloud compute leaders, prefer stocks trading below NAV")
+    const promptSteps = Array.isArray(body.promptSteps)
+      ? body.promptSteps
+          .map((s) => String(s ?? "").trim().slice(0, MAX_PROMPT_CHARS))
+          .filter(Boolean)
+          .slice(-6)
+      : undefined;
+    const rawUserPrompt = String(body.userPrompt ?? "AI and cloud compute leaders, prefer stocks trading below NAV")
       .slice(0, MAX_PROMPT_CHARS);
+    const userPrompt = promptSteps && promptSteps.length > 0 ? promptSteps.join(" · ").slice(0, MAX_PROMPT_CHARS) : rawUserPrompt;
     const riskProfile = RISK.includes(body.riskProfile as (typeof RISK)[number])
       ? (body.riskProfile as (typeof RISK)[number])
       : "Balanced";
@@ -112,7 +119,7 @@ export async function POST(request: NextRequest) {
 
     // Company figures from SEC filings and live risk from each Chainlink feed (both cached, left out if slow);
     // live Base liquidity of any unsupported Coinbase stock the request named (explains why it's left out)
-    const asked = parseMandate(userPrompt).unavailable.flatMap((u) => (u.token ? [u.token] : []));
+    const asked = parseMandateSteps(promptSteps && promptSteps.length > 0 ? promptSteps : [userPrompt]).unavailable.flatMap((u) => (u.token ? [u.token] : []));
     const [fundamentals, risk, unsupportedLive] = await Promise.all([
       getSecFundamentals(stocksToAnalyze.map((s) => s.symbol)),
       getRiskStats(stocksToAnalyze.map((s) => ({ symbol: s.symbol, chainlinkFeed: s.chainlinkFeed }))),
@@ -127,6 +134,7 @@ export async function POST(request: NextRequest) {
       unsupportedLive,
       stocks: stocksToAnalyze,
       userPrompt,
+      promptSteps,
       riskProfile,
       capitalUsd,
       builderCode: BUILDER_CODE,
