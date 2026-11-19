@@ -1,7 +1,8 @@
 "use client";
 
 import { MarketStatus } from "./MarketStatus";
-import { splitNavWeekendGaps } from "@/lib/marketHours";
+import { splitNavWeekendGaps, usMarketStatus } from "@/lib/marketHours";
+import { summarizeSeries, toPctSeries } from "@/lib/chartMetrics";
 import React, { useEffect, useMemo, useState } from "react";
 import {
   Activity,
@@ -205,14 +206,6 @@ function interpAt(pts: [number, number][], t: number): number | null {
   return pts[pts.length - 1][1];
 }
 
-function toPctSeries(pts: [number, number][]): [number, number][] {
-  if (pts.length < 2) return [];
-  const sorted = [...pts].sort((a, b) => a[0] - b[0]);
-  const base = sorted[0][1];
-  if (!(base > 0)) return [];
-  return sorted.map(([t, v]) => [t, ((v - base) / base) * 100]);
-}
-
 export function InteractiveB20TradingChart({
   stocks,
   selectedSymbol,
@@ -226,6 +219,8 @@ export function InteractiveB20TradingChart({
   ethBalance,
   ethUsd,
   holdingTokens,
+  avgCostUsd = null,
+  tradeMarkers = [],
   walletConnected,
   pending,
   pendingLabel,
@@ -245,11 +240,16 @@ export function InteractiveB20TradingChart({
   ethUsd: number | null;
   /** Wallet balance of the selected stock, in stock tokens */
   holdingTokens: number;
+  avgCostUsd?: number | null;
+  tradeMarkers?: { time: number; side: "buy" | "sell"; usd: number }[];
   walletConnected: boolean;
   pending: boolean;
   pendingLabel: string;
 }) {
   const [timeframe, setTimeframe] = useState<HistoryTf>("7D");
+  const [unitMode, setUnitMode] = useState<"usd" | "pct">("usd");
+  const [showNav, setShowNav] = useState<boolean>(true);
+  const [showDex, setShowDex] = useState<boolean>(true);
   const [hoverT, setHoverT] = useState<number | null>(null);
   const [hoverSpread, setHoverSpread] = useState<{ t: number; pct: number } | null>(null);
   const [peerSymbol, setPeerSymbol] = useState<string>("");
@@ -329,12 +329,17 @@ export function InteractiveB20TradingChart({
   const dexRaw = useMemo(() => [...(history?.dex ?? [])].sort((a, b) => a[0] - b[0]), [history]);
   const peerNavRaw = useMemo(() => [...(peerHistory?.nav ?? [])].sort((a, b) => a[0] - b[0]), [peerHistory]);
 
-  const nav = useMemo(() => (peerStock ? toPctSeries(navRaw) : navRaw), [peerStock, navRaw]);
+  const isPctMode = Boolean(peerStock) || unitMode === "pct";
+  const nav = useMemo(() => (isPctMode ? toPctSeries(navRaw) : navRaw), [isPctMode, navRaw]);
   const peerSeries = useMemo(() => (peerStock ? toPctSeries(peerNavRaw) : []), [peerStock, peerNavRaw]);
-  const dex = useMemo(() => (peerStock ? [] : dexRaw), [peerStock, dexRaw]);
+  const dex = useMemo(() => (peerStock ? [] : isPctMode ? toPctSeries(dexRaw) : dexRaw), [peerStock, isPctMode, dexRaw]);
 
-  const all = [...nav, ...dex, ...peerSeries];
+  const visibleNav = useMemo(() => (showNav || !showDex ? nav : []), [showNav, showDex, nav]);
+  const visibleDex = useMemo(() => (showDex ? dex : []), [showDex, dex]);
+  const all = [...visibleNav, ...visibleDex, ...peerSeries];
   const hasData = all.length >= 2;
+  const periodSummary = useMemo(() => summarizeSeries(navRaw.length >= 2 ? navRaw : dexRaw), [navRaw, dexRaw]);
+  const isMarketClosed = usMarketStatus().state !== "open";
 
   const svgWidth = 760;
   const svgHeight = 312;
@@ -349,22 +354,24 @@ export function InteractiveB20TradingChart({
   const tMax = hasData ? Math.max(...all.map((p) => p[0])) : 1;
   const rawMin = hasData ? Math.min(...all.map((p) => p[1])) : 0;
   const rawMax = hasData ? Math.max(...all.map((p) => p[1])) : 1;
-  const span = Math.max(peerStock ? 0.5 : 0.01, rawMax - rawMin);
-  const vMin = peerStock ? rawMin - span * 0.1 : rawMin * 0.998;
-  const vMax = peerStock ? rawMax + span * 0.1 : rawMax * 1.002;
+  const span = Math.max(isPctMode ? 0.5 : 0.01, rawMax - rawMin);
+  const vMin = isPctMode ? rawMin - span * 0.1 : rawMin * 0.998;
+  const vMax = isPctMode ? rawMax + span * 0.1 : rawMax * 1.002;
   const x = (t: number) => padL + ((t - tMin) / Math.max(1, tMax - tMin)) * plotW;
   const y = (v: number) => padT + plotH - ((v - vMin) / Math.max(1e-9, vMax - vMin)) * plotH;
   const toPoints = (s: [number, number][]) => s.map(([t, v]) => `${x(t).toFixed(1)},${y(v).toFixed(1)}`).join(" ");
 
-  const dexPointsStr = toPoints(dex);
+  const dexPointsStr = toPoints(visibleDex);
   const peerPointsStr = toPoints(peerSeries);
 
   const cursorT = hoverT ?? tMax;
-  const navAt = nearest(nav, cursorT);
-  const dexAt = nearest(dex, cursorT);
+  const navAt = nearest(visibleNav, cursorT);
+  const dexAt = nearest(visibleDex, cursorT);
+  const navUsdAt = nearest(navRaw, cursorT);
+  const dexUsdAt = nearest(dexRaw, cursorT);
   const peerAt = peerStock ? nearest(peerSeries, cursorT) : null;
-  const displayedNav = hoverT !== null ? (navAt ? navAt[1] : liveActive?.navPrice ?? 0) : liveActive?.navPrice ?? (navAt ? navAt[1] : 0);
-  const displayedDex = hoverT !== null ? (dexAt ? dexAt[1] : liveActive?.dexPrice24_7 ?? 0) : liveActive?.dexPrice24_7 ?? (dexAt ? dexAt[1] : 0);
+  const displayedNav = hoverT !== null ? (navUsdAt ? navUsdAt[1] : liveActive?.navPrice ?? 0) : liveActive?.navPrice ?? (navUsdAt ? navUsdAt[1] : 0);
+  const displayedDex = hoverT !== null ? (dexUsdAt ? dexUsdAt[1] : liveActive?.dexPrice24_7 ?? 0) : liveActive?.dexPrice24_7 ?? (dexUsdAt ? dexUsdAt[1] : 0);
   const gapAtCursor =
     hoverT === null && liveActive && typeof liveActive.weekendGapPct === "number"
       ? liveActive.weekendGapPct
@@ -375,6 +382,11 @@ export function InteractiveB20TradingChart({
   const uiMultiplier = liveActive ? liveActive.uiMultiplier : activeStock.defaultMultiplier;
   const liquidityUsd = liveActive?.dexLiquidityUsd;
   const volume24hUsd = liveActive?.dexVolume24hUsd;
+  const visibleTrades = useMemo(
+    () => (peerStock || !hasData ? [] : tradeMarkers.filter((m) => m.time >= tMin && m.time <= tMax).slice(0, 16)),
+    [peerStock, hasData, tradeMarkers, tMin, tMax]
+  );
+  const spotVal = !peerStock && hasData ? (visibleNav.length ? visibleNav[visibleNav.length - 1][1] : visibleDex.length ? visibleDex[visibleDex.length - 1][1] : null) : null;
 
   // Historical DEX vs NAV spread histogram across overlapping window
   const spreadBars = useMemo(() => {
@@ -395,10 +407,10 @@ export function InteractiveB20TradingChart({
 
   const navSplit = useMemo(
     () =>
-      !peerStock && timeframe !== "24H" && nav.length >= 2
-        ? splitNavWeekendGaps(nav)
-        : { segments: nav.length >= 2 ? [nav] : [], gaps: [] },
-    [peerStock, timeframe, nav]
+      !peerStock && timeframe !== "24H" && visibleNav.length >= 2
+        ? splitNavWeekendGaps(visibleNav)
+        : { segments: visibleNav.length >= 2 ? [visibleNav] : [], gaps: [] },
+    [peerStock, timeframe, visibleNav]
   );
 
   const spreadAmp = spreadBars.length > 0 ? Math.max(0.5, ...spreadBars.map((b) => Math.abs(b.pct))) : 1;
@@ -430,7 +442,7 @@ export function InteractiveB20TradingChart({
       minute: timeframe === "24H" ? "2-digit" : undefined,
     });
 
-  const fmtAxis = (v: number) => (peerStock ? `${v >= 0 ? "+" : ""}${v.toFixed(1)}%` : `$${v >= 1000 ? v.toFixed(0) : v.toFixed(2)}`);
+  const fmtAxis = (v: number) => (isPctMode ? `${v >= 0 ? "+" : ""}${v.toFixed(1)}%` : `$${v >= 1000 ? v.toFixed(0) : v.toFixed(2)}`);
   const cursorLeftPct = hasData ? (x(cursorT) / svgWidth) * 100 : 50;
   const gaugePosPct = 50 + Math.max(-1, Math.min(1, gapAtCursor / 2)) * 50;
 
@@ -485,6 +497,25 @@ export function InteractiveB20TradingChart({
           </label>
 
           {!peerStock && (
+            <div className="inline-flex rounded-xl border border-slate-800 bg-[#040814] p-0.5">
+              {(["usd", "pct"] as const).map((m) => (
+                <button
+                  key={m}
+                  type="button"
+                  onClick={() => setUnitMode(m)}
+                  aria-pressed={unitMode === m}
+                  title={m === "usd" ? "Show price in USD" : "Show % return across selected timeframe"}
+                  className={`min-h-[30px] rounded-lg px-2 py-1 font-mono text-[11px] font-bold transition cursor-pointer ${
+                    unitMode === m ? "bg-slate-700 text-white" : "text-slate-400 hover:text-white"
+                  }`}
+                >
+                  {m === "usd" ? "$" : "%"}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {!peerStock && (
             <button
               type="button"
               onClick={() => setShowPins((p) => !p)}
@@ -534,7 +565,7 @@ export function InteractiveB20TradingChart({
                   <h3 className="text-lg font-extrabold text-white">{activeStock.companyName}</h3>
                   <span
                     className="rounded-md px-2 py-0.5 font-mono text-xs font-bold text-white"
-                    style={{ backgroundColor: activeStock.color }}
+                    style={{ backgroundColor: activeStock.color, textShadow: "0 1px 2px rgba(0, 0, 0, 0.55)" }}
                   >
                     {activeStock.symbol}
                   </span>
@@ -591,6 +622,48 @@ export function InteractiveB20TradingChart({
             )}
           </div>
 
+          {!peerStock && hasData && (periodSummary || (avgCostUsd !== null && avgCostUsd > 0) || (isMarketClosed && Math.abs(gapAtCursor) >= 0.3)) && (
+            <div className="mt-2.5 flex flex-wrap items-center gap-2 text-[10px] font-mono tabular-nums">
+              {periodSummary && (
+                <>
+                  <span className="rounded-lg border border-slate-800 bg-[#050a18] px-2 py-0.5 text-slate-300">
+                    {timeframe} High <strong className="text-white">${periodSummary.high.toFixed(2)}</strong>
+                  </span>
+                  <span className="rounded-lg border border-slate-800 bg-[#050a18] px-2 py-0.5 text-slate-300">
+                    Low <strong className="text-white">${periodSummary.low.toFixed(2)}</strong>
+                  </span>
+                  <span
+                    className={`rounded-lg border px-2 py-0.5 font-bold ${
+                      periodSummary.returnPct >= 0
+                        ? "border-emerald-500/35 bg-emerald-500/10 text-emerald-300"
+                        : "border-rose-500/35 bg-rose-500/10 text-rose-300"
+                    }`}
+                  >
+                    {timeframe} {periodSummary.returnPct >= 0 ? "+" : ""}{periodSummary.returnPct.toFixed(2)}%
+                  </span>
+                </>
+              )}
+              {avgCostUsd !== null && avgCostUsd > 0 && displayedNav > 0 && (
+                <span className="rounded-lg border border-amber-500/35 bg-amber-500/10 px-2 py-0.5 text-amber-200">
+                  Your Avg <strong>${avgCostUsd.toFixed(2)}</strong>{" "}
+                  ({displayedNav >= avgCostUsd ? "+" : ""}
+                  {(((displayedNav - avgCostUsd) / avgCostUsd) * 100).toFixed(1)}%)
+                </span>
+              )}
+              {isMarketClosed && Math.abs(gapAtCursor) >= 0.3 && (
+                <span
+                  className={`rounded-lg border px-2 py-0.5 font-semibold ${
+                    gapAtCursor < 0
+                      ? "border-emerald-500/40 bg-emerald-500/15 text-emerald-300"
+                      : "border-amber-500/40 bg-amber-500/15 text-amber-200"
+                  }`}
+                >
+                  NY closed · DEX {Math.abs(gapAtCursor).toFixed(2)}% {gapAtCursor < 0 ? "below" : "above"} last NAV
+                </span>
+              )}
+            </div>
+          )}
+
           <div className="my-3 relative select-none">
             {hasData ? (
               <>
@@ -599,6 +672,7 @@ export function InteractiveB20TradingChart({
                     viewBox={`0 0 ${svgWidth} ${svgHeight}`}
                     className="w-full h-auto overflow-visible cursor-crosshair touch-pan-y"
                     onMouseMove={(e) => scrub(e.clientX, e.currentTarget.getBoundingClientRect())}
+                    onTouchStart={(e) => e.touches[0] && scrub(e.touches[0].clientX, e.currentTarget.getBoundingClientRect())}
                     onTouchMove={(e) => e.touches[0] && scrub(e.touches[0].clientX, e.currentTarget.getBoundingClientRect())}
                     onTouchEnd={() => setHoverT(null)}
                     onTouchCancel={() => setHoverT(null)}
@@ -639,8 +713,8 @@ export function InteractiveB20TradingChart({
                       );
                     })}
 
-                    {/* Zero baseline when comparing peer % change */}
-                    {peerStock && vMin <= 0 && vMax >= 0 && (
+                    {/* Zero baseline when viewing % change */}
+                    {isPctMode && vMin <= 0 && vMax >= 0 && (
                       <line
                         x1={padL}
                         x2={svgWidth - padR}
@@ -649,6 +723,60 @@ export function InteractiveB20TradingChart({
                         stroke="rgba(148, 163, 184, 0.5)"
                         strokeDasharray="2 3"
                       />
+                    )}
+
+                    {/* Spot price horizontal guide + right-axis pill */}
+                    {spotVal !== null && spotVal >= vMin && spotVal <= vMax && (
+                      <g>
+                        <line
+                          x1={padL}
+                          x2={svgWidth - padR}
+                          y1={y(spotVal)}
+                          y2={y(spotVal)}
+                          stroke={activeStock.color}
+                          strokeOpacity="0.45"
+                          strokeDasharray="2 3"
+                        />
+                        <rect
+                          x={svgWidth - padR + 4}
+                          y={y(spotVal) - 8}
+                          width={padR - 6}
+                          height={16}
+                          rx={4}
+                          fill={activeStock.color}
+                        />
+                        <text
+                          x={svgWidth - 5}
+                          y={y(spotVal) + 3}
+                          textAnchor="end"
+                          fill="#ffffff"
+                          fontSize="9.5"
+                          fontWeight="700"
+                          fontFamily="ui-monospace, SFMono-Regular, monospace"
+                        >
+                          {fmtAxis(spotVal)}
+                        </text>
+                      </g>
+                    )}
+
+                    {/* Connected wallet average cost line (USD mode) */}
+                    {!isPctMode && avgCostUsd !== null && avgCostUsd > 0 && avgCostUsd >= vMin && avgCostUsd <= vMax && (
+                      <g>
+                        <line
+                          x1={padL}
+                          x2={svgWidth - padR}
+                          y1={y(avgCostUsd)}
+                          y2={y(avgCostUsd)}
+                          stroke="#fbbf24"
+                          strokeOpacity="0.85"
+                          strokeWidth="1.4"
+                          strokeDasharray="4 3"
+                        />
+                        <rect x={padL + 2} y={y(avgCostUsd) - 15} width={86} height={13} rx={3} fill="rgba(245, 158, 11, 0.2)" stroke="rgba(251, 191, 36, 0.55)" />
+                        <text x={padL + 6} y={y(avgCostUsd) - 6} fill="#fde68a" fontSize="8.5" fontWeight="700" fontFamily="ui-monospace, monospace">
+                          {`Avg $${avgCostUsd.toFixed(2)}`}
+                        </text>
+                      </g>
                     )}
 
                     {/* Bottom X-axis time ticks */}
@@ -701,7 +829,7 @@ export function InteractiveB20TradingChart({
                           />
                         ) : null
                       )}
-                    {dex.length >= 2 && (
+                    {visibleDex.length >= 2 && (
                       <polyline
                         fill="none"
                         stroke="#22d3ee"
@@ -775,6 +903,24 @@ export function InteractiveB20TradingChart({
                     )}
                     {dexAt && <circle cx={x(dexAt[0])} cy={y(dexAt[1])} r="4" fill="#22d3ee" stroke="#fff" strokeWidth="1.5" />}
                     {peerAt && <circle cx={x(peerAt[0])} cy={y(peerAt[1])} r="4.5" fill="#f472b6" stroke="#fff" strokeWidth="1.5" />}
+                    {visibleTrades.map((m, i) => {
+                      const baseLine = visibleNav.length >= 2 ? visibleNav : visibleDex;
+                      const vy = interpAt(baseLine, m.time);
+                      if (vy === null) return null;
+                      const cx = x(m.time);
+                      const cy = y(vy);
+                      const isBuy = m.side === "buy";
+                      return (
+                        <g key={`tr-${m.time}-${i}`}>
+                          <circle cx={cx} cy={cy} r={8} fill={isBuy ? "#10b981" : "#f43f5e"} stroke="#040814" strokeWidth={1.5}>
+                            <title>{`${isBuy ? "BUY" : "SELL"} $${m.usd.toFixed(2)} (${fmtTime(m.time)})`}</title>
+                          </circle>
+                          <text x={cx} y={cy + 3} textAnchor="middle" fill="#ffffff" fontSize="8.5" fontWeight="800" fontFamily="ui-monospace, monospace">
+                            {isBuy ? "B" : "S"}
+                          </text>
+                        </g>
+                      );
+                    })}
                   </svg>
 
                   {/* Interactive news/SEC pin dots (staggered to avoid overlaps, clamped tooltips) */}
@@ -927,21 +1073,45 @@ export function InteractiveB20TradingChart({
           </div>
 
           <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-slate-800/80 text-xs">
-            <div className="flex flex-wrap items-center gap-4">
-              <span className="inline-flex items-center gap-1.5 text-slate-300 font-medium">
-                <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: activeStock.color }} />
-                {peerStock ? `${activeStock.symbol} NAV %` : `Chainlink NAV (${nav.length} rounds, 24/5)`}
-              </span>
+            <div className="flex flex-wrap items-center gap-3">
               {peerStock ? (
-                <span className="inline-flex items-center gap-1.5 text-pink-300 font-medium">
-                  <span className="h-0.5 w-4 bg-pink-400 inline-block" />
-                  {peerStock.symbol} NAV %
-                </span>
+                <>
+                  <span className="inline-flex items-center gap-1.5 text-slate-300 font-medium">
+                    <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: activeStock.color }} />
+                    {activeStock.symbol} NAV %
+                  </span>
+                  <span className="inline-flex items-center gap-1.5 text-pink-300 font-medium">
+                    <span className="h-0.5 w-4 bg-pink-400 inline-block" />
+                    {peerStock.symbol} NAV %
+                  </span>
+                </>
               ) : (
-                <span className="inline-flex items-center gap-1.5 text-cyan-300 font-medium">
-                  <span className="h-0.5 w-4 bg-cyan-400 inline-block" />
-                  DEX price ({dex.length} candles, 24/7)
-                </span>
+                <>
+                  <button
+                    type="button"
+                    onClick={() => setShowNav((v) => (!v ? true : showDex ? false : true))}
+                    aria-pressed={showNav}
+                    className={`inline-flex items-center gap-1.5 rounded-md px-1.5 py-0.5 font-medium transition cursor-pointer ${
+                      showNav ? "text-slate-200 hover:bg-slate-800/60" : "text-slate-500 opacity-60 hover:opacity-90"
+                    }`}
+                    title="Toggle Chainlink NAV line"
+                  >
+                    <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: activeStock.color }} />
+                    Chainlink NAV ({navRaw.length} rounds, 24/5)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowDex((v) => (!v ? true : showNav ? false : true))}
+                    aria-pressed={showDex}
+                    className={`inline-flex items-center gap-1.5 rounded-md px-1.5 py-0.5 font-medium transition cursor-pointer ${
+                      showDex ? "text-cyan-300 hover:bg-slate-800/60" : "text-slate-500 opacity-60 hover:opacity-90"
+                    }`}
+                    title="Toggle Base DEX line"
+                  >
+                    <span className="h-0.5 w-4 bg-cyan-400 inline-block" />
+                    DEX price ({dexRaw.length} candles, 24/7)
+                  </button>
+                </>
               )}
               {!peerStock && navSplit.gaps.length > 0 && (
                 <span className="inline-flex items-center gap-1.5 text-slate-400 font-medium">

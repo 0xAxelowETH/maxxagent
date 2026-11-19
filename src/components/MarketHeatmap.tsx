@@ -94,7 +94,7 @@ function heat(pct: number, full = 3): string {
   const t = Math.min(Math.abs(pct) / full, 1);
   const mix = (a: number[], b: number[]) => `rgb(${a.map((v, k) => Math.round(v + (b[k] - v) * t)).join(",")})`;
   if (Math.abs(pct) < 0.05) return "rgb(30,41,59)";
-  return pct < 0 ? mix([60, 22, 34], [225, 29, 72]) : mix([18, 52, 40], [16, 185, 129]);
+  return pct < 0 ? mix([60, 22, 34], [225, 29, 72]) : mix([18, 52, 40], [5, 145, 102]);
 }
 
 const usdShort = (n: number) =>
@@ -239,7 +239,7 @@ export function MarketHeatmap({ stocks, updatedAt, links = true }: { stocks: Hea
               className={`group overflow-hidden absolute flex flex-col items-center justify-center border border-[#02050c] text-center text-white transition-[filter,transform] duration-300 hover:brightness-125 hover:z-10 ${
                 m <= 52 ? "gap-0.5 px-1 py-0.5" : "gap-1 px-1.5"
               }`}
-              style={{ left: r.x, top: r.y, width: r.w, height: r.h, background: heat(v, colorBy === "gap" ? 1.5 : 3), transition: "left .35s, top .35s, width .35s, height .35s" }}
+              style={{ left: r.x, top: r.y, width: r.w, height: r.h, background: heat(v, colorBy === "gap" ? 1.5 : 3), textShadow: "0 1px 2px rgba(0, 0, 0, 0.45)", transition: "left .35s, top .35s, width .35s, height .35s" }}
             >
               {big && (
                 <img

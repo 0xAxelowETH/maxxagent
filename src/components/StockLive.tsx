@@ -5,6 +5,7 @@ import { MarketStatus } from "./MarketStatus";
 import { BASE_TOKENIZED_STOCKS } from "@/lib/tokenizedStocks";
 import { earningsLabel, recentEarnings } from "@/lib/earnings";
 import { splitNavWeekendGaps, usMarketStatus } from "@/lib/marketHours";
+import { summarizeSeries } from "@/lib/chartMetrics";
 
 interface Live {
   navPrice: number;
@@ -159,6 +160,8 @@ function Chart({
   onTfChange: (next: "24H" | "7D" | "30D") => void;
 }) {
   const [hoverT, setHoverT] = useState<number | null>(null);
+  const [showNav, setShowNav] = useState(true);
+  const [showDex, setShowDex] = useState(true);
   const W = 600;
   const H = 190;
   const nearest = (pts: Point[], t: number): Point | null =>
@@ -186,7 +189,9 @@ function Chart({
         <div className="h-[190px] animate-pulse rounded-xl bg-slate-800/40" />
       </div>
     );
-  const all = [...hist.nav, ...hist.dex];
+  const visibleNav = showNav || !showDex ? hist.nav : [];
+  const visibleDex = showDex ? hist.dex : [];
+  const all = [...visibleNav, ...visibleDex];
   if (all.length < 2)
     return (
       <div className="rounded-2xl border border-slate-800 bg-[#0b1120] p-3 space-y-2">
@@ -239,13 +244,15 @@ function Chart({
     setHoverT(t0 + ratio * (t1 - t0));
   };
   const navSplit =
-    tf !== "24H" && hist.nav.length > 1
-      ? splitNavWeekendGaps(hist.nav)
-      : { segments: hist.nav.length > 1 ? [hist.nav] : [], gaps: [] };
+    tf !== "24H" && visibleNav.length > 1
+      ? splitNavWeekendGaps(visibleNav)
+      : { segments: visibleNav.length > 1 ? [visibleNav] : [], gaps: [] };
+  const summary = summarizeSeries(hist.nav.length >= 2 ? hist.nav : hist.dex);
+  const spotPrice = visibleNav.length ? visibleNav[visibleNav.length - 1][1] : visibleDex.length ? visibleDex[visibleDex.length - 1][1] : null;
   return (
-    <div className="rounded-2xl border border-slate-800 bg-[#0b1120] p-3 sm:p-4">
-      <div className="mb-2 flex flex-wrap items-center justify-between gap-2 text-[10px] text-slate-400">
-        <div className="flex items-center gap-2">
+    <div className="rounded-2xl border border-slate-800 bg-[#0b1120] p-3 sm:p-4 space-y-2">
+      <div className="flex flex-wrap items-center justify-between gap-2 text-[10px] text-slate-400">
+        <div className="flex flex-wrap items-center gap-2">
           <span className="font-semibold text-slate-200">{tfLabel}</span>
           <div className="inline-flex rounded-lg border border-slate-800 bg-[#050811] p-0.5">
             {(["24H", "7D", "30D"] as const).map((k) => (
@@ -262,6 +269,16 @@ function Chart({
               </button>
             ))}
           </div>
+          {summary && (
+            <span className="flex flex-wrap items-center gap-1.5 font-mono tabular-nums text-[10px]">
+              <span className="rounded border border-slate-800 bg-[#050811] px-1.5 py-0.5 text-slate-300">
+                H <strong className="text-white">{usd(summary.high)}</strong> · L <strong className="text-white">{usd(summary.low)}</strong>
+              </span>
+              <span className={`rounded border px-1.5 py-0.5 font-bold ${summary.returnPct >= 0 ? "border-emerald-500/35 bg-emerald-500/10 text-emerald-300" : "border-rose-500/35 bg-rose-500/10 text-rose-300"}`}>
+                {pct(summary.returnPct)}
+              </span>
+            </span>
+          )}
         </div>
         <span className="flex flex-wrap items-center gap-3 font-mono tabular-nums">
           {hoverT !== null && (
@@ -276,12 +293,22 @@ function Chart({
               {dexAt ? ` · DEX ${usd(dexAt[1])}` : ""}
             </span>
           )}
-          <span className="inline-flex items-center gap-1 font-sans">
+          <button
+            type="button"
+            onClick={() => setShowNav((v) => (!v ? true : showDex ? false : true))}
+            aria-pressed={showNav}
+            className={`inline-flex items-center gap-1 font-sans cursor-pointer ${showNav ? "text-slate-200" : "text-slate-500 opacity-60"}`}
+          >
             <span className="h-0.5 w-3" style={{ background: color }} /> Chainlink NAV
-          </span>
-          <span className="inline-flex items-center gap-1 font-sans">
+          </button>
+          <button
+            type="button"
+            onClick={() => setShowDex((v) => (!v ? true : showNav ? false : true))}
+            aria-pressed={showDex}
+            className={`inline-flex items-center gap-1 font-sans cursor-pointer ${showDex ? "text-cyan-300" : "text-slate-500 opacity-60"}`}
+          >
             <span className="h-0.5 w-3 bg-cyan-400" /> Base DEX
-          </span>
+          </button>
           {navSplit.gaps.length > 0 && (
             <span className="inline-flex items-center gap-1 font-sans text-slate-400">
               <span className="h-2.5 w-2.5 rounded-sm border border-slate-400/40 bg-slate-400/20" /> NY closed
@@ -297,6 +324,7 @@ function Chart({
               role="img"
               aria-label={`${tfLabel} price chart`}
               onMouseMove={(e) => scrubAt(e.clientX, e.currentTarget.getBoundingClientRect())}
+              onTouchStart={(e) => e.touches[0] && scrubAt(e.touches[0].clientX, e.currentTarget.getBoundingClientRect())}
               onTouchMove={(e) => e.touches[0] && scrubAt(e.touches[0].clientX, e.currentTarget.getBoundingClientRect())}
               onTouchEnd={() => setHoverT(null)}
               onTouchCancel={() => setHoverT(null)}
@@ -344,7 +372,10 @@ function Chart({
                   <circle key={`nav-pt-${idx}-${seg[0][0]}`} cx={x(seg[0][0])} cy={y(seg[0][1])} r="2.2" fill={color} />
                 ) : null
               )}
-              {hist.dex.length > 1 && <path d={path(hist.dex)} fill="none" stroke="#22d3ee" strokeWidth="1.5" strokeDasharray="4 3" vectorEffect="non-scaling-stroke" />}
+              {spotPrice !== null && (
+                <line x1={0} x2={W} y1={y(spotPrice)} y2={y(spotPrice)} stroke={color} strokeOpacity="0.35" strokeDasharray="2 3" vectorEffect="non-scaling-stroke" />
+              )}
+              {visibleDex.length > 1 && <path d={path(visibleDex)} fill="none" stroke="#22d3ee" strokeWidth="1.5" strokeDasharray="4 3" vectorEffect="non-scaling-stroke" />}
               {marks.map(({ n, t }) => (
                 <line key={`l${n.url}`} x1={x(t)} x2={x(t)} y1={0} y2={H} stroke={KIND_DOT[kindOf(n)] ?? "#94a3b8"} strokeOpacity="0.25" strokeDasharray="2 3" vectorEffect="non-scaling-stroke" />
               ))}

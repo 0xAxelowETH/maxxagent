@@ -212,33 +212,77 @@ export default function StatsPage() {
                   </section>
                 )}
                 <section className="rounded-2xl border border-slate-800 bg-[#0b1120] p-4 space-y-3">
-                  <h2 className="text-sm font-bold text-white">By day (UTC)</h2>
-                  <table className="w-full text-xs">
-                    <thead>
-                      <tr className="text-left text-[10px] uppercase tracking-wider text-slate-500 border-b border-slate-800">
-                        <th className="py-2">Date</th>
-                        <th className="py-2 text-right">Trades</th>
-                        <th className="py-2 text-right">Wallets</th>
-                        <th className="py-2 text-right">Volume</th>
-                      </tr>
-                    </thead>
-                    <tbody className="font-mono">
-                      {(() => {
-                        const dayUsd = reconcileUsdCents(
-                          data.daily.map((x) => x.volumeUsd),
-                          t.volumeUsd
-                        );
-                        return data.daily.map((d, idx) => (
-                          <tr key={d.date} className="border-b border-slate-800/60">
-                            <td className="py-2 text-slate-200">{d.date}</td>
-                            <td className="py-2 text-right text-slate-300">{d.trades}</td>
-                            <td className="py-2 text-right text-slate-300">{d.wallets}</td>
-                            <td className="py-2 text-right text-white">{usd(dayUsd[idx])}</td>
-                          </tr>
-                        ));
-                      })()}
-                    </tbody>
-                  </table>
+                  <div className="flex items-center justify-between gap-2">
+                    <h2 className="text-sm font-bold text-white">By day (UTC)</h2>
+                    <span className="text-[11px] text-slate-400">Daily volume &amp; trades</span>
+                  </div>
+                  {(() => {
+                    const dayUsd = reconcileUsdCents(
+                      data.daily.map((x) => x.volumeUsd),
+                      t.volumeUsd
+                    );
+                    const chrono = data.daily
+                      .map((d, idx) => ({ ...d, vol: dayUsd[idx] ?? d.volumeUsd }))
+                      .slice()
+                      .reverse()
+                      .slice(-14);
+                    const maxVol = Math.max(1, ...chrono.map((d) => d.vol));
+                    return (
+                      <>
+                        {chrono.length > 0 && (
+                          <div className="rounded-xl border border-slate-800/80 bg-[#050811] px-3 pt-3 pb-2">
+                            <svg
+                              viewBox={`0 0 ${Math.max(280, chrono.length * 46)} 78`}
+                              className="w-full h-20 overflow-visible"
+                              role="img"
+                              aria-label="Daily routed volume chart"
+                            >
+                              {chrono.map((d, i) => {
+                                const slot = Math.max(280, chrono.length * 46) / chrono.length;
+                                const bw = Math.min(28, slot * 0.58);
+                                const bx = i * slot + (slot - bw) / 2;
+                                const bh = Math.max(3, (d.vol / maxVol) * 44);
+                                const by = 56 - bh;
+                                return (
+                                  <g key={d.date}>
+                                    <rect x={bx} y={by} width={bw} height={bh} rx={3} fill="#38bdf8" fillOpacity="0.82">
+                                      <title>{`${d.date}: ${usd(d.vol)} · ${d.trades} trades · ${d.wallets} wallets`}</title>
+                                    </rect>
+                                    <text x={bx + bw / 2} y={by - 3} textAnchor="middle" fill="#cbd5e1" fontSize="8.5" fontFamily="ui-monospace, monospace">
+                                      {d.trades}
+                                    </text>
+                                    <text x={bx + bw / 2} y={71} textAnchor="middle" fill="#94a3b8" fontSize="8.5" fontFamily="ui-monospace, monospace">
+                                      {d.date.slice(5)}
+                                    </text>
+                                  </g>
+                                );
+                              })}
+                            </svg>
+                          </div>
+                        )}
+                        <table className="w-full text-xs">
+                          <thead>
+                            <tr className="text-left text-[10px] uppercase tracking-wider text-slate-500 border-b border-slate-800">
+                              <th className="py-2">Date</th>
+                              <th className="py-2 text-right">Trades</th>
+                              <th className="py-2 text-right">Wallets</th>
+                              <th className="py-2 text-right">Volume</th>
+                            </tr>
+                          </thead>
+                          <tbody className="font-mono">
+                            {data.daily.map((d, idx) => (
+                              <tr key={d.date} className="border-b border-slate-800/60">
+                                <td className="py-2 text-slate-200">{d.date}</td>
+                                <td className="py-2 text-right text-slate-300">{d.trades}</td>
+                                <td className="py-2 text-right text-slate-300">{d.wallets}</td>
+                                <td className="py-2 text-right text-white">{usd(dayUsd[idx])}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </>
+                    );
+                  })()}
                 </section>
 
                 <section className="rounded-2xl border border-slate-800 bg-[#0b1120] p-4 space-y-3">

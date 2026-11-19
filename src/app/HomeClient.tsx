@@ -2242,7 +2242,7 @@ export default function StockMaxxingDashboard() {
           </div>
         </nav>
         {/* Phones: the bottom bar holds the tabs, so the help links sit under the header */}
-        <div className="md:hidden mx-auto flex max-w-7xl justify-end gap-4 px-3 pb-1.5 text-[11px] font-semibold text-slate-400">
+        <div className="md:hidden mx-auto flex max-w-7xl justify-center gap-6 px-3 pb-1.5 text-[11px] font-semibold text-slate-400">
           <a href="/verify" className="hover:text-white">Verify</a>
           <a href="/stats" className="hover:text-white">Live stats</a>
           <a href="/faq" className="hover:text-white">FAQ</a>
@@ -2384,6 +2384,18 @@ export default function StockMaxxingDashboard() {
               ethBalance={ethBalance}
               ethUsd={ethUsd}
               holdingTokens={walletBalances[chartSelectedSymbol]?.rawTokens ?? 0}
+              avgCostUsd={
+                walletAddress && pnl.for === walletAddress.toLowerCase()
+                  ? pnl.data?.positions.find((p) => p.symbol === chartSelectedSymbol)?.avgCostUsd ?? null
+                  : null
+              }
+              tradeMarkers={
+                walletAddress && pnl.for === walletAddress.toLowerCase()
+                  ? (pnl.data?.activity || [])
+                      .filter((a): a is typeof a & { time: number } => a.symbol === chartSelectedSymbol && typeof a.time === "number")
+                      .map((a) => ({ time: a.time, side: a.side, usd: a.usd }))
+                  : []
+              }
               walletConnected={Boolean(walletAddress)}
               pending={basketPending}
               pendingLabel={basketStatus || "Working…"}
@@ -2465,7 +2477,7 @@ export default function StockMaxxingDashboard() {
                         name="heroPrompt"
                         value={heroPrompt}
                         onChange={(e) => setHeroPrompt(e.target.value.slice(0, 300))}
-                        placeholder='e.g. "Chips and cloud, nothing above 25%, keep 15% in cash"'
+                        placeholder='e.g. "Chips & cloud, max 25%, 15% cash"'
                         aria-label="What do you want the agent to build?"
                         className="min-w-0 flex-1 rounded-xl border border-slate-700 bg-[#050811] px-3 py-2 sm:py-2.5 text-xs sm:text-sm text-white placeholder-slate-500 focus:border-[#4C6FFF] focus:outline-none"
                       />
