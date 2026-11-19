@@ -39,7 +39,7 @@ const USDC = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
 const KYBER_ROUTER = "0x6131b5fae19ea4f9d964eac0408e4408b66337b5";
 const client = createPublicClient({
   chain: base,
-  transport: http(env.BASE_RPC_URL || process.env.BASE_RPC_URL || "https://mainnet.base.org"),
+  transport: http(arg("rpc", process.env.BASE_RPC_URL || env.BASE_RPC_URL || "https://mainnet.base.org")),
 });
 
 const CASES = [
@@ -167,6 +167,27 @@ const suffix = Attribution.toDataSuffix({ codes: [CODE] });
 const unaligned = `0x12345678${suffix.slice(2)}`; // 4 + suffix bytes, not a multiple of 32
 console.log("▶ control");
 check(!endsWithCode(WRAPPERS["Coinbase Smart Wallet executeBatch (ERC-4337 callData)"]([{ to: USDC, data: unaligned }])), "unaligned suffix is NOT readable after batch padding (test detects the old bug)");
+
+console.log("\n▶ standalone aligned approve (USDC & B20)");
+const baseApprove = encodeFunctionData({
+  abi: parseAbi(["function approve(address,uint256)"]),
+  functionName: "approve",
+  args: [KYBER_ROUTER, 1_000_000n],
+});
+const rem = ((baseApprove.length - 2) / 2 + (suffix.length - 2) / 2) % 32;
+const alignedApprove = `${baseApprove}${rem === 0 ? "" : "00".repeat(32 - rem)}${suffix.slice(2)}`;
+check(((alignedApprove.length - 2) / 2) % 32 === 0 && endsWithCode(alignedApprove), "aligned approve calldata is 32-byte aligned with Builder Code");
+for (const [name, wrap] of Object.entries(WRAPPERS)) {
+  check(endsWithCode(wrap([{ to: USDC, data: alignedApprove }])), `${name}: standalone aligned approve keeps Builder Code`);
+}
+for (const [tokenName, tokenAddr] of [["USDC", USDC], ["NVDAc", "0xb20000000000000000000078ee7ce2fE4908108C"]]) {
+  try {
+    await client.call({ account: SENDER, to: tokenAddr, data: alignedApprove });
+    check(true, `${tokenName}.approve accepts aligned ERC-8021 calldata (eth_call)`);
+  } catch (e) {
+    check(false, `${tokenName}.approve reverted: ${(e.shortMessage || e.message || "").slice(0, 120)}`);
+  }
+}
 
 console.log(failures ? `\n❌ ${failures} check(s) failed` : "\n✅ All attribution checks passed");
 process.exitCode = failures ? 1 : 0;

@@ -115,6 +115,12 @@ export async function getWalletConnect(): Promise<Eip1193Provider> {
         walletConnectProvider = provider as unknown as Eip1193Provider;
         return walletConnectProvider;
       })
+      .catch((err) => {
+        // Clear cached init so dismissing the QR modal or a relay error doesn't leave a stale handle
+        walletConnectProvider = null;
+        wcInit = null;
+        throw err;
+      })
       .finally(() => {
         wcConnectInFlight = null;
       });
@@ -140,26 +146,38 @@ export async function restoreExternalWallet(kind: ExternalWalletKind): Promise<E
     }
     if (!walletConnectConfigured()) return null;
     const provider = await initWalletConnect();
-    if (!provider.session || !(provider.accounts?.length > 0)) return null;
+    if (!provider.session || !(provider.accounts?.length > 0)) {
+      wcInit = null;
+      return null;
+    }
     walletConnectProvider = provider as unknown as Eip1193Provider;
     return walletConnectProvider;
   } catch {
-    if (kind === "coinbase") coinbaseProvider = null;
+    if (kind === "coinbase") {
+      coinbaseProvider = null;
+      coinbaseInit = null;
+    } else {
+      walletConnectProvider = null;
+      wcInit = null;
+    }
     return null;
   }
 }
 
 /** Ends an external session (WalletConnect / Coinbase). Injected wallets can't be disconnected by the dapp. */
 export async function disconnectExternalWallets() {
-  try {
-    await walletConnectProvider?.disconnect?.();
-  } catch {}
-  try {
-    await coinbaseProvider?.disconnect?.();
-  } catch {}
+  const wc = walletConnectProvider;
+  const cb = coinbaseProvider;
+  // Clear handles synchronously before awaiting remote disconnect so a fast reconnect isn't clobbered
   walletConnectProvider = null;
   wcConnectInFlight = null;
   coinbaseProvider = null;
   coinbaseInit = null;
   wcInit = null;
+  try {
+    await wc?.disconnect?.();
+  } catch {}
+  try {
+    await cb?.disconnect?.();
+  } catch {}
 }

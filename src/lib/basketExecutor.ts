@@ -1,5 +1,5 @@
 import { encodeFunctionData, decodeFunctionResult, parseAbi, toHex } from "viem";
-import { alignedWithSuffix, appendBuilderCodeToCalldata, toErc8021DataSuffix } from "./builderCode";
+import { alignedWithSuffix, toErc8021DataSuffix } from "./builderCode";
 
 const builderSuffix = (code: string) => toErc8021DataSuffix([code]).dataSuffix;
 
@@ -12,6 +12,8 @@ const builderSuffix = (code: string) => toErc8021DataSuffix([code]).dataSuffix;
  */
 
 export const USDC_BASE = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" as const;
+/** KyberSwap MetaAggregationRouterV2 on Base: the only address we ever approve or call */
+const KYBER_ROUTER = "0x6131b5fae19ea4f9d964eac0408e4408b66337b5";
 /** KyberSwap's placeholder for native ETH (paid as tx value, no approval) */
 export const NATIVE_ETH = "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE";
 const isNative = (token?: string) => (token || "").toLowerCase() === NATIVE_ETH.toLowerCase();
@@ -464,7 +466,7 @@ async function buildApprovals(eth: EthProvider, sender: string, legs: LegQuote[]
     const allowance = await readErc20(eth, token, "allowance", [sender as `0x${string}`, router as `0x${string}`]);
     if (allowance < amount) {
       const data = encodeFunctionData({ abi: ERC20_ABI, functionName: "approve", args: [router as `0x${string}`, amount] });
-      calls.push({ to: token, data: appendBuilderCodeToCalldata(data, builderCode), value: "0x0" });
+      calls.push({ to: token, data: alignedWithSuffix(data, builderSuffix(builderCode)), value: "0x0" });
     }
   }
   return calls;
@@ -527,6 +529,39 @@ function preferSequentialWallet(eth: EthProvider, hint?: WalletHint): boolean {
   return false;
 }
 
+async function isPureSmartAccount(eth: EthProvider, sender: string): Promise<boolean> {
+  const code = (await withTimeout(rpcRead(eth, "eth_getCode", [sender, "latest"]), 1500).catch(() => "")) as string;
+  return typeof code === "string" && code.length > 2 && !code.toLowerCase().startsWith("0xef0100");
+}
+
+/** Verifies an onchain Transfer log tx involves the sender, the router, or an outgoing transfer (filters unrelated airdrops/deposits). */
+async function isRelatedSwapTx(hash: string, sender: string, cache: Map<string, boolean>): Promise<boolean> {
+  const key = hash.toLowerCase();
+  const cached = cache.get(key);
+  if (cached !== undefined) return cached;
+  const senderLower = sender.toLowerCase();
+  const senderTopic = "0x" + senderLower.replace(/^0x/, "").padStart(64, "0");
+  const [tx, rec] = (await Promise.all([
+    withTimeout(basePublicRpc("eth_getTransactionByHash", [hash]), 2000).catch(() => null),
+    withTimeout(basePublicRpc("eth_getTransactionReceipt", [hash]), 2000).catch(() => null),
+  ])) as [{ from?: string; to?: string } | null, (RpcReceipt & { from?: string; to?: string }) | null];
+  if (!tx && !rec) return true;
+  const from = String(tx?.from || rec?.from || "").toLowerCase();
+  const to = String(tx?.to || rec?.to || "").toLowerCase();
+  const logs = rec?.logs || [];
+  const related =
+    from === senderLower ||
+    to === senderLower ||
+    to === KYBER_ROUTER ||
+    logs.some(
+      (l) =>
+        l.address?.toLowerCase() === KYBER_ROUTER ||
+        ((l.topics?.[0] || "").toLowerCase() === TRANSFER_TOPIC && (l.topics?.[1] || "").toLowerCase() === senderTopic)
+    );
+  cache.set(key, related);
+  return related;
+}
+
 /**
  * Sends approvals + swaps: one EIP-5792 batch if the wallet supports it, otherwise one by one.
  * `spend` = tokens the order spends; their balances guard the fallback against sending twice.
@@ -556,7 +591,8 @@ async function sendCalls(
   // Nonce = number of txs this address has sent: covers ETH-paid EOA orders (no token balance to compare)
   const nonceOf = () =>
     (rpcRead(eth, "eth_getTransactionCount", [sender, "latest"]) as Promise<string>).then((n) => BigInt(n)).catch(() => null);
-  const uniqueReceive = [...new Set(receiveTokens.map((t) => t.toLowerCase()))];
+  const legReceiveTokens = receiveTokens.map((t) => t.toLowerCase());
+  const uniqueReceive = [...new Set(legReceiveTokens.filter(Boolean))];
   const [before, ethBefore, nonceBefore, startBlockHex, receiveBefore] = await Promise.all([
     balancesOf(),
     ethBalanceOf(),
@@ -591,14 +627,17 @@ async function sendCalls(
       if (isUserRejection(err)) throw err;
       if (!isUnsupportedMethod(err)) {
         // Check whether sender is a pure ERC-4337 smart account (non-EIP-7702 bytecode): UserOps do not advance EOA nonce.
-        const code = (await withTimeout(rpcRead(eth, "eth_getCode", [sender, "latest"]), 1500).catch(() => "")) as string;
-        const isErc4337Account = typeof code === "string" && code.length > 2 && !code.toLowerCase().startsWith("0xef0100");
+        const isErc4337Account = await isPureSmartAccount(eth, sender);
         // Unknown error (wallets word "no batching" in many ways). Before sending one by one, make sure the
         // batch did not go through anyway: if any spent balance or ETH dropped, never resend (no double trade).
         await sleep(5000);
         const [after, nonceAfter, ethAfter] = await Promise.all([balancesOf(), nonceOf(), ethBalanceOf()]);
         const nonceMoved = nonceBefore !== null && nonceAfter !== null && nonceAfter > nonceBefore;
-        const ethDropped = ethBefore !== null && ethAfter !== null && ethBefore > ethAfter && ethBefore - ethAfter >= ethSpendTotal;
+        const minEthLeg = swapSpend
+          .filter((s) => isNative(s.token) && s.amount > 0n)
+          .reduce((min, s) => (min === 0n || s.amount < min ? s.amount : min), 0n);
+        const ethSpendThreshold = minEthLeg > 0n ? (minEthLeg * 8n) / 10n : ethSpendTotal;
+        const ethDropped = ethBefore !== null && ethAfter !== null && ethBefore > ethAfter && ethBefore - ethAfter >= ethSpendThreshold;
         if (isErc4337Account || nonceMoved || ethDropped || after.some((a, i) => a !== null && before[i] !== null && a < before[i]!)) {
           throw new Error("Your wallet reported an error, but funds have moved or a batch request may have been submitted. Check your wallet activity before retrying.");
         }
@@ -616,6 +655,7 @@ async function sendCalls(
     let statusUnsupported = false;
     let firstTransferSeenAt = 0;
     let firstDoneWithoutHashesAt = 0;
+    const relatedTxCache = new Map<string, boolean>();
     while (Date.now() - start < 180_000) {
       let status: CallsStatusResponse | undefined;
       try {
@@ -681,13 +721,20 @@ async function sendCalls(
               },
             ])) as { address?: string; transactionHash?: string }[] | null;
             if (Array.isArray(logs) && logs.length > 0) {
-              foundHashes = [
+              const candidateHashes = [
                 ...new Set(logs.map((l) => l?.transactionHash || "").filter((h): h is string => /^0x[0-9a-fA-F]{64}$/.test(h))),
               ];
-              const foundTokens = new Set(logs.map((l) => (l?.address || "").toLowerCase()).filter(Boolean));
+              const checks = await Promise.all(candidateHashes.map(async (h) => [h.toLowerCase(), await isRelatedSwapTx(h, sender, relatedTxCache)] as const));
+              const validSet = new Set(checks.filter(([, ok]) => ok).map(([h]) => h));
+              const validLogs = logs.filter((l) => validSet.has((l?.transactionHash || "").toLowerCase()));
+              foundHashes = [
+                ...new Set(validLogs.map((l) => l?.transactionHash || "").filter((h): h is string => /^0x[0-9a-fA-F]{64}$/.test(h))),
+              ];
+              const foundTokens = new Set(validLogs.map((l) => (l?.address || "").toLowerCase()).filter(Boolean));
               if (foundHashes.length > 0) {
                 if (!firstTransferSeenAt) firstTransferSeenAt = Date.now();
-                if (foundTokens.size >= targetTokens.length || parsed.isDone || Date.now() - firstTransferSeenAt >= 12_000) {
+                const multiLegGraceMs = parsed.isPending && targetTokens.length > 1 ? 45_000 : 12_000;
+                if (foundTokens.size >= targetTokens.length || parsed.isDone || Date.now() - firstTransferSeenAt >= multiLegGraceMs) {
                   return { mode: "batch", txHashes: foundHashes, failed: [] };
                 }
               }
@@ -702,7 +749,8 @@ async function sendCalls(
         const receivedMore = receiveNow.some((now, i) => now !== null && receiveBefore[i] !== null && now > receiveBefore[i]!);
         if (receivedMore) {
           if (!firstTransferSeenAt) firstTransferSeenAt = Date.now();
-          if (foundHashes.length > 0 && (parsed.isDone || (!watchSellSpend && uniqueReceive.length === 1) || Date.now() - firstTransferSeenAt >= 12_000)) {
+          const balanceGraceMs = parsed.isPending && targetTokens.length > 1 ? 45_000 : 12_000;
+          if (foundHashes.length > 0 && (parsed.isDone || (!watchSellSpend && uniqueReceive.length === 1) || Date.now() - firstTransferSeenAt >= balanceGraceMs)) {
             return { mode: "batch", txHashes: foundHashes, failed: [] };
           }
           if (foundHashes.length === 0 && Date.now() - firstTransferSeenAt >= 8000) {
@@ -796,13 +844,14 @@ async function sendCalls(
     onStatus(`${labels[j]} (${approveCalls.length + j + 1}/${calls.length})…`);
     let hash: string | undefined;
     let swapSettled = false;
-    const targetReceive = uniqueReceive[j] || uniqueReceive[0];
+    const targetReceive = legReceiveTokens[j] || uniqueReceive[0];
     const isSellLeg = !isNative(token) && targetReceive?.toLowerCase() === USDC_BASE.toLowerCase();
     const watchToken = isSellLeg ? token.toLowerCase() : targetReceive;
     const senderTopic = "0x" + sender.toLowerCase().replace(/^0x/, "").padStart(64, "0");
     const legBlockHex = (await withTimeout(basePublicRpc("eth_blockNumber", []), 1200).catch(() => null)) as string | null;
     const legStartBlock = legBlockHex ? BigInt(legBlockHex) : startBlock;
     const seenHashes = new Set(txHashes.map((h) => h.toLowerCase()));
+    const relatedLegCache = new Map<string, boolean>();
     const sendSwapPromise = eth
       .request({ method: "eth_sendTransaction", params: [{ from: sender, to: c.to, data: c.data, value: c.value }] })
       .then((raw) => ({ kind: "hash" as const, hash: extractBatchId(raw) || String(raw || "") }));
@@ -826,10 +875,14 @@ async function sendCalls(
                   topics: isSellLeg ? [TRANSFER_TOPIC, senderTopic, null] : [TRANSFER_TOPIC, null, senderTopic],
                 },
               ])) as { transactionHash?: string }[] | null;
-              const hit = (logs || []).find(
-                (l) => /^0x[0-9a-fA-F]{64}$/.test(l?.transactionHash || "") && !seenHashes.has(l.transactionHash!.toLowerCase())
-              );
-              if (hit?.transactionHash) return { kind: "onchain" as const, hash: hit.transactionHash };
+              const candidates = (logs || [])
+                .map((l) => l?.transactionHash || "")
+                .filter((h) => /^0x[0-9a-fA-F]{64}$/.test(h) && !seenHashes.has(h.toLowerCase()));
+              for (const h of [...new Set(candidates)]) {
+                if (await isRelatedSwapTx(h, sender, relatedLegCache)) {
+                  return { kind: "onchain" as const, hash: h };
+                }
+              }
             }
           } catch {}
         }
@@ -942,8 +995,7 @@ export async function sendContractCall(params: {
       if (isUserRejection(err)) throw new Error("Cancelled in wallet.");
       if (!isUnsupportedMethod(err)) {
         // Detect ERC-4337 smart accounts (whose UserOps do not move EOA nonce) before fallback resend
-        const code = (await withTimeout(rpcRead(eth, "eth_getCode", [sender, "latest"]), 1500).catch(() => "")) as string;
-        const isErc4337Account = typeof code === "string" && code.length > 2 && !code.toLowerCase().startsWith("0xef0100");
+        const isErc4337Account = await isPureSmartAccount(eth, sender);
         // Unknown wallet error: make sure nothing was sent before asking again another way
         await sleep(5000);
         const nonceAfter = await nonceOf();
@@ -1066,8 +1118,6 @@ async function postSwap(body: Record<string, unknown>, fallbackSymbol: string): 
   }
 }
 
-// KyberSwap MetaAggregationRouterV2 on Base: the only address we ever approve or call
-const KYBER_ROUTER = "0x6131b5fae19ea4f9d964eac0408e4408b66337b5";
 const usable = (q: LegQuote) =>
   !!(
     q.ok &&

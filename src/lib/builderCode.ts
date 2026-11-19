@@ -21,9 +21,10 @@ export interface BuilderCodeAttribution {
  * Generates a standard-compliant ERC-8021 `dataSuffix` using the official `ox/erc8021` library.
  */
 export function toErc8021DataSuffix(codes: string[]): BuilderCodeAttribution {
+  const enc = new TextEncoder();
   const sanitizedCodes = codes
     .map((c) => c.trim().replace(/[^a-zA-Z0-9_-]/g, ""))
-    .filter((c) => c.length > 0 && Buffer.byteLength(c, "utf8") <= 255);
+    .filter((c) => c.length > 0 && enc.encode(c).length <= 255);
 
   const effectiveCodes = sanitizedCodes.length > 0 ? sanitizedCodes : ["bc_ewm6gcvz"];
 
