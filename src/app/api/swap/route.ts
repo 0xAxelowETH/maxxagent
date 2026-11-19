@@ -15,6 +15,8 @@ import { alignedWithSuffix, toErc8021DataSuffix } from "@/lib/builderCode";
  * - Routes whose total cost (price impact + fees) exceeds MAX_COST_PCT are refused.
  * - Returns an unsigned transaction: the user signs it from their own wallet (non-custodial).
  */
+export const maxDuration = 60;
+
 const KYBER_API = "https://aggregator-api.kyberswap.com/base/api/v1";
 const KYBER_HEADERS = { "x-client-id": "maxxagent", "content-type": "application/json" };
 const USDC_BASE = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
@@ -43,16 +45,17 @@ const ALLOWED_ROUTERS = new Set(["0x6131b5fae19ea4f9d964eac0408e4408b66337b5"]);
 // (24/5 feed over long market closures) or unreadable; the cost guard still applies then.
 const MAX_NAV_DEVIATION_PCT = 5;
 const MAX_NAV_AGE_SEC = 4 * 86_400;
+const ETH_NAV_MAX_AGE_SEC = 3600;
 const FEED_ABI = parseAbi([
   "function latestRoundData() view returns (uint80 roundId, int256 answer, uint256 startedAt, uint256 updatedAt, uint80 answeredInRound)",
 ]);
 const client = createPublicClient({ chain: base, transport: baseTransport({ timeout: 6000 }) });
 
-async function readNav(feed: `0x${string}`): Promise<number | null> {
+async function readNav(feed: `0x${string}`, maxAgeSec = MAX_NAV_AGE_SEC): Promise<number | null> {
   try {
     const [roundId, answer, , updatedAt, answeredInRound] = await client.readContract({ address: feed, abi: FEED_ABI, functionName: "latestRoundData" });
     const age = Date.now() / 1000 - Number(updatedAt);
-    return answer > 0n && answeredInRound >= roundId && age >= -60 && age < MAX_NAV_AGE_SEC ? Number(answer) / 1e8 : null;
+    return answer > 0n && answeredInRound >= roundId && age >= -60 && age < maxAgeSec ? Number(answer) / 1e8 : null;
   } catch {
     return null;
   }
@@ -114,7 +117,7 @@ export async function POST(request: NextRequest) {
     // Buy: USDC (6 decimals) or ETH (18) in. Sell: stock tokens (B20 decimals) in.
     let ethUsd: number | null = null;
     if (payWithEth) {
-      ethUsd = await readNav(ETH_USD_FEED as `0x${string}`);
+      ethUsd = await readNav(ETH_USD_FEED as `0x${string}`, ETH_NAV_MAX_AGE_SEC);
       if (!ethUsd) {
         return NextResponse.json({ ok: false, symbol: stock.symbol, error: "ETH price unavailable right now. Pay with USDC or retry." }, { status: 502 });
       }
@@ -287,7 +290,11 @@ export async function POST(request: NextRequest) {
     // (EIP-7702 execute, ERC-4337 executeBatch) ABI-encode the calls, and ABI padding after our
     // suffix hid it from indexers, which read the suffix from the very end of the tx / UserOp input.
     // With 32-byte alignment there is no padding, so the outer input ends with our suffix.
-    const data = alignedWithSuffix(build.data.data, toErc8021DataSuffix([BUILDER_CODE]).dataSuffix);
+    const rawCalldata = String(build.data.data || "");
+    if (!/^0x[0-9a-fA-F]{8,}$/.test(rawCalldata)) {
+      return NextResponse.json({ ok: false, symbol: stock.symbol, error: `Invalid swap calldata returned for ${stock.symbol}. Please retry.` }, { status: 502 });
+    }
+    const data = alignedWithSuffix(rawCalldata, toErc8021DataSuffix([BUILDER_CODE]).dataSuffix);
     const minAmountOutRaw = (amountOutRaw * BigInt(10_000 - slippageBps)) / 10_000n;
 
     const effectiveAmountOutUsd =
@@ -306,7 +313,7 @@ export async function POST(request: NextRequest) {
       tx: {
         to: build.data.routerAddress,
         data,
-        value: build.data.transactionValue || "0",
+        value: expectedValue.toString(),
       },
       amountInRaw: amountIn.toString(),
       payWith: side === "buy" ? (payWithEth ? "eth" : "usdc") : undefined,

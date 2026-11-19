@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React from "react";
 import { CheckCircle2, Copy, ExternalLink, Flame, Terminal } from "lucide-react";
 import { MaxxAgentMark } from "@/components/BrandLogo";
 import { parseErc8021Calldata, toErc8021DataSuffix } from "@/lib/builderCode";
@@ -13,6 +13,10 @@ export interface PublicAttributionTabProps {
   copyToClipboard: (text: string, key: string) => void;
   stocks: LiveTokenizedStock[];
   totalTvlUsd: number;
+  dayNumber: number;
+  setDayNumber: (d: number) => void;
+  milestoneTitle: string;
+  setMilestoneTitle: (s: string) => void;
 }
 
 export default function PublicAttributionTab({
@@ -22,11 +26,11 @@ export default function PublicAttributionTab({
   copyToClipboard,
   stocks,
   totalTvlUsd,
+  dayNumber,
+  setDayNumber,
+  milestoneTitle,
+  setMilestoneTitle,
 }: PublicAttributionTabProps) {
-  const [dayNumber, setDayNumber] = useState<number>(1);
-  const [milestoneTitle, setMilestoneTitle] = useState<string>(
-    "Shipped live Chainlink NAV vs DEX price tracking for the 10 Coinbase tokenized stocks MAXXAGENT supports on Base"
-  );
 
   const attributionInfo = toErc8021DataSuffix([builderCode]);
   const sampleDecoded = parseErc8021Calldata(attributedCalldata || attributionInfo.dataSuffix);

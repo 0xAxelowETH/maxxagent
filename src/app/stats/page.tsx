@@ -27,7 +27,8 @@ function reconcileUsdCents(values: number[], targetTotalUsd: number): number[] {
   const targetCents = Math.round(targetTotalUsd * 100);
   const baseCents = values.map((v) => Math.floor(v * 100 + 1e-9));
   const diff = targetCents - baseCents.reduce((a, b) => a + b, 0);
-  if (diff <= 0 || diff > values.length) return values;
+  if (diff === 0) return baseCents.map((c) => c / 100);
+  if (diff < 0 || diff > values.length) return values;
   const order = values
     .map((v, i) => ({ i, rem: v * 100 - baseCents[i] }))
     .sort((a, b) => b.rem - a.rem || a.i - b.i);

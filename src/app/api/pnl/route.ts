@@ -158,11 +158,17 @@ async function scanRange(wallet: `0x${string}`, from: bigint, to: bigint, deadli
       while (next < chunks.length && Date.now() < deadline) {
         const i = next++;
         const [a, b] = chunks[i];
-        const [ins, outs] = await Promise.all([
-          getTransferLogsAdaptive(wallet, "to", a, b, deadline),
-          getTransferLogsAdaptive(wallet, "from", a, b, deadline),
-        ]);
-        found[i] = [...ins, ...outs].map((l) => l.transactionHash);
+        try {
+          const [ins, outs] = await Promise.all([
+            getTransferLogsAdaptive(wallet, "to", a, b, deadline),
+            getTransferLogsAdaptive(wallet, "from", a, b, deadline),
+          ]);
+          found[i] = [...ins, ...outs].map((l) => l.transactionHash);
+        } catch (e) {
+          // Deadline reached mid-chunk: stop cleanly so completed newer chunks still form a gap-free tail
+          if (Date.now() >= deadline) break;
+          throw e;
+        }
       }
     })
   );
@@ -494,18 +500,45 @@ async function computePositions(history: WalletHistory) {
     }
     let ethIdx = 0;
     let ethPaidLeft = ethPaid;
+    const usdcOutMoves = tx.moves.filter((m) => m.token === USDC && m.dir === -1);
+    const buyMoves = tx.moves.filter((m) => m.token !== USDC && m.dir === 1);
+    let sharedUsdcLegCosts: number[] | null = null;
+    if (usdcOutMoves.length === 1 && buyMoves.length > 1 && ethPaid === 0n) {
+      const totalUsdc = Number(usdcOutMoves[0].amount) / 1e6;
+      const navValues = await Promise.all(
+        buyMoves.map(async (m) => {
+          const nav = await navAt(STOCKS.get(m.token)!.chainlinkFeed, tx.block);
+          return nav !== null ? nav * tokensOf(m.amount, m.token) : 0;
+        })
+      );
+      const navSum = navValues.reduce((a, b) => a + b, 0);
+      if (navSum > 0 && navValues.every((v) => v > 0)) {
+        sharedUsdcLegCosts = navValues.map((v) => (totalUsdc * v) / navSum);
+      } else {
+        sharedUsdcLegCosts = buyMoves.map(() => totalUsdc / buyMoves.length);
+      }
+    }
+    let sharedBuyIdx = 0;
+    let unattachedUsdcIn = 0n;
     const disposals: { token: string; raw: bigint; costRemoved: number; backedRatio: number; wasUnpriced: boolean; proceeds: bigint }[] = [];
     for (const m of tx.moves) {
       if (m.token === USDC) {
-        if (m.dir === -1) usdcOut += m.amount;
-        else if (disposals.length) disposals[disposals.length - 1].proceeds += m.amount;
+        if (m.dir === -1 && !sharedUsdcLegCosts) usdcOut += m.amount;
+        else if (m.dir === 1) {
+          if (disposals.length) disposals[disposals.length - 1].proceeds += m.amount;
+          else unattachedUsdcIn += m.amount;
+        }
         continue;
       }
       const p = get(m.token);
       if (m.dir === 1) {
         let cost: number;
         let via: Activity["via"] = "other";
-        if (usdcOut > 0n) {
+        if (sharedUsdcLegCosts && sharedUsdcLegCosts[sharedBuyIdx] !== undefined) {
+          cost = sharedUsdcLegCosts[sharedBuyIdx++];
+          via = "usdc";
+          p.estimated = true;
+        } else if (usdcOut > 0n) {
           cost = Number(usdcOut) / 1e6;
           usdcOut = 0n;
           via = "usdc";
@@ -543,6 +576,9 @@ async function computePositions(history: WalletHistory) {
         p.sells++;
         disposals.push({ token: m.token, raw: m.amount, costRemoved, backedRatio, wasUnpriced, proceeds: 0n });
       }
+    }
+    if (unattachedUsdcIn > 0n && disposals.length === 1) {
+      disposals[0].proceeds += unattachedUsdcIn;
     }
     for (const d of disposals) {
       const p = get(d.token);

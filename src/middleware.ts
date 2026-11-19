@@ -17,7 +17,14 @@ const PUBLIC_EXACT = new Set(["/preview", "/agent-registration.json", "/api/og",
 const PUBLIC_PREFIXES = ["/.well-known/", "/api/cron/", "/brand/"];
 const SITE = (process.env.NEXT_PUBLIC_SITE_URL || "https://maxxagent.xyz").replace(/\/$/, "");
 const esc = (v: string) => v.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
-const PREVIEW_DESC = "Build your own index of Coinbase tokenized stocks on Base, or let an agent propose one, and buy it in one click from your own wallet. Not financial advice.";
+const PREVIEW_DESC = "Build your own index of Coinbase tokenized stocks on Base, or let an agent propose one, and buy it in one flow from your own wallet. Not financial advice.";
+const EARLY_SECURITY_HEADERS = {
+  "X-Content-Type-Options": "nosniff",
+  "Referrer-Policy": "strict-origin-when-cross-origin",
+  "Strict-Transport-Security": "max-age=63072000; includeSubDomains; preload",
+  "Permissions-Policy": "camera=(), microphone=(), geolocation=(), payment=()",
+  "Content-Security-Policy": "default-src 'self'; style-src 'unsafe-inline'; base-uri 'self'; form-action 'self'; object-src 'none'; frame-ancestors 'self' https://farcaster.xyz https://*.farcaster.xyz https://warpcast.com https://*.warpcast.com https://base.app https://*.base.app https://base.dev https://*.base.dev",
+};
 // Same embed as the real pages (stock pages launch on that stock), because preview crawlers run in the US
 const previewTags = (path: string, searchParams?: URLSearchParams) => {
   // Only the 10 listed symbols: never reflect arbitrary URL text into the preview
@@ -25,7 +32,8 @@ const previewTags = (path: string, searchParams?: URLSearchParams) => {
   const stock = STOCK_SYMBOLS.find((s) => s.toLowerCase() === asked);
   const indexId = path.match(/^\/index\/(\d{1,9})$/)?.[1];
   const parsedBasket = parseBasketParam(searchParams?.get("basket"));
-  const rawName = parsedBasket ? cleanIndexName(searchParams?.get("name"), 40) : "";
+  const rawName = parsedBasket ? cleanIndexName(searchParams?.get("name"), 48) : "";
+  const rawTicker = parsedBasket ? cleanIndexName(searchParams?.get("ticker"), 24) : "";
   const title = stock
     ? `${stock} tokenized stock on Base — MAXXAGENT`
     : indexId
@@ -34,7 +42,7 @@ const previewTags = (path: string, searchParams?: URLSearchParams) => {
     ? `${rawName} — Custom stock index on Base | MAXXAGENT`
     : "MAXXAGENT — Tokenized stock indexes on Base";
   const ogImage = parsedBasket
-    ? `${SITE}${basketImagePath(parsedBasket, { name: rawName || undefined })}`
+    ? `${SITE}${basketImagePath(parsedBasket, { name: rawName || undefined, ticker: rawTicker || undefined })}`
     : `${SITE}/brand/maxxagent-og.png`;
   const embed = stock
     ? { siteUrl: SITE, path: `/stock/${stock}`, buttonTitle: `Trade ${stock}` }
@@ -43,9 +51,8 @@ const previewTags = (path: string, searchParams?: URLSearchParams) => {
     : parsedBasket
     ? {
         siteUrl: SITE,
-        path: `/?basket=${encodeURIComponent(searchParams?.get("basket") || "")}`,
         buttonTitle: "Buy this basket",
-        imageUrl: `${SITE}${basketImagePath(parsedBasket, { name: rawName || undefined, tall: true })}`,
+        imageUrl: `${SITE}${basketImagePath(parsedBasket, { name: rawName || undefined, ticker: rawTicker || undefined, tall: true })}`,
       }
     : { siteUrl: SITE };
   const tags: [string, string][] = [
@@ -154,13 +161,14 @@ export function middleware(request: NextRequest) {
     return NextResponse.redirect(url, 308);
   }
 
-  const path = request.nextUrl.pathname;
+  const rawPath = request.nextUrl.pathname;
+  const path = rawPath.length > 1 ? rawPath.replace(/\/+$/, "") || "/" : rawPath;
   if (path.startsWith("/api/") || path === "/preview") {
     const { limited, retryAfter } = rateLimited(request);
     if (limited) {
       return NextResponse.json(
         { ok: false, error: "Too many requests. Please wait a moment." },
-        { status: 429, headers: { "Retry-After": String(retryAfter) } }
+        { status: 429, headers: { ...EARLY_SECURITY_HEADERS, "Retry-After": String(retryAfter) } }
       );
     }
   }
@@ -179,7 +187,7 @@ export function middleware(request: NextRequest) {
   if (path.startsWith("/api/")) {
     return NextResponse.json(
       { ok: false, error: "Not available in your jurisdiction." },
-      { status: 451 }
+      { status: 451, headers: EARLY_SECURITY_HEADERS }
     );
   }
 
@@ -192,7 +200,15 @@ export function middleware(request: NextRequest) {
       "<div style='max-width:480px'><h1 style='font-size:20px'>Not available in your jurisdiction</h1>" +
       "<p style='color:#94a3b8;font-size:14px;line-height:1.6'>Coinbase tokenized stocks on Base are only available to persons in eligible jurisdictions outside of the United States.</p>" +
       "<p style='font-size:13px'><a href='/preview' style='color:#67e8f9'>View a read-only preview (no trading)</a></p></div></body></html>",
-    { status: 200, headers: { "content-type": "text/html; charset=utf-8", "x-geo-blocked": "1", "cache-control": "private, no-store" } }
+    {
+      status: 200,
+      headers: {
+        ...EARLY_SECURITY_HEADERS,
+        "content-type": "text/html; charset=utf-8",
+        "x-geo-blocked": "1",
+        "cache-control": "private, no-store",
+      },
+    }
   );
 }
 

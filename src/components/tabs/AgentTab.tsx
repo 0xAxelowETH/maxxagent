@@ -566,7 +566,10 @@ export default function AgentTab({
 
               {(() => {
                 const weights = agentReport.allocations.map((a) => ({ symbol: a.symbol, weightBps: a.targetWeightBps }));
-                const isCurrent = savedTarget !== null && JSON.stringify(savedTarget.weights) === JSON.stringify(weights);
+                const isCurrent =
+                  savedTarget !== null &&
+                  JSON.stringify(savedTarget.weights) === JSON.stringify(weights) &&
+                  (savedTarget.maxWeightPct ?? undefined) === (agentReport.maxWeightOfStocksPct ?? undefined);
                 return (
                   <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-800 bg-[#070b14] px-3 py-2 text-[11px] text-slate-400">
                     <span>

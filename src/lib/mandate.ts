@@ -165,11 +165,11 @@ function mentions(text: string) {
 
 /** Words that make a percent a limit or cash reserve, not a stock weight ("max 30%", "cap Apple at 25%", "cash 30%") */
 const CAP_BEFORE = new RegExp(
-  `(?:\\b(?:cap(?:ped)?|limit(?:ed)?)(?:\\s+(?:each|every|any|all))?(?:\\s+(?:[a-z0-9.&]+\\s+){0,2})?(?:at|to)?\\s*|\\b(?:max(?:imum)?|under|below|less than|at most|no more than|not more than|up to|kurang dari|di\\s*bawah|maks(?:imal|imum)?|paling banyak|tidak lebih dari|over|above|more than|lebih dari|di atas)\\s*(?:of\\s+|at\\s+)?|${CASH_WORDS}\\s*(?:reserve\\s*)?(?:of\\s+)?)$`
+  `(?:\\b(?:cap(?:ped)?|limit(?:ed)?)(?:\\s+(?:each|every|any|all))?(?:\\s+(?:[a-z0-9.&]+\\s+){0,4})?(?:at|to)?\\s*|\\b(?:max(?:imum)?|under|below|less than|at most|no more than|not more than|up to|kurang dari|di\\s*bawah|maks(?:imal|imum)?|paling banyak|tidak lebih dari|over|above|more than|lebih dari|di atas)\\s*(?:of\\s+|at\\s+)?|${CASH_WORDS}\\s*(?:reserve\\s*)?(?:of\\s+)?)$`
 );
 /** Words that make a percent a cash amount or a per-stock rule ("20% in cash", "30% each", "Apple 30% cap") */
 const NOT_WEIGHT_AFTER = new RegExp(
-  `^\\s*(?:(?:in|as|of|di|dalam|sebagai)\\s+)?${CASH_WORDS}|^\\s*(?:per|each|a piece|apiece|per saham|tiap|setiap|max(?:imum)?|cap|limit|maks(?:imal)?)`
+  `^\\s*(?:(?:in|as|of|di|dalam|sebagai)\\s+(?:(?:the|a)\\s+)?)?${CASH_WORDS}|^\\s*(?:per|each|a piece|apiece|per saham|tiap|setiap|max(?:imum)?|cap|limit|maks(?:imal)?)`
 );
 const PCT_BEFORE_NAME = /^\s*(?:(?:in|of|on|into|to|for|di|ke|untuk)\s+)?(?:the\s+)?$/;
 const PCT_AFTER_NAME = /^\s*(?:at|:|=|-|sebesar)?\s*$/;
@@ -261,6 +261,45 @@ export function parseMandate(input: string): ParsedMandate {
     "recession resistant",
     "tahan resesi",
     "defensif",
+    "profitable",
+    "profitability",
+    "profit",
+    "profits",
+    "earnings",
+    "money-making",
+    "untung",
+    "laba",
+    "menguntungkan",
+    "growth",
+    "growing",
+    "fast-growing",
+    "fast growing",
+    "high growth",
+    "high-growth",
+    "revenue growth",
+    "tumbuh",
+    "bertumbuh",
+    "pertumbuhan",
+    "dividend",
+    "dividends",
+    "income",
+    "yield",
+    "dividen",
+    "cheap",
+    "cheaper",
+    "discount",
+    "discounted",
+    "below nav",
+    "under nav",
+    "undervalued",
+    "bargain",
+    "murah",
+    "diskon",
+    "liquid",
+    "liquidity",
+    "low slippage",
+    "deep pools",
+    "likuid",
   ];
   const negatedFullPhrases: string[] = [];
   for (const m of text.matchAll(negRe)) {
@@ -341,7 +380,7 @@ export function parseMandate(input: string): ParsedMandate {
   const allUnavailableWords = NOT_AVAILABLE.flatMap((u) => u.words).map(esc).join("|");
   const nonCashTargets = `${ALL_STOCK_ALIASES}|${allThemeWords}|${allUnavailableWords}|stocks?|equit(?:y|ies)|shares?|saham|invested|tech|technology|market|portfolio|index(?:es)?|etfs?|max(?:imum)?|cap|limit|per\\b|each\\b`;
   const cashMatch =
-    cashText.match(new RegExp(`${pct}\\s*(?:(?:max(?:imum)?|up to|maks(?:imal)?)\\s+)?(?:in\\s+|as\\s+|of\\s+|di\\s+|dalam\\s+|sebagai\\s+)?${CASH_WORDS}`)) ||
+    cashText.match(new RegExp(`${pct}\\s*(?:(?:max(?:imum)?|up to|maks(?:imal)?)\\s+)?(?:(?:in|as|of|di|dalam|sebagai)\\s+(?:(?:the|a)\\s+)?)?${CASH_WORDS}`)) ||
     // "keep 20%" is cash, but "hold 40% nvidia", "keep 60% for Apple", "keep 80% in stocks", or "hold 50% in tech" is not cash
     cashText.match(new RegExp(`(?:keep|hold|leave|reserve|set aside|sisakan|simpan|sisihkan)\\s+${pct}(?!\\s*(?:(?:in|of|on|into|to|for|di|ke|untuk)\\s+)?(?:the\\s+)?(?:${nonCashTargets})(?![a-z0-9]))`)) ||
     cashText.match(new RegExp(`${CASH_WORDS}\\s*(?:reserve\\s*)?(?:of\\s+)?${pct}`));
@@ -349,14 +388,15 @@ export function parseMandate(input: string): ParsedMandate {
     const v = Number(cashMatch[1]);
     if (v > 0 && v <= 90) cashPct = v;
   }
+  const cashAfterPct = `(?!\\s*(?:(?:in|as|of|di)\\s+(?:(?:the|a)\\s+)?)?${CASH_WORDS})`;
   let maxWeightPct: number | undefined;
   const maxMatch =
-    text.match(new RegExp(`(?:max(?:imum)?|cap(?:ped)?(?:\\s+at)?|at most|no more than|not more than|up to|limit(?:ed)?(?:\\s+to)?|maks(?:imal|imum)?|paling banyak|tidak lebih dari)\\s*(?:of\\s+)?${pct}(?!\\s*(?:in\\s+|as\\s+|of\\s+|di\\s+)?${CASH_WORDS})`)) ||
+    text.match(new RegExp(`(?:max(?:imum)?|cap(?:ped)?(?:\\s+at)?|at most|no more than|not more than|up to|limit(?:ed)?(?:\\s+to)?|maks(?:imal|imum)?|paling banyak|tidak lebih dari)\\s*(?:of\\s+)?${pct}${cashAfterPct}`)) ||
     text.match(new RegExp(`(?:no|not|tidak ada)\\s+(?:single\\s+|one\\s+)?(?:stock|company|name|position|holding|saham)s?\\s+(?:over|above|more than|bigger than|exceeding|di atas|lebih dari)\\s+${pct}`)) ||
     // "nothing above 25%", "none of them over 30%", "tidak ada yang lebih dari 30%"
-    text.match(new RegExp(`(?:nothing|none(?:\\s+of\\s+them)?|no\\s+one|(?:tidak|jangan)\\s+ada\\s+yang)\\s+(?:is\\s+|should\\s+be\\s+|goes\\s+)?(?:over|above|more than|bigger than|larger than|greater than|exceeding|beyond|di atas|lebih dari)\\s+${pct}(?!\\s*(?:in\\s+|as\\s+|di\\s+)?${CASH_WORDS})`)) ||
+    text.match(new RegExp(`(?:nothing|none(?:\\s+of\\s+them)?|no\\s+one|(?:tidak|jangan)\\s+ada\\s+yang)\\s+(?:is\\s+|should\\s+be\\s+|goes\\s+)?(?:over|above|more than|bigger than|larger than|greater than|exceeding|beyond|di atas|lebih dari)\\s+${pct}${cashAfterPct}`)) ||
     // "each at most 25%", "every stock under 30%", "any company below 20%"
-    text.match(new RegExp(`(?:each|every|any)\\s+(?:single\\s+)?(?:stock|company|name|position|holding|one)?\\s*(?:at most|no more than|max(?:imum)?|under|below|less than|capped at)\\s+${pct}(?!\\s*(?:in\\s+|as\\s+|di\\s+)?${CASH_WORDS})`)) ||
+    text.match(new RegExp(`(?:each|every|any)\\s+(?:single\\s+)?(?:stock|company|name|position|holding|one)?\\s*(?:at most|no more than|max(?:imum)?|under|below|less than|capped at)\\s+${pct}${cashAfterPct}`)) ||
     // "under 25% each", "below 30% per stock", "di bawah 25% per saham"
     text.match(new RegExp(`(?:under|below|less than|at most|no more than|di\\s*bawah|kurang dari)\\s+${pct}\\s+(?:each|apiece|per\\s+(?:stock|company|name|position|saham)|tiap\\s+(?:saham|perusahaan)|for\\s+(?:each|any)\\s+(?:stock|company|one)|masing[- ]masing)`)) ||
     text.match(new RegExp(`(?:cap|limit|batasi)\\s+(?:each|every|any|one|single|per|tiap|setiap)?\\s*(?:stock|company|name|position|holding|saham)s?\\s+(?:at|to|di|ke)\\s+${pct}`)) ||
@@ -447,15 +487,21 @@ export function applyMandateFollowUp(base: ParsedMandate, followUpInput: string)
   const raw = trimmed.toLowerCase();
 
   const clearCap =
-    /\b(?:no|remove|clear|without|drop)\s+(?:the\s+)?(?:per[- ]stock\s+|weight\s+|single[- ]stock\s+)?(?:cap|limit|max(?:imum)?)\b|\b(?:tanpa|hapus)\s+(?:batas|limit)\b/.test(raw);
+    /\b(?:no|remove|clear|without|drop|tanpa|hapus)\s+(?:the\s+|this\s+)?(?:\d{1,3}(?:\.\d+)?\s*%\s+)?(?:per[- ]stock\s+|single[- ]stock\s+|weight\s+|batas\s+)?(?:cap|limit|max(?:imum)?|batas)\b/.test(raw);
   const clearCash =
-    /\b(?:0\s*%|zero|no|remove|clear|without|drop)\s+(?:in\s+|as\s+)?(?:cash|usdc|reserve|stablecoins?)\b|\bfully invested\b|\binvest (?:all|100%)\b|\b(?:tanpa|hapus)\s+(?:kas|cash|usdc)\b/.test(raw);
+    /\b(?:0\s*%|zero|no|remove|clear|without|drop|tanpa|hapus)\s+(?:the\s+)?(?:\d{1,3}(?:\.\d+)?\s*%\s+)?(?:in\s+|as\s+)?(?:cash|usdc|reserve|stablecoins?|kas)(?:\s+reserve)?\b|\bfully invested\b|\binvest (?:all|100%)\b/.test(raw);
   const clearEqual = /\b(?:score[- ]weighted|by score|not equal|unequal|unequal weight)\b/.test(raw);
   const broadenScope = /\b(?:all themes|all stocks|any sector|broaden|remove only)\b/.test(raw);
+  const negPref = (words: string[]) => new RegExp(`\\b(?:no|not|without|skip|avoid|remove|clear|drop|tanpa)\\s+(?:the\\s+)?(?:${words.map(esc).join("|")})\\b`).test(raw);
+  const clearDiscount = negPref(["cheap", "discount", "discounted", "below nav", "under nav", "undervalued", "bargain", "murah", "diskon"]);
+  const clearDividends = negPref(["dividend", "dividends", "income", "yield", "dividen"]);
+  const clearLiquidity = negPref(["liquid", "liquidity", "low slippage", "deep pools", "likuid"]);
+  const clearProfitable = negPref(["profitable", "profitability", "profit", "profits", "earnings", "money-making", "untung", "laba", "menguntungkan"]);
+  const clearGrowth = negPref(["growth", "growing", "fast-growing", "fast growing", "high growth", "high-growth", "revenue growth", "tumbuh", "bertumbuh", "pertumbuhan"]);
 
   const excludeSet = new Set(base.exclude);
-  const includeSet = new Set(base.include);
-  const weightsPct: Record<string, number> = { ...base.weightsPct };
+  let includeSet = new Set(base.include);
+  let weightsPct: Record<string, number> = { ...base.weightsPct };
   const followExcludeSet = new Set(follow.exclude);
 
   for (const sym of follow.exclude) {
@@ -463,10 +509,15 @@ export function applyMandateFollowUp(base: ParsedMandate, followUpInput: string)
     includeSet.delete(sym);
     delete weightsPct[sym];
   }
-  for (const sym of follow.include) {
-    if (!followExcludeSet.has(sym)) {
-      excludeSet.delete(sym);
-      includeSet.add(sym);
+  if (follow.only && (follow.themes.length > 0 || follow.include.length > 0)) {
+    includeSet = new Set(follow.include.filter((s) => !excludeSet.has(s)));
+    weightsPct = {};
+  } else {
+    for (const sym of follow.include) {
+      if (!followExcludeSet.has(sym)) {
+        excludeSet.delete(sym);
+        includeSet.add(sym);
+      }
     }
   }
 
@@ -484,7 +535,8 @@ export function applyMandateFollowUp(base: ParsedMandate, followUpInput: string)
     }
   }
   const themes = THEMES.map((t) => t.id).filter((id) => themesSet.has(id));
-  const only = broadenScope ? false : follow.only || (base.only && !(follow.themes.length > 0 && !follow.only));
+  const additiveTheme = follow.themes.length > 0 && /\b(?:also|plus|add|include|and|juga|tambah)\b/.test(raw);
+  const only = broadenScope ? false : follow.only || (base.only && !(follow.themes.length > 0 && !follow.only && !additiveTheme));
 
   let equalWeight = base.equalWeight;
   if (follow.equalWeight) {
@@ -496,6 +548,7 @@ export function applyMandateFollowUp(base: ParsedMandate, followUpInput: string)
     }
     equalWeight = false;
   } else if (clearEqual) {
+    for (const k of Object.keys(weightsPct)) delete weightsPct[k];
     equalWeight = false;
   }
 
@@ -512,11 +565,11 @@ export function applyMandateFollowUp(base: ParsedMandate, followUpInput: string)
     count: follow.count ?? base.count,
     equalWeight,
     riskHint: follow.riskHint ?? base.riskHint,
-    prefersDiscount: base.prefersDiscount || follow.prefersDiscount,
-    prefersDividends: base.prefersDividends || follow.prefersDividends,
-    prefersLiquidity: base.prefersLiquidity || follow.prefersLiquidity,
-    prefersProfitable: base.prefersProfitable || follow.prefersProfitable,
-    prefersGrowth: base.prefersGrowth || follow.prefersGrowth,
+    prefersDiscount: clearDiscount ? false : (base.prefersDiscount || follow.prefersDiscount),
+    prefersDividends: clearDividends ? false : (base.prefersDividends || follow.prefersDividends),
+    prefersLiquidity: clearLiquidity ? false : (base.prefersLiquidity || follow.prefersLiquidity),
+    prefersProfitable: clearProfitable ? false : (base.prefersProfitable || follow.prefersProfitable),
+    prefersGrowth: clearGrowth ? false : (base.prefersGrowth || follow.prefersGrowth),
     maxWeightPct: clearCap ? undefined : (follow.maxWeightPct ?? base.maxWeightPct),
     cashPct: clearCash ? undefined : (follow.cashPct ?? base.cashPct),
     weightsPct,

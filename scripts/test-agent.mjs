@@ -12,7 +12,7 @@ const cleanup = () => {
   rmSync(dirA, { recursive: true, force: true });
   rmSync(dirB, { recursive: true, force: true });
 };
-let parseMandate, parseMandateSteps, capWeightsBps, roundWeightsBps;
+let parseMandate, parseMandateSteps, capWeightsBps, roundWeightsBps, capPromptSteps;
 try {
   const js = ts.transpileModule(readFileSync("src/lib/mandate.ts", "utf8"), {
     compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
@@ -25,7 +25,7 @@ try {
   }).outputText;
   const wfile = join(dirB, "weights.mjs");
   writeFileSync(wfile, wjs);
-  ({ capWeightsBps, roundWeightsBps } = await import(pathToFileURL(wfile).href));
+  ({ capWeightsBps, roundWeightsBps, capPromptSteps } = await import(pathToFileURL(wfile).href));
 } finally {
   cleanup();
 }
@@ -293,6 +293,40 @@ m = parseMandateSteps(["AI and Netflix, 3 stocks, max 30% per stock", "no cap, k
 ok(
   m.maxWeightPct === undefined && m.cashPct === 15 && m.prefersDiscount && m.unavailable.some((u) => u.token === "NFLXc") && m.count === 3,
   `follow-up removes cap cleanly while keeping unavailable & adding cash+discount -> ${JSON.stringify({ max: m.maxWeightPct, cash: m.cashPct, disc: m.prefersDiscount })}`,
+);
+
+// Pass 11 follow-up & parser regressions
+m = parseMandateSteps(["60% Apple 40% Microsoft", "only AI, no Nvidia"]);
+ok(
+  m.only && m.themes.length === 1 && m.themes[0] === "ai" && !m.include.includes("AAPLc") && !Object.keys(m.weightsPct).length && m.exclude.includes("NVDAc"),
+  `follow-up "only AI, no Nvidia" clears prior custom weights/includes and applies exclusion -> ${JSON.stringify(m)}`,
+);
+m = parseMandateSteps(["only AI", "also space"]);
+ok(m.only && m.themes.includes("ai") && m.themes.includes("space"), `additive theme keeps only=true -> ${JSON.stringify(m.themes)}`);
+m = parseMandateSteps(["60% Apple 40% Microsoft, max 25% per stock, keep 15% in cash", "remove the 25% cap, remove 15% cash, by score"]);
+ok(
+  m.maxWeightPct === undefined && m.cashPct === undefined && !m.equalWeight && !Object.keys(m.weightsPct).length,
+  `explicit clear phrasing removes cap, cash & custom weights -> ${JSON.stringify({ max: m.maxWeightPct, cash: m.cashPct, w: m.weightsPct })}`,
+);
+m = parseMandateSteps(["AI stocks, profitable, dividends", "not profitable, no dividends"]);
+ok(
+  !m.prefersProfitable && !m.prefersDividends && m.themes.includes("ai"),
+  `negated preference clears inherited flags -> p=${m.prefersProfitable} d=${m.prefersDividends}`,
+);
+m = parseMandate("AI, not profitable, no dividends");
+ok(
+  !m.prefersProfitable && !m.prefersDividends && m.themes.includes("ai"),
+  `initial negated preference does not set flags -> p=${m.prefersProfitable} d=${m.prefersDividends}`,
+);
+m = parseMandate("cap Microsoft and Apple at 25%, nothing more than 10% in the cash reserve");
+ok(
+  !Object.keys(m.weightsPct).length && m.maxWeightPct === undefined && m.cashPct === 10,
+  `multi-word cap & "in the cash reserve" parse safely -> max=${m.maxWeightPct} cash=${m.cashPct} w=${JSON.stringify(m.weightsPct)}`,
+);
+const cappedSteps = capPromptSteps(["s1", "s2", "s3", "s4", "s5", "s6", "s7"], 6);
+ok(
+  cappedSteps.length === 6 && cappedSteps[0] === "s1" && cappedSteps[5] === "s7",
+  `capPromptSteps keeps Step 1 + latest refinements -> ${JSON.stringify(cappedSteps)}`,
 );
 
 console.log(fail ?`\n❌ ${fail} check(s) failed` : "\n✅ All mandate checks passed");

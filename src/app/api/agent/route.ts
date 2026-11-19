@@ -6,6 +6,7 @@ import { getSecFundamentals, secFundamentalsPending } from "@/lib/secFundamental
 import { getRiskStats, riskStatsPending } from "@/lib/riskStats";
 import { getUnsupportedLive } from "@/lib/unsupportedStocks";
 import { parseMandateSteps } from "@/lib/mandate";
+import { capPromptSteps } from "@/lib/weights";
 
 /**
  * Runs the rule-based stock agent over LIVE market data only.
@@ -16,6 +17,8 @@ import { parseMandateSteps } from "@/lib/mandate";
  *  - Prompt length, amount and risk profile are bounded; the Builder Code is always the project's own.
  *  - No server-side trade execution and no user API keys: users execute from their own wallet.
  */
+export const maxDuration = 60;
+
 const MAX_PROMPT_CHARS = 500;
 const MAX_BODY_BYTES = 200_000;
 const RISK = ["Conservative", "Balanced", "Aggressive"] as const;
@@ -84,10 +87,12 @@ export async function POST(request: NextRequest) {
 
   try {
     const promptSteps = Array.isArray(body.promptSteps)
-      ? body.promptSteps
-          .map((s) => String(s ?? "").trim().slice(0, MAX_PROMPT_CHARS))
-          .filter(Boolean)
-          .slice(-6)
+      ? capPromptSteps(
+          body.promptSteps
+            .map((s) => String(s ?? "").trim().slice(0, MAX_PROMPT_CHARS))
+            .filter(Boolean),
+          6
+        )
       : undefined;
     const rawUserPrompt = String(body.userPrompt ?? "AI and cloud compute leaders, prefer stocks trading below NAV")
       .slice(0, MAX_PROMPT_CHARS);

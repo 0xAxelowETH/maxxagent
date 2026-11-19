@@ -78,3 +78,10 @@ export function capWeightsBps(weights: number[], capBps: number): number[] | nul
   }
   return roundWeightsBps(w, capBps);
 }
+
+/** Caps multi-step agent history while preserving the initial mandate at index 0. */
+export function capPromptSteps(steps: string[], max = 6): string[] {
+  if (steps.length <= max) return steps;
+  if (max <= 1) return steps.slice(0, Math.max(0, max));
+  return [steps[0], ...steps.slice(-(max - 1))];
+}

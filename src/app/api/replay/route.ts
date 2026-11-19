@@ -9,6 +9,7 @@ import { BASE_TOKENIZED_STOCKS } from "@/lib/tokenizedStocks";
  * mix moved, not a return anyone earned and not a prediction.
  */
 export const dynamic = "force-dynamic";
+export const maxDuration = 60;
 
 export async function GET(req: NextRequest) {
   const raw = (req.nextUrl.searchParams.get("basket") || "").slice(0, 300);
@@ -26,7 +27,12 @@ export async function GET(req: NextRequest) {
   if (!legs.length || legs.length > 10 || invested > 1.0001) return NextResponse.json({ ok: false, error: "Invalid basket." }, { status: 400 });
 
   try {
-    const series = await Promise.all(legs.map((l) => navDailyCloses(l.feed)));
+    // Two feeds at a time avoids bursting up to 10 parallel Chainlink multicall fans on cold caches
+    const series: Awaited<ReturnType<typeof navDailyCloses>>[] = [];
+    for (let i = 0; i < legs.length; i += 2) {
+      const chunk = await Promise.all(legs.slice(i, i + 2).map((l) => navDailyCloses(l.feed)));
+      series.push(...chunk);
+    }
     // Days present for every stock, by New York close timestamp
     const common = series.map((s) => new Map(s.map(([t, v]) => [t, v])));
     const days = [...common[0].keys()].filter((t) => common.every((m) => m.has(t))).sort((a, b) => a - b).slice(-22);

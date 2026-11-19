@@ -61,6 +61,8 @@ interface StatsState {
 let state: StatsState | null = null;
 const KV_STATE_KEY = "stats:state:v1";
 const RESPONSE_BUDGET_MS = 45_000;
+const SCAN_BUDGET_MS = 38_000;
+const MAX_STATS_INDEXES = 100;
 let inflight: Promise<StatsState> | null = null;
 
 interface SerializedStats {
@@ -262,6 +264,7 @@ async function fetchLogsAdaptive(a: bigint, b: bigint): Promise<RawLog[]> {
 }
 
 async function refresh(): Promise<StatsState> {
+  const startedAt = Date.now();
   const persisted = await loadPersistedState();
   if (persisted && (!state || persisted.scannedTo >= state.scannedTo)) {
     const merged = new Map(state?.trades ?? []);
@@ -273,15 +276,20 @@ async function refresh(): Promise<StatsState> {
   const since = state?.since ?? Number((await withRetry(() => client.getBlock({ blockNumber: START_BLOCK }))).timestamp);
   const trades = new Map(state?.trades ?? []);
   const seenHashes = new Set([...trades.values()].map((t) => t.hash));
+  const initialScannedTo = state ? state.scannedTo : START_BLOCK - 1n;
   const from = state ? state.scannedTo + 1n : START_BLOCK;
   const ranges: [bigint, bigint][] = [];
   for (let a = from; a <= latest; a += CHUNK) ranges.push([a, a + CHUNK - 1n > latest ? latest : a + CHUNK - 1n]);
 
-  let currentScannedTo = state ? state.scannedTo : START_BLOCK - 1n;
+  let currentScannedTo = initialScannedTo;
   let incomplete = false;
   // Scan chronologically in batches so cold starts checkpoint progress to KV before hitting Vercel's 60s limit
   const BATCH_SIZE = CONCURRENCY * 3;
   for (let startIdx = 0; startIdx < ranges.length; startIdx += BATCH_SIZE) {
+    if (Date.now() - startedAt >= SCAN_BUDGET_MS) {
+      incomplete = true;
+      break;
+    }
     const batch = ranges.slice(startIdx, startIdx + BATCH_SIZE);
     const found = await pool(batch, CONCURRENCY, ([a, b]) => fetchLogsAdaptive(a, b));
     const ours = new Map<string, { block: bigint; entries: { logIndex: number; usd: number }[] }>();
@@ -324,10 +332,12 @@ async function refresh(): Promise<StatsState> {
     }
     const batchEnd = batch[batch.length - 1][1];
     currentScannedTo = failedMinBlock !== null ? failedMinBlock - 1n : batchEnd;
-    // Mark checkpoint `at: 0` so intermediate/incomplete progress is never mistaken for a fresh completed scan
-    const checkpoint: StatsState = { scannedTo: currentScannedTo, trades, at: 0, since };
-    if (!state) state = checkpoint;
-    await savePersistedState(checkpoint);
+    if (currentScannedTo > initialScannedTo) {
+      // Mark checkpoint `at: 0` only when advancing scannedTo so a stalled batch never overwrites a completed snapshot
+      const checkpoint: StatsState = { scannedTo: currentScannedTo, trades, at: 0, since };
+      if (!state) state = checkpoint;
+      await savePersistedState(checkpoint);
+    }
     if (failedMinBlock !== null) {
       incomplete = true;
       break;
@@ -335,7 +345,9 @@ async function refresh(): Promise<StatsState> {
   }
 
   const finalState: StatsState = { scannedTo: currentScannedTo, trades, at: incomplete ? 0 : Date.now(), since };
-  await savePersistedState(finalState);
+  if (!incomplete || currentScannedTo > initialScannedTo) {
+    await savePersistedState(finalState);
+  }
   return finalState;
 }
 
@@ -390,7 +402,8 @@ export async function GET(request: NextRequest) {
     let indexBuysFailed = false;
     const indexBuys = await (async () => {
       const total = await indexCount();
-      const ids = Array.from({ length: total }, (_, i) => total - 1 - i);
+      const cap = Math.min(total, MAX_STATS_INDEXES);
+      const ids = Array.from({ length: cap }, (_, i) => total - 1 - i);
       return matchIndexBuys(all, await readIndexes(ids));
     })().catch(() => {
       indexBuysFailed = true;
@@ -400,7 +413,7 @@ export async function GET(request: NextRequest) {
       ok: true,
       builderCode: BUILDER_CODE,
       since: new Date(current.since * 1000).toISOString(),
-      updatedAt: new Date(current.at).toISOString(),
+      updatedAt: new Date(current.at > 0 ? current.at : Date.now()).toISOString(),
       excludesTeamTestWallet: !includeTeam,
       totals: {
         trades: all.length,

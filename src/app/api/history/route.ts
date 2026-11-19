@@ -10,6 +10,8 @@ import { BASE_TOKENIZED_STOCKS } from "@/lib/tokenizedStocks";
  *  - dex: DEX OHLCV closes from GeckoTerminal for the deepest pool, 24/7
  * Nothing is synthesized: if a source is unavailable its series is empty.
  */
+export const maxDuration = 60;
+
 type Timeframe = "24H" | "7D" | "30D";
 const TF: Record<Timeframe, { seconds: number; gecko: string; maxRounds: number }> = {
   "24H": { seconds: 86_400, gecko: "minute?aggregate=15&limit=96", maxRounds: 150 },
@@ -68,7 +70,7 @@ async function chainlinkHistory(feed: `0x${string}`, sinceSec: number, maxRounds
   for (const r of results) {
     if (r.status !== "success") {
       roundFailures++;
-      if (points.length === 0 || roundFailures > 3) throw new Error("Chainlink history RPC failed");
+      if (roundFailures > 3) throw new Error("Chainlink history RPC failed");
       continue;
     }
     const [, answer, , updatedAt] = r.result as readonly [bigint, bigint, bigint, bigint, bigint];
@@ -76,6 +78,7 @@ async function chainlinkHistory(feed: `0x${string}`, sinceSec: number, maxRounds
     if (t < sinceSec) break;
     if (answer > 0n) points.push([t, Number(answer) / 1e8]);
   }
+  if (points.length === 0 && roundFailures > 0) throw new Error("Chainlink history RPC failed");
   return points.reverse();
 }
 

@@ -415,6 +415,7 @@ html[data-theme="light"] .text-blue-400 {
   color: #3730a3 !important;
 }
 html[data-theme="light"] .text-rose-200,
+html[data-theme="light"] .hover\:text-rose-200:hover,
 html[data-theme="light"] .text-rose-300,
 html[data-theme="light"] .text-rose-400 {
   color: #be123c !important;
@@ -453,6 +454,12 @@ html[data-theme="light"] .bg-\[\#4C6FFF\] img[src$="/logos/brands/x.svg"] {
 
 html[data-theme="light"] svg text {
   fill: #334155 !important;
+}
+html[data-theme="light"] svg path[stroke="#22d3ee"] {
+  stroke: #0284c7 !important;
+}
+html[data-theme="light"] svg path[stroke="#34d399"] {
+  stroke: #059669 !important;
 }
 
 html[data-theme="light"] ::-webkit-scrollbar-track {

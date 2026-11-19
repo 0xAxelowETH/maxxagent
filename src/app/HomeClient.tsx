@@ -62,7 +62,7 @@ import { usMarketStatus } from "@/lib/marketHours";
 import { detectMiniApp } from "@/lib/miniApp";
 import { MarketHeatmap } from "@/components/MarketHeatmap";
 import { alertPctOf, computeDrift, driftSummary, parseSavedTarget, type RebalanceLogEntry, type SavedTarget } from "@/lib/drift";
-import { roundWeightsBps } from "@/lib/weights";
+import { capPromptSteps, roundWeightsBps } from "@/lib/weights";
 import { TermsGate, TERMS_STORAGE_KEY } from "@/components/TermsGate";
 import { UsdAmountInput } from "@/components/UsdAmountInput";
 import { basketToQuery, cleanIndexName, parseSharedBasket } from "@/lib/shareBasket";
@@ -455,7 +455,27 @@ export default function StockMaxxingDashboard() {
     upward: boolean;
   } | null>(null);
   const attachTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const scrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const txPendingRef = useRef<boolean>(false);
+
+  const scrollWhenReady = useCallback((selector: string, block: ScrollLogicalPosition = "start") => {
+    if (scrollTimerRef.current) {
+      clearTimeout(scrollTimerRef.current);
+      scrollTimerRef.current = null;
+    }
+    let attempts = 0;
+    const poll = () => {
+      const el = document.querySelector(selector);
+      if (el) {
+        scrollTimerRef.current = null;
+        requestAnimationFrame(() => el.scrollIntoView({ behavior: "smooth", block }));
+        return;
+      }
+      if (++attempts < 40) scrollTimerRef.current = setTimeout(poll, 100);
+      else scrollTimerRef.current = null;
+    };
+    poll();
+  }, []);
 
   useEffect(() => {
     if (!openSourcesMenu) return;
@@ -476,6 +496,7 @@ export default function StockMaxxingDashboard() {
   useEffect(() => {
     return () => {
       if (attachTimerRef.current) clearTimeout(attachTimerRef.current);
+      if (scrollTimerRef.current) clearTimeout(scrollTimerRef.current);
       detachListenersRef.current?.();
     };
   }, []);
@@ -487,6 +508,18 @@ export default function StockMaxxingDashboard() {
   const [mandateHistory, setMandateHistory] = useState<string[]>([]);
   const mandateHistoryRef = useRef<string[]>([]);
   const [followUpPrompt, setFollowUpPrompt] = useState<string>("");
+  const [demoPortfolio, setDemoPortfolio] = useState<boolean>(false);
+  const [demoActionMsg, setDemoActionMsg] = useState<string>("");
+  useEffect(() => {
+    if (walletAddress) {
+      setDemoPortfolio(false);
+      setDemoActionMsg("");
+    }
+  }, [walletAddress]);
+  const [studioDay, setStudioDay] = useState<number>(1);
+  const [studioMilestone, setStudioMilestone] = useState<string>(
+    "Shipped live Chainlink NAV vs DEX price tracking for the 10 Coinbase tokenized stocks MAXXAGENT supports on Base"
+  );
   const [riskProfile, setRiskProfile] = useState<"Conservative" | "Balanced" | "Aggressive">(
     "Balanced"
   );
@@ -973,11 +1006,12 @@ export default function StockMaxxingDashboard() {
                 "AI and cloud compute leaders, prefer stocks trading below NAV",
             ];
       const nextSteps = follow
-        ? [...baseHistory, follow].slice(-6)
+        ? capPromptSteps([...baseHistory, follow], 6)
         : [
             (promptOverride ?? userPrompt).trim() ||
               "AI and cloud compute leaders, prefer stocks trading below NAV",
           ];
+      if (!follow) setFollowUpPrompt("");
       const runId = ++agentRunId.current;
       setRunningAgent(true);
       setAgentError("");
@@ -1670,7 +1704,7 @@ export default function StockMaxxingDashboard() {
     if (match) {
       setChartSelectedSymbol(match.symbol);
       setActiveTab("terminal");
-      setTimeout(() => document.getElementById("swap-panel")?.scrollIntoView({ behavior: "smooth", block: "center" }), 600);
+      scrollWhenReady("#swap-panel", "center");
     }
     const shared = parseSharedBasket(window.location.search);
     if (!shared) return;
@@ -1682,7 +1716,7 @@ export default function StockMaxxingDashboard() {
     if (shared.amountUsd) setBasketUsd(shared.amountUsd);
     setActiveTab("indexes");
     setSharedBasketLoaded(true);
-    setTimeout(() => document.getElementById("index-builder")?.scrollIntoView({ behavior: "smooth", block: "start" }), 400);
+    scrollWhenReady("#index-builder", "start");
     // Mark URL ready on the next animation frame (after React commits activeTab = "indexes") so initial load doesn't push duplicate history
     requestAnimationFrame(() => {
       tabUrlReady.current = true;
@@ -2238,7 +2272,7 @@ export default function StockMaxxingDashboard() {
             <button
               onClick={() => {
                 setActiveTab("traction");
-                setTimeout(() => document.querySelector('[data-testid="target-watch"]')?.scrollIntoView({ behavior: "smooth", block: "center" }), 300);
+                scrollWhenReady('[data-testid="target-watch"]', "center");
               }}
               className="rounded-lg bg-amber-500 px-3 py-1.5 text-[11px] font-bold text-slate-950 hover:bg-amber-400 cursor-pointer"
             >
@@ -2412,7 +2446,7 @@ export default function StockMaxxingDashboard() {
                     <button
                       onClick={() => {
                         setActiveTab("indexes");
-                        setTimeout(() => document.getElementById("index-builder")?.scrollIntoView({ behavior: "smooth", block: "start" }), 300);
+                        scrollWhenReady("#index-builder", "start");
                       }}
                       className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-[#4C6FFF] to-cyan-600 px-4 py-2 text-xs font-bold text-white shadow-lg shadow-[#4C6FFF]/30 hover:brightness-110 transition cursor-pointer"
                     >
@@ -3246,6 +3280,10 @@ export default function StockMaxxingDashboard() {
             rebalanceUsdcBaseline={rebalanceUsdcBaseline}
             basketPending={basketPending}
             activityLog={activityLog}
+            demoPortfolio={demoPortfolio}
+            setDemoPortfolio={setDemoPortfolio}
+            demoActionMsg={demoActionMsg}
+            setDemoActionMsg={setDemoActionMsg}
             onClearActivityLog={() => {
               setActivityLog([]);
               try {
@@ -3258,8 +3296,14 @@ export default function StockMaxxingDashboard() {
             onBuyStocks={buyStocks}
             onSellStocks={sellStocks}
             onGoToTerminal={(sym) => {
-              if (sym) setChartSelectedSymbol(sym);
-              setActiveTab("terminal");
+              if (sym) {
+                setChartSelectedSymbol(sym);
+                setActiveTab("terminal");
+                scrollWhenReady("#swap-panel", "center");
+              } else {
+                setActiveTab("terminal");
+                window.scrollTo({ top: 0, behavior: "smooth" });
+              }
             }}
             onGoToAgent={() => setActiveTab("agent")}
           />
@@ -3276,6 +3320,10 @@ export default function StockMaxxingDashboard() {
             copyToClipboard={copyToClipboard}
             stocks={stocks}
             totalTvlUsd={totalTvlUsd}
+            dayNumber={studioDay}
+            setDayNumber={setStudioDay}
+            milestoneTitle={studioMilestone}
+            setMilestoneTitle={setStudioMilestone}
           />
         )}
       </main>

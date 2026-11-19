@@ -238,6 +238,10 @@ function Chart({
     const ratio = Math.min(1, Math.max(0, (clientX - rect.left) / Math.max(1, rect.width)));
     setHoverT(t0 + ratio * (t1 - t0));
   };
+  const navSplit =
+    tf !== "24H" && hist.nav.length > 1
+      ? splitNavWeekendGaps(hist.nav)
+      : { segments: hist.nav.length > 1 ? [hist.nav] : [], gaps: [] };
   return (
     <div className="rounded-2xl border border-slate-800 bg-[#0b1120] p-3 sm:p-4">
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2 text-[10px] text-slate-400">
@@ -278,20 +282,14 @@ function Chart({
           <span className="inline-flex items-center gap-1 font-sans">
             <span className="h-0.5 w-3 bg-cyan-400" /> Base DEX
           </span>
-          {tf !== "24H" && hist.nav.length > 1 && splitNavWeekendGaps(hist.nav).gaps.length > 0 && (
+          {navSplit.gaps.length > 0 && (
             <span className="inline-flex items-center gap-1 font-sans text-slate-400">
               <span className="h-2.5 w-2.5 rounded-sm border border-slate-400/40 bg-slate-400/20" /> NY closed
             </span>
           )}
         </span>
       </div>
-      {(() => {
-        const navSplit =
-          tf !== "24H" && hist.nav.length > 1
-            ? splitNavWeekendGaps(hist.nav)
-            : { segments: hist.nav.length > 1 ? [hist.nav] : [], gaps: [] };
-        return (
-          <div className="relative">
+      <div className="relative">
             <svg
               viewBox={`0 0 ${W} ${H}`}
               className="h-[190px] w-full cursor-crosshair touch-pan-y"
@@ -342,6 +340,8 @@ function Chart({
                     strokeWidth="2"
                     vectorEffect="non-scaling-stroke"
                   />
+                ) : seg.length === 1 ? (
+                  <circle key={`nav-pt-${idx}-${seg[0][0]}`} cx={x(seg[0][0])} cy={y(seg[0][1])} r="2.2" fill={color} />
                 ) : null
               )}
               {hist.dex.length > 1 && <path d={path(hist.dex)} fill="none" stroke="#22d3ee" strokeWidth="1.5" strokeDasharray="4 3" vectorEffect="non-scaling-stroke" />}
@@ -405,9 +405,7 @@ function Chart({
                 );
               });
             })()}
-          </div>
-        );
-      })()}
+      </div>
       <div className="mt-1.5 flex items-center justify-between font-mono tabular-nums text-[10px] text-slate-400">
         <span>{usd(lo)}</span>
         <span className="hidden sm:inline text-slate-500">

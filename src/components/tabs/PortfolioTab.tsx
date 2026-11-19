@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React from "react";
 import { RefreshCw, Sparkles, Wallet } from "lucide-react";
 import { stopDriftAlerts } from "@/components/DriftAlerts";
 import { STOCK_COLOR_MAP } from "@/components/PortfolioDonutChart";
@@ -370,6 +370,10 @@ export interface PortfolioTabProps {
   rebalanceUsdcBaseline: number | null;
   basketPending: boolean;
   activityLog: OnchainActivityEntry[];
+  demoPortfolio: boolean;
+  setDemoPortfolio: (v: boolean) => void;
+  demoActionMsg: string;
+  setDemoActionMsg: (v: string) => void;
   onClearActivityLog: () => void;
   onRefreshStocks: (wallet?: string) => void;
   onOpenWalletMenu: () => void;
@@ -399,6 +403,10 @@ export default function PortfolioTab({
   rebalanceUsdcBaseline,
   basketPending,
   activityLog,
+  demoPortfolio,
+  setDemoPortfolio,
+  demoActionMsg,
+  setDemoActionMsg,
   onClearActivityLog,
   onRefreshStocks,
   onOpenWalletMenu,
@@ -408,16 +416,6 @@ export default function PortfolioTab({
   onGoToTerminal,
   onGoToAgent,
 }: PortfolioTabProps) {
-  const [demoPortfolio, setDemoPortfolio] = useState<boolean>(false);
-  const [demoActionMsg, setDemoActionMsg] = useState<string>("");
-
-  useEffect(() => {
-    if (walletAddress) {
-      setDemoPortfolio(false);
-      setDemoActionMsg("");
-    }
-  }, [walletAddress]);
-
   const showDemo = demoPortfolio && !walletAddress;
 
   return (
@@ -717,10 +715,7 @@ export default function PortfolioTab({
               onRetryBalances={() => onRefreshStocks(walletAddress)}
               pnlErrorNote={pnl.for === walletAddress.toLowerCase() ? pnl.error : ""}
               basketPending={basketPending}
-              onBuyMore={(symbol) => {
-                onGoToTerminal(symbol);
-                setTimeout(() => document.getElementById("swap-panel")?.scrollIntoView({ behavior: "smooth", block: "center" }), 350);
-              }}
+              onBuyMore={(symbol) => onGoToTerminal(symbol)}
               onSell={(row, pct) =>
                 onSellStocks(
                   [{ symbol: row.st.symbol, b20Address: row.st.b20Address, tokens: row.rawTokens * pct }],

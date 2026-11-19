@@ -10,6 +10,8 @@ import {
   LiveTokenizedStock,
 } from "@/lib/tokenizedStocks";
 
+export const maxDuration = 60;
+
 const publicClient = createPublicClient({
   chain: base,
   transport: baseTransport({ timeout: 8000 }),
@@ -199,8 +201,8 @@ async function getMarket(): Promise<LiveTokenizedStock[]> {
   if (!marketInflight) {
     marketInflight = buildMarket()
       .then((stocks) => {
-        // Don't pin any fallback snapshot in memory: retry on the next request
-        if (stocks.every((s) => s.source !== "fallback-snapshot")) marketCache = { at: Date.now(), stocks };
+        // Don't pin an all-fallback snapshot if RPC failed completely; partial live data is still worth caching for 15s
+        if (stocks.some((s) => s.source !== "fallback-snapshot")) marketCache = { at: Date.now(), stocks };
         return stocks;
       })
       .finally(() => {
@@ -272,7 +274,7 @@ async function buildMarket(): Promise<LiveTokenizedStock[]> {
       const rawMultiplier = multRes?.status === "success" ? (multRes.result as bigint) : 0n;
       const rawPolicy = null;
 
-      const isRoundValid = Number(answer) > 0 && Number(updatedAt) > 0 && answeredInRound >= roundId;
+      const isRoundValid = Number(answer) > 0 && Number(updatedAt) > 0 && Number(updatedAt) <= nowSec + 300 && answeredInRound >= roundId;
       const navPrice = isRoundValid ? Number(answer) / 1e8 : fb.price;
       const updatedAtNum = isRoundValid ? Number(updatedAt) : 0;
       const oracleAgeMinutes = isRoundValid ? Math.max(0, Math.round((nowSec - updatedAtNum) / 60)) : -1;
@@ -423,15 +425,17 @@ export async function GET(request: NextRequest) {
         .map((stock, i) => ({ stock, policy: val(i * 3 + 2) }))
         .filter((x) => x.policy !== null && x.policy > 0n);
       const authResults = policyChecks.length
-        ? await publicClient.multicall({
-            allowFailure: true,
-            contracts: policyChecks.map((x) => ({
-              address: x.stock.b20Address,
-              abi: B20_AND_CHAINLINK_ABI,
-              functionName: "isAuthorized" as const,
-              args: [x.policy as bigint, walletAddr] as const,
-            })),
-          })
+        ? await publicClient
+            .multicall({
+              allowFailure: true,
+              contracts: policyChecks.map((x) => ({
+                address: x.stock.b20Address,
+                abi: B20_AND_CHAINLINK_ABI,
+                functionName: "isAuthorized" as const,
+                args: [x.policy as bigint, walletAddr] as const,
+              })),
+            })
+            .catch(() => [])
         : [];
       const authorized = new Map(
         policyChecks.map((x, i) => [x.stock.symbol, authResults[i]?.status === "success" ? Boolean(authResults[i].result) : false])
