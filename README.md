@@ -2,7 +2,7 @@
 
 # MAXXAGENT
 
-**Build your own index of Coinbase tokenized stocks on Base, or let an agent propose one, and buy it in one click from your own wallet.**
+**Build your own index of Coinbase tokenized stocks on Base, or let an agent propose one, and buy it in one flow from your own wallet.**
 
 **Live:** [maxxagent.xyz](https://maxxagent.xyz) · also a Farcaster mini app · [Live stats](https://maxxagent.xyz/stats) · [How to verify](https://maxxagent.xyz/verify) · [FAQ](https://maxxagent.xyz/faq)
 
@@ -20,24 +20,24 @@ Built for the **Base Builder Quest: Stocks Maxxing Season** (Nov 5 – Dec 5, 20
 
 | Feature | Details |
 | --- | --- |
-| **Build an index** | Pick from the 10 Coinbase B20 stocks MAXXAGENT supports (NVDAc, AAPLc, TSLAc, MSFTc, METAc, GOOGLc, AMZNc, MSTRc, SNDKc, SPCXc: deep Base liquidity and a Chainlink price), set weights with sliders, buy the whole basket at once (at least $0.50 per stock), or share it as a link (`/?basket=NVDAc-40,MSFTc-30&amount=50`) |
-| **Basket agent** | A transparent, rule-based agent (no LLM) reads a plain-language request in English: themes (AI, cloud, big tech, space, crypto, Elon Musk companies…), named stocks, exclusions ("no Tesla"), "only …", number of stocks, equal weights, **your own weights** ("60% Apple 40% Microsoft", "half in Nvidia"), risk, and discount / dividend / liquidity / **profitable** / **growth** preferences. It scores every stock on live data: DEX vs Chainlink NAV gap, liquidity, dividend multiplier, and **volatility and largest fall from the last ~2 months of Chainlink NAV** |
+| **Build an index** | Pick from the 10 Coinbase B20 stocks MAXXAGENT supports (NVDAc, AAPLc, TSLAc, MSFTc, METAc, GOOGLc, AMZNc, MSTRc, SNDKc, SPCXc: deep Base liquidity and a Chainlink price), filter/search stock sliders (`Selected`, `Not selected`, ticker), set weights, buy the whole basket at once (at least $0.50 per stock), or share it as a link (`/?basket=NVDAc-40,MSFTc-30&amount=50`) |
+| **Basket agent** | A transparent, rule-based agent (no LLM) reads plain-language mandates in English or Indonesian with **multi-step follow-up refinements** (*Refine this basket*): themes (AI, cloud, big tech, space, crypto, Elon Musk companies…), named stocks, exclusions ("no Tesla"), "only …", number of stocks, equal weights, **your own weights** ("60% Apple 40% Microsoft", "half in Nvidia"), risk, and discount / dividend / liquidity / **profitable** / **growth** preferences. It scores every stock on live data: DEX vs Chainlink NAV gap, liquidity, dividend multiplier, and **volatility and largest fall from the last ~2 months of Chainlink NAV** |
 | **Agent limits** | Limits are never broken: "max 30% per stock" keeps the cap and leaves the rest in USDC when the stocks can't hold it; "keep 20% in cash"; a conservative basket leaves out stocks above 60% a year volatility. Each limit is shown as *kept*, *adjusted* or *not supported*, with the reason |
 | **Facts, assumptions, opinions** | Facts are separated from assumptions and from the rule-based opinions, and each fact links to its source: the Chainlink feed, the DEX pool, the token, and the company's own **SEC 10-K** (revenue, growth, net income). A stock Coinbase issues but MAXXAGENT doesn't support (e.g. Netflix → NFLXc) is named with why: its live Base pool size and no Chainlink price. Orders large for a stock's pool get a "check before buying" note. It never trades on its own |
 | **Saved target** | Save a basket as your target; each visit checks the wallet against it, flags drift or a broken weight limit, and opens a rebalance plan you sign step by step |
-| **One-click buy & sell** | Pay with **USDC or ETH**. Routed through the KyberSwap aggregator; one EIP-5792 batch (sequential fallback), exact-amount approvals only. Routes costing over 1.5% or priced more than 5% worse than the Chainlink NAV are refused |
+| **One-flow buy & sell** | Pay with **USDC or ETH**. Routed through the KyberSwap aggregator with **1 confirmation on EIP-5792 smart wallets** and **step-by-step fallback on standard wallets** (with per-leg sequential progress), exact-amount approvals only. Routes costing over 1.5% or priced more than 5% worse than the Chainlink NAV are refused |
 | **Review before signing** | Estimate, guaranteed minimum, cost vs NAV, max slippage 0.3 / 0.5 / 1%, quote countdown. The wallet opens only after *Confirm* |
-| **Portfolio** | Holdings at NAV, **P/L since purchase** (average cost from the wallet's onchain history, including ETH buys), **onchain trade history** with BaseScan links, one-click sell |
+| **Portfolio** | Holdings at NAV, **P/L since purchase** (average cost from the wallet's onchain history, including ETH buys), **onchain trade history** with BaseScan links, direct sell, plus a wallet-free **Sample portfolio (demo)** valued at live Chainlink NAVs with simulated drift & rebalance preview |
 | **Drift alerts** | Pick when to be warned (2 / 5 / 10% off target, or any stock above its limit). In the Farcaster mini app, "Alert me" lets the agent check the wallet after each US trading day (Vercel Cron, Chainlink NAV on Base) and send a notification that opens the rebalance plan. Read-only: it never trades. A rebalance history with BaseScan links is kept per wallet |
 | **Rebalance** | Moves current holdings toward an agent basket: sell overweight, then buy underweight with the proceeds; guards against tiny portfolios |
-| **Stock pages** | `/stock/[symbol]`: live NAV, DEX price and gap, liquidity, volume, market cap, multiplier, 7-day NAV vs DEX chart, US market status |
+| **Stock pages** | `/stock/[symbol]`: live NAV, DEX price and gap, liquidity, volume, market cap, multiplier, 7-day / 30-day NAV vs DEX chart (highlighting US weekend closed gaps), issuer transfer-policy context, and US market status |
 | **Live stats** | `/stats` counts every trade MAXXAGENT routed, read from onchain router events (team test wallet excluded) |
 | **ERC-8004 agent** | Registered in the ERC-8004 (Trustless Agents) Identity Registry on Base as agentId **1202095** ([tx](https://basescan.org/tx/0xcf8285ec29ac4f8139033f01eb14ebc858c60220022e8aa733d772aa03ff38d3)); registration file at `/agent-registration.json`, domain proof at `/.well-known/agent-registration.json` |
-| **Read-only preview** | `/preview` opens from every country, including where trading is blocked (e.g. for reviewers in the US): market heatmap, a live example of the agent's research (limits, weights, facts with sources, assumptions, stocks not picked) and the official news feed. Informational only, with a Regulation S notice: no wallet, no orders, no links into the trading pages; rendered on the server, so the browser calls no API (those stay blocked). Not indexed by search engines |
+| **Read-only preview** | `/preview` opens from every country, including where trading is blocked (e.g. for reviewers in the US): market heatmap, read-only **Published indexes** from the onchain registry, a live example of the agent's research (limits, weights, facts with sources, assumptions, stocks not picked), official news feed, and Dark/Light theme toggle. Informational only, with a Regulation S notice: no wallet, no orders, no links into the trading pages; rendered on the server, so the browser calls no API (those stay blocked). Not indexed by search engines |
 | **Index factsheet** | Each published index page reads like a fund factsheet: key facts (holdings, largest weight, top-3 concentration, published / last change, no index fee, no custody), sector mix, the weighted change of the constituents' Chainlink NAV since publication (labelled hypothetical), data sources per stock (Chainlink feed, token contract, Coinbase prospectus) and the main risks |
 | **Market heatmap** | Treemap of the 10 stocks on the Market tab: tile size = value of the tokens on Base (supply × NAV) or 24h DEX volume, colour = 24h DEX price change, or the gap between the DEX price and the last Chainlink NAV; when Wall Street is closed a strip says when it opens (New York time) while the tokens keep trading; refreshes every minute while the tab is open; each tile opens the stock page |
 | **News & filings** | A News tab (and a section on each stock page) lists the companies' own SEC filings, the press releases they attach to them (earnings, leadership changes, deals) and company news from the official newsroom feeds of NVIDIA, Apple, Microsoft, Meta and Google (free public RSS, deduplicated against the SEC press releases), each with topic tags, a short opening line, a link to the original on sec.gov and the token's price change since it was published (24/7 DEX price, or the Chainlink NAV for older items). Public documents only; no article text, images or outlet logos. Labelled "not financial advice" |
-| **Share cards** | A shared basket link or index page previews as a card of the basket (name, weight bar, stocks) on X, Farcaster and chat apps (`/api/og`, 1200×630 and 3:2) |
+| **Share cards** | A shared basket link or index page previews as a card of the basket (name, index ticker chip, creator pill, proportional weight bar, stocks) on X, Farcaster and chat apps (`/api/og`, 1200×630 and 3:2) |
 | **Mini app** | Opens inside Farcaster clients with the host wallet connected automatically; shared links render as a launch card; casts shared to MAXXAGENT open the stocks they mention |
 | **Index registry** | [`StockMaxxIndexRegistry`](https://basescan.org/address/0xdd059D85d1327a5A4b9cA14cF0A6DF82C7b86909) on Base (source verified on [BaseScan](https://basescan.org/address/0xdd059D85d1327a5A4b9cA14cF0A6DF82C7b86909#code) and [Sourcify](https://repo.sourcify.dev/8453/0xdd059D85d1327a5A4b9cA14cF0A6DF82C7b86909)) publishes index names and weights onchain so anyone can buy the same basket. No deposits, no payable functions, no token transfers, no fees; only an index's creator can change its weights. First index: #1 `MAXX-AIC3` (GOOGLc / MSFTc / NVDAc). Buys of each index are counted from onchain swaps |
 | **Attribution** | Every transaction carries the ERC-8021 Builder Code (`ox/erc8021`), 32-byte aligned so it survives smart-wallet batching, plus the `dataSuffix` capability |
@@ -65,9 +65,11 @@ Full walk-through: **[maxxagent.xyz/verify](https://maxxagent.xyz/verify)**.
 
 | Path | Purpose |
 | --- | --- |
-| `src/app/HomeClient.tsx` | App UI: Market, Agent, Indexes, Portfolio (+ team Studio at `/?studio`) |
+| `src/app/HomeClient.tsx` | App shell: Market overview, Pro Terminal, swap execution orchestration, wallet state & dynamic tab loader |
+| `src/components/tabs/*` | Lazy-loaded tabs: `AgentTab.tsx`, `IndexesTab.tsx`, `PortfolioTab.tsx` (incl. demo preview), `PublicAttributionTab.tsx` (`/?studio`) |
+| `src/components/PortfolioDonutChart.tsx` | Shared portfolio/index weight ring and token color map |
 | `src/app/page.tsx` | Server wrapper: a shared basket link gets its own preview card |
-| `src/app/stock/[symbol]`, `stats`, `verify`, `faq`, `terms`, `share` | Stock pages, live stats, verification guide, FAQ, terms, cast-share handler |
+| `src/app/stock/[symbol]`, `index/[id]`, `preview`, `stats`, `verify`, `faq`, `terms`, `share` | Stock pages, index factsheets, read-only Reg S preview, live stats, verification guide, FAQ, terms, cast-share handler |
 | `src/app/.well-known/farcaster.json` | Mini app manifest |
 | `src/app/api/stocks` | Live B20 + Chainlink + DEX data, wallet balances (stocks, USDC, ETH) |
 | `src/app/api/swap` | Builds swap calldata (USDC or ETH in; whitelist, NAV guard, cost cap, Builder Code) |
@@ -99,8 +101,9 @@ npm run dev                    # http://localhost:3000
 Checks (no funds needed):
 
 ```bash
-npm run test:e2e               # 26 user journeys in a browser with a read-only mock wallet (-- --url=https://maxxagent.xyz for production)
-npm run test:agent             # 47 request-reader checks (weights, limits, vocabulary, unsupported stocks)
+npm run test                   # all 6 suites: contracts, agent, rebalance, indexmatch, drift, market
+npm run test:e2e               # 28 user journeys in a browser with a read-only mock wallet (-- --url=https://maxxagent.xyz for production)
+npm run test:agent             # mandate parser, multi-step follow-up, weights, limits & bilingual checks
 npm run test:rebalance         # rebalance planner unit checks
 npm run test:attribution       # Builder Code survives EOA, EIP-7702 and ERC-4337 batching
 npm run test:contracts         # 19 registry checks via a single eth_call
