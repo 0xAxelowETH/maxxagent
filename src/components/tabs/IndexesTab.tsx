@@ -216,6 +216,36 @@ export default function IndexesTab({
                   ))}
                 </span>
               </button>
+
+              <div className="mt-3.5 pt-3 border-t border-slate-800/80 flex items-center justify-between gap-2">
+                <span className="text-[10px] font-mono uppercase tracking-wider text-slate-400">
+                  1-Click Pack ({basketPayWith.toUpperCase()})
+                </span>
+                <div className="flex items-center gap-1.5">
+                  {[5, 20].map((packUsd) => (
+                    <button
+                      key={packUsd}
+                      type="button"
+                      disabled={basketPending}
+                      onClick={() => {
+                        selectPreset();
+                        const legs: BasketLeg[] = preset.allocations.flatMap((a) => {
+                          const st = (stocks.length ? stocks : BASE_TOKENIZED_STOCKS).find((x) => x.symbol === a.symbol);
+                          const usd = Number(((packUsd * a.weightBps) / 10000).toFixed(2));
+                          return st && usd >= MIN_BUY_USD
+                            ? [{ symbol: st.symbol, b20Address: st.b20Address, usd, payWith: basketPayWith }]
+                            : [];
+                        });
+                        if (legs.length > 0) buyStocks(legs, preset.ticker);
+                      }}
+                      className="inline-flex min-h-[28px] items-center gap-1 rounded-lg border border-emerald-500/35 bg-emerald-500/10 px-2.5 py-1 font-mono text-[11px] font-bold text-emerald-300 hover:bg-emerald-500/20 disabled:opacity-50 cursor-pointer"
+                    >
+                      <Zap className="h-3 w-3" />
+                      Buy ${packUsd}
+                    </button>
+                  ))}
+                </div>
+              </div>
             </div>
           );
         })}

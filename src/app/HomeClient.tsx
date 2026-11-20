@@ -2630,50 +2630,88 @@ export default function StockMaxxingDashboard() {
 
             {stocks.length > 0 && <MarketHeatmap stocks={stocks} updatedAt={fetchedAt} />}
 
-            {/* Stocks whose DEX price is under the Chainlink NAV right now (only with a live DEX quote; never synthesized) */}
+            {/* Below-NAV Discount Radar (only live DEX quotes; falls back to tightest NAV spreads when all trade >= NAV) */}
             {(() => {
-              const below = stocks
-                .filter((s) => s.dexPriceSource !== "onchain-nav-model" && (s.weekendGapPct ?? 0) <= -0.15)
-                .sort((a, b) => (a.weekendGapPct ?? 0) - (b.weekendGapPct ?? 0))
-                .slice(0, 4);
-              if (below.length === 0) return null;
+              const liveQuoted = stocks.filter((s) => s.dexPriceSource !== "onchain-nav-model");
+              const discounts = liveQuoted
+                .filter((s) => (s.weekendGapPct ?? 0) <= -0.1)
+                .sort((a, b) => (a.weekendGapPct ?? 0) - (b.weekendGapPct ?? 0));
+              const hasDiscounts = discounts.length > 0;
+              const radar = (
+                hasDiscounts
+                  ? discounts
+                  : [...liveQuoted].sort((a, b) => Math.abs(a.weekendGapPct ?? 0) - Math.abs(b.weekendGapPct ?? 0))
+              ).slice(0, 4);
+              if (radar.length === 0) return null;
               const marketOpen = usMarketStatus().state === "open";
               return (
-                <section aria-label="Stocks trading below NAV" data-testid="below-nav-strip" className="rounded-2xl border border-emerald-500/30 bg-emerald-500/5 p-4">
+                <section aria-label="Below-NAV Discount Radar" data-testid="below-nav-strip" className="rounded-2xl border border-emerald-500/30 bg-emerald-500/5 p-4">
                   <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
-                    <h3 className="text-sm font-bold text-white">Below NAV right now</h3>
+                    <div className="flex items-center gap-2">
+                      <h3 className="text-sm font-bold text-white">
+                        {hasDiscounts ? "Below-NAV Discount Radar" : "Tightest DEX vs NAV Spreads"}
+                      </h3>
+                      <span className="rounded-md border border-emerald-500/35 bg-emerald-500/15 px-1.5 py-0.5 font-mono text-[10px] font-bold text-emerald-300">
+                        24/7 Radar
+                      </span>
+                    </div>
                     <p className="text-[11px] text-slate-400">
                       {marketOpen
-                        ? "DEX price under the Chainlink NAV. The exact price is shown before you sign."
-                        : "US market is closed: NAV is the last close, so a gap can simply reflect news since then."}{" "}
+                        ? "Live DEX prices compared against Chainlink NAV. Exact quote shown before signing."
+                        : "US market is closed: NAV holds last close while DEX moves 24/7."}{" "}
                       Not advice.
                     </p>
                   </div>
-                  <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
-                    {below.map((s) => (
-                      <div key={s.symbol} className="flex items-center justify-between gap-2 rounded-xl border border-slate-800 bg-[#070b14] px-3 py-2">
-                        <div className="flex min-w-0 items-center gap-2">
-                          <img src={s.logoUrl} alt="" className="h-7 w-7 shrink-0 rounded-full border border-slate-700 bg-slate-900 object-cover" />
-                          <div className="min-w-0">
-                            <div className="font-mono text-xs font-bold text-white">{s.symbol}</div>
-                            <div className="font-mono tabular-nums text-[11px] text-slate-400">
-                              ${s.dexPrice24_7.toFixed(2)} <span className="text-emerald-300">{(s.weekendGapPct ?? 0).toFixed(2)}%</span>
+                  <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5">
+                    {radar.map((s) => {
+                      const gap = s.weekendGapPct ?? 0;
+                      const liq = s.dexLiquidityUsd
+                        ? s.dexLiquidityUsd >= 1e6
+                          ? `$${(s.dexLiquidityUsd / 1e6).toFixed(1)}M liq`
+                          : `$${Math.round(s.dexLiquidityUsd / 1e3)}K liq`
+                        : "Live pool";
+                      return (
+                        <div key={s.symbol} className="flex items-center justify-between gap-2 rounded-xl border border-slate-800 bg-[#070b14] px-3 py-2.5">
+                          <div className="flex min-w-0 items-center gap-2">
+                            <img src={s.logoUrl} alt="" className="h-7 w-7 shrink-0 rounded-full border border-slate-700 bg-slate-900 object-cover" />
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-1.5">
+                                <span className="font-mono text-xs font-bold text-white">{s.symbol}</span>
+                                <span className={`font-mono text-[10px] font-bold ${gap <= 0 ? "text-emerald-300" : "text-amber-300"}`}>
+                                  {gap >= 0 ? "+" : ""}{gap.toFixed(2)}%
+                                </span>
+                              </div>
+                              <div className="font-mono tabular-nums text-[10px] text-slate-400 truncate">
+                                DEX ${s.dexPrice24_7.toFixed(2)} · {liq}
+                              </div>
                             </div>
                           </div>
+                          <div className="flex shrink-0 items-center gap-1">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setChartSelectedSymbol(s.symbol);
+                                document.getElementById("swap-panel")?.scrollIntoView({ behavior: "smooth", block: "center" });
+                              }}
+                              className="inline-flex min-h-[30px] items-center rounded-lg border border-slate-700 bg-slate-900 px-2 py-1 text-[10px] font-semibold text-slate-200 hover:border-[#4C6FFF] hover:text-white cursor-pointer"
+                              aria-label={`Select ${s.symbol} in Swap`}
+                            >
+                              Swap
+                            </button>
+                            <button
+                              type="button"
+                              disabled={basketPending}
+                              onClick={() => buyStocks([{ symbol: s.symbol, b20Address: s.b20Address, usd: 5, payWith: "usdc" }], s.symbol)}
+                              className="inline-flex min-h-[30px] items-center gap-0.5 rounded-lg bg-emerald-600 px-2 py-1 text-[10px] font-bold text-white hover:bg-emerald-500 disabled:opacity-50 cursor-pointer"
+                              aria-label={`Quick buy $5 of ${s.symbol}`}
+                            >
+                              <Zap className="h-2.5 w-2.5" />
+                              $5
+                            </button>
+                          </div>
                         </div>
-                        <button
-                          onClick={() => {
-                            setChartSelectedSymbol(s.symbol);
-                            document.getElementById("swap-panel")?.scrollIntoView({ behavior: "smooth", block: "center" });
-                          }}
-                          className="shrink-0 inline-flex min-h-[34px] items-center gap-1 rounded-lg bg-emerald-600 px-3 py-1.5 text-[11px] font-bold text-white hover:bg-emerald-500 cursor-pointer"
-                          aria-label={`Buy ${s.symbol}`}
-                        >
-                          <Zap className="h-3 w-3" />
-                          Buy
-                        </button>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 </section>
               );
