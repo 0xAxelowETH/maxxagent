@@ -272,7 +272,8 @@ function Chart({
           {summary && (
             <span className="flex flex-wrap items-center gap-1.5 font-mono tabular-nums text-[10px]">
               <span className="rounded border border-slate-800 bg-[#050811] px-1.5 py-0.5 text-slate-300">
-                H <strong className="text-white">{usd(summary.high)}</strong> · L <strong className="text-white">{usd(summary.low)}</strong>
+                {hist.nav.length >= 2 ? "NAV " : "DEX "}H <strong className="text-white">{usd(summary.high)}</strong> · L{" "}
+                <strong className="text-white">{usd(summary.low)}</strong>
               </span>
               <span className={`rounded border px-1.5 py-0.5 font-bold ${summary.returnPct >= 0 ? "border-emerald-500/35 bg-emerald-500/10 text-emerald-300" : "border-rose-500/35 bg-rose-500/10 text-rose-300"}`}>
                 {pct(summary.returnPct)}
@@ -438,13 +439,14 @@ function Chart({
             })()}
       </div>
       <div className="mt-1.5 flex items-center justify-between font-mono tabular-nums text-[10px] text-slate-400">
-        <span>{usd(lo)}</span>
+        {/* Range of every line drawn (NAV and DEX), so it can differ from the NAV-only H / L above */}
+        <span title="Lowest price drawn on the chart (NAV or DEX)">Chart low {usd(lo)}</span>
         <span className="hidden sm:inline text-slate-500">
           {new Date(t0 * 1000).toLocaleDateString("en-US", { month: "short", day: "numeric" })} →{" "}
           {new Date(((t0 + t1) / 2) * 1000).toLocaleDateString("en-US", { month: "short", day: "numeric" })} →{" "}
           {new Date(t1 * 1000).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
         </span>
-        <span>{usd(hi)}</span>
+        <span title="Highest price drawn on the chart (NAV or DEX)">Chart high {usd(hi)}</span>
       </div>
       {marks.length > 0 && (
         <p className="mt-1 text-[10px] text-slate-500" data-testid="chart-news">

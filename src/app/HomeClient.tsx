@@ -1954,8 +1954,8 @@ export default function StockMaxxingDashboard() {
                     Base B20 Stock TVL
                   </div>
                   <div className="font-mono text-sm font-bold text-white">
-                    ${(totalTvlUsd / 1e6).toFixed(2)}M{" "}
-                    <span className="text-[10px] font-semibold text-emerald-400">Live</span>
+                    {stocks.length > 0 ? `$${(totalTvlUsd / 1e6).toFixed(2)}M` : "…"}{" "}
+                    {stocks.length > 0 && <span className="text-[10px] font-semibold text-emerald-400">Live</span>}
                   </div>
                 </div>
               </div>
@@ -1966,10 +1966,10 @@ export default function StockMaxxingDashboard() {
                     24h Base DEX Vol
                   </div>
                   <div className="font-mono text-sm font-bold text-cyan-400">
-                    ${(totalDexVolume24hUsd / 1e6).toFixed(2)}M{" "}
-                    <span className="text-[10px] font-normal text-slate-400">
-                      (${(totalDexLiquidityUsd / 1e6).toFixed(2)}M Liq)
-                    </span>
+                    {stocks.length > 0 ? `$${(totalDexVolume24hUsd / 1e6).toFixed(2)}M` : "…"}{" "}
+                    {stocks.length > 0 && (
+                      <span className="text-[10px] font-normal text-slate-400">(${(totalDexLiquidityUsd / 1e6).toFixed(2)}M Liq)</span>
+                    )}
                   </div>
                 </div>
               </div>
@@ -2634,9 +2634,17 @@ export default function StockMaxxingDashboard() {
 
             {/* Below-NAV Discount Radar (only live DEX quotes; falls back to tightest NAV spreads when all trade >= NAV) */}
             {(() => {
-              const liveQuoted = stocks.filter((s) => s.dexPriceSource !== "onchain-nav-model");
+              // Only stocks with both a live DEX quote and a readable NAV: the API reports a 0% gap when the NAV
+              // couldn't be read, which must never show up as the "best" spread next to a buy button
+              const liveQuoted = stocks.filter(
+                (s) =>
+                  s.dexPriceSource !== "onchain-nav-model" &&
+                  s.source !== "fallback-snapshot" &&
+                  !(s.isOracleStale && (s.weekendGapPct ?? 0) === 0)
+              );
+              // Same threshold as the API's BUY_DEX_DISCOUNT signal
               const discounts = liveQuoted
-                .filter((s) => (s.weekendGapPct ?? 0) <= -0.1)
+                .filter((s) => (s.weekendGapPct ?? 0) <= -0.15)
                 .sort((a, b) => (a.weekendGapPct ?? 0) - (b.weekendGapPct ?? 0));
               const hasDiscounts = discounts.length > 0;
               const radar = (
@@ -2647,7 +2655,11 @@ export default function StockMaxxingDashboard() {
               if (radar.length === 0) return null;
               const marketOpen = usMarketStatus().state === "open";
               return (
-                <section aria-label="Below-NAV Discount Radar" data-testid="below-nav-strip" className="rounded-2xl border border-emerald-500/30 bg-emerald-500/5 p-4">
+                <section
+                  aria-label={hasDiscounts ? "Below-NAV Discount Radar" : "DEX vs NAV spreads"}
+                  data-testid="below-nav-strip"
+                  className={`rounded-2xl border p-4 ${hasDiscounts ? "border-emerald-500/30 bg-emerald-500/5" : "border-slate-800 bg-[#070b14]/60"}`}
+                >
                   <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
                     <div className="flex items-center gap-2">
                       <h3 className="text-sm font-bold text-white">
@@ -2679,8 +2691,8 @@ export default function StockMaxxingDashboard() {
                             <div className="min-w-0">
                               <div className="flex items-center gap-1.5">
                                 <span className="font-mono text-xs font-bold text-white">{s.symbol}</span>
-                                <span className={`font-mono text-[10px] font-bold ${gap <= 0 ? "text-emerald-300" : "text-amber-300"}`}>
-                                  {gap >= 0 ? "+" : ""}{gap.toFixed(2)}%
+                                <span className={`font-mono text-[10px] font-bold ${gap < 0 ? "text-emerald-300" : gap > 0 ? "text-amber-300" : "text-slate-300"}`}>
+                                  {gap === 0 ? "at NAV" : `${Math.abs(gap).toFixed(2)}% ${gap < 0 ? "below" : "above"} NAV`}
                                 </span>
                               </div>
                               <div className="font-mono tabular-nums text-[10px] text-slate-400 truncate">
@@ -2700,16 +2712,18 @@ export default function StockMaxxingDashboard() {
                             >
                               Swap
                             </button>
-                            <button
-                              type="button"
-                              disabled={basketPending}
-                              onClick={() => buyStocks([{ symbol: s.symbol, b20Address: s.b20Address, usd: 5, payWith: "usdc" }], s.symbol)}
-                              className="inline-flex min-h-[30px] items-center gap-0.5 rounded-lg bg-emerald-600 px-2 py-1 text-[10px] font-bold text-white hover:bg-emerald-500 disabled:opacity-50 cursor-pointer"
-                              aria-label={`Quick buy $5 of ${s.symbol}`}
-                            >
-                              <Zap className="h-2.5 w-2.5" />
-                              $5
-                            </button>
+                            {hasDiscounts && (
+                              <button
+                                type="button"
+                                disabled={basketPending}
+                                onClick={() => buyStocks([{ symbol: s.symbol, b20Address: s.b20Address, usd: 5, payWith: "usdc" }], s.symbol)}
+                                className="inline-flex min-h-[30px] items-center gap-0.5 rounded-lg bg-emerald-600 px-2 py-1 text-[10px] font-bold text-white hover:bg-emerald-500 disabled:opacity-50 cursor-pointer"
+                                aria-label={`Quick buy $5 of ${s.symbol}`}
+                              >
+                                <Zap className="h-2.5 w-2.5" />
+                                $5
+                              </button>
+                            )}
                           </div>
                         </div>
                       );
@@ -3336,7 +3350,20 @@ export default function StockMaxxingDashboard() {
         {/* News & filings for the supported stocks, with the price change since each item was published */}
         {activeTab === "news" && (
           <div className="space-y-4" data-testid="news-tab">
-            <NewsFeed limit={15} title="News & filings" />
+            <NewsFeed
+              limit={15}
+              title="News & filings"
+              onTrade={(sym) => {
+                setChartSelectedSymbol(sym);
+                setActiveTab("terminal");
+                scrollWhenReady("#swap-panel", "center");
+              }}
+              onAsk={(prompt) => {
+                setUserPrompt(prompt);
+                setActiveTab("agent");
+                window.scrollTo({ top: 0, behavior: "smooth" });
+              }}
+            />
           </div>
         )}
 

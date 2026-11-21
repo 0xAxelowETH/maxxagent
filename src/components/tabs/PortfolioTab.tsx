@@ -37,7 +37,12 @@ export interface PortfolioPositionRow {
   estimated?: boolean;
 }
 
-const fmtSignedUsd = (n: number) => `${n >= 0 ? "+" : "−"}$${Math.abs(n).toFixed(Math.abs(n) < 1 ? 4 : 2)}`;
+// Under $1 keeps 4 decimals so a few cents of P/L on a small position still shows; exactly zero reads $0.00
+const fmtSignedUsd = (n: number) =>
+  Math.abs(n) < 0.00005
+    ? "$0.00"
+    : `${n >= 0 ? "+" : "−"}$${Math.abs(n).toLocaleString("en-US", { minimumFractionDigits: Math.abs(n) < 1 ? 4 : 2, maximumFractionDigits: Math.abs(n) < 1 ? 4 : 2 })}`;
+const usd2 = (n: number) => n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const plTone = (n: number) => (n > 0 ? "text-emerald-300" : n < 0 ? "text-rose-300" : "text-slate-300");
 
 function buildDemoPortfolio(stocks: LiveTokenizedStock[]) {
@@ -154,18 +159,18 @@ function PortfolioPositionsView({
       <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 font-mono tabular-nums">
         <div className="rounded-xl border border-slate-800 bg-[#070b14] p-3">
           <div className="text-[10px] font-sans text-slate-400">Stocks value</div>
-          <div className="text-lg font-extrabold text-white">${totalUsd.toFixed(2)}</div>
+          <div className="text-lg font-extrabold text-white">${usd2(totalUsd)}</div>
         </div>
         <div className="rounded-xl border border-slate-800 bg-[#070b14] p-3">
           <div className="text-[10px] font-sans text-slate-400">{mode === "demo" ? "Sample USDC" : "USDC on Base"}</div>
           <div className="text-lg font-extrabold text-emerald-300">
-            {usdcBalance === null ? "—" : `$${usdcBalance.toFixed(2)}`}
+            {usdcBalance === null ? "—" : `$${usd2(usdcBalance)}`}
           </div>
         </div>
         <div className="rounded-xl border border-slate-800 bg-[#070b14] p-3" title="Stocks at NAV + USDC + ETH">
           <div className="text-[10px] font-sans text-slate-400">Total balance</div>
           <div className="text-lg font-extrabold text-cyan-300">
-            ${(totalUsd + (usdcBalance ?? 0) + (ethBalance !== null && ethUsd ? ethBalance * ethUsd : 0)).toFixed(2)}
+            ${usd2(totalUsd + (usdcBalance ?? 0) + (ethBalance !== null && ethUsd ? ethBalance * ethUsd : 0))}
           </div>
           <div className="text-[10px] font-sans text-slate-500">
             {rows.length} stock{rows.length === 1 ? "" : "s"}
@@ -248,10 +253,10 @@ function PortfolioPositionsView({
                     {row.rawTokens.toFixed(6)}
                     <span className="block text-[10px] text-slate-500">≈ {row.sharesUI.toFixed(6)} sh</span>
                   </td>
-                  <td className="hidden sm:table-cell py-2.5 pr-3 text-right text-slate-300">${row.st.navPrice.toFixed(2)}</td>
-                  <td className="py-2.5 pr-3 text-right font-bold text-white">${row.usdValue.toFixed(2)}</td>
+                  <td className="hidden sm:table-cell py-2.5 pr-3 text-right text-slate-300">${usd2(row.st.navPrice)}</td>
+                  <td className="py-2.5 pr-3 text-right font-bold text-white">${usd2(row.usdValue)}</td>
                   <td className="hidden sm:table-cell py-2.5 pr-3 text-right text-slate-300">
-                    {row.avgCostUsd !== null ? `$${row.avgCostUsd.toFixed(2)}` : pnlPlaceholder}
+                    {row.avgCostUsd !== null ? `$${usd2(row.avgCostUsd)}` : pnlPlaceholder}
                   </td>
                   <td className="py-2.5 pr-3 text-right whitespace-nowrap">
                     {row.plUsd !== null && row.plPct !== null ? (

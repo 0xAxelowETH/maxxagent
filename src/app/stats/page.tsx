@@ -143,7 +143,7 @@ export default function StatsPage() {
 
             {t.trades === 0 ? (
               <div className="rounded-2xl border border-dashed border-slate-800 p-6 text-center text-sm text-slate-400">
-                No trades from users yet.{" "}
+                No trades from users yet{data.excludesTeamTestWallet ? " (our own test wallets don't count)" : ""}.{" "}
                 <Link href="/" className="text-cyan-300 underline">
                   Be the first
                 </Link>
@@ -214,7 +214,7 @@ export default function StatsPage() {
                 <section className="rounded-2xl border border-slate-800 bg-[#0b1120] p-4 space-y-3">
                   <div className="flex items-center justify-between gap-2">
                     <h2 className="text-sm font-bold text-white">By day (UTC)</h2>
-                    <span className="text-[11px] text-slate-400">Daily volume &amp; trades</span>
+                    <span className="text-[11px] text-slate-400">Daily volume &amp; trades · last 14 days</span>
                   </div>
                   {(() => {
                     const dayUsd = reconcileUsdCents(
@@ -323,7 +323,7 @@ export default function StatsPage() {
               <code className="text-slate-300">maxxagent</code>, which the router records onchain (ClientData event, including the
               USD value). The router&apos;s Swapped event gives the wallet and the stock; the transaction data shows whether the Base
               Builder Code <code className="text-slate-300">{data.builderCode}</code> is attached.
-              {data.excludesTeamTestWallet ? " The team's own test wallet is excluded." : ""} Since{" "}
+              {data.excludesTeamTestWallet ? " The team's own test wallets are excluded." : ""} Since{" "}
               {new Date(data.since).toISOString().slice(0, 10)} · updated {new Date(data.updatedAt).toISOString().slice(11, 16)} UTC.{" "}
               <a href="/verify" className="text-cyan-300 underline">
                 Check it yourself

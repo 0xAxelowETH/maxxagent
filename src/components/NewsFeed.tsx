@@ -80,6 +80,8 @@ export function NewsFeed({
   title = "News & filings",
   initialItems,
   stockLinks = true,
+  onTrade,
+  onAsk,
 }: {
   symbol?: string;
   limit?: number;
@@ -88,6 +90,12 @@ export function NewsFeed({
   initialItems?: NewsItem[];
   /** link each item's stock to its page (off in the preview, where those pages aren't open) */
   stockLinks?: boolean;
+  /**
+   * On the home page itself, a link to "/?stock=…" changes only the URL (the page stays mounted and reads its
+   * query once), so the home page passes these to act directly instead
+   */
+  onTrade?: (symbol: string) => void;
+  onAsk?: (prompt: string) => void;
 }) {
   const [items, setItems] = useState<NewsItem[] | null>(initialItems ?? null);
   const [error, setError] = useState("");
@@ -262,22 +270,36 @@ export function NewsFeed({
                             <a href={x.url} target="_blank" rel="noopener noreferrer" className="text-[10px] font-bold text-cyan-300 hover:text-white hover:underline">
                               {x.kind !== "filing" ? `Read on ${x.source} →` : x.pressRelease ? "Read the press release on sec.gov →" : "Read the filing on sec.gov →"}
                             </a>
-                            {stockLinks && (
-                              <>
-                                <Link
-                                  href={`/?stock=${encodeURIComponent(x.symbol)}`}
-                                  className="rounded-md border border-[#4C6FFF]/40 bg-[#4C6FFF]/15 px-2 py-0.5 text-[10px] font-semibold text-blue-200 hover:bg-[#4C6FFF]/30 transition"
-                                >
-                                  Trade {x.symbol}
-                                </Link>
-                                <Link
-                                  href={`/?tab=agent&prompt=${encodeURIComponent(`Evaluate ${x.symbol} and related peers after latest ${x.form || kindOf(x)}`)}`}
-                                  className="rounded-md border border-slate-700 bg-slate-800/80 px-2 py-0.5 text-[10px] font-semibold text-slate-300 hover:border-cyan-400/50 hover:text-white transition"
-                                >
-                                  Ask Agent
-                                </Link>
-                              </>
-                            )}
+                            {stockLinks &&
+                              (() => {
+                                const askPrompt = `Evaluate ${x.symbol} and related peers after latest ${x.form || kindOf(x)}`;
+                                const tradeCls =
+                                  "rounded-md border border-[#4C6FFF]/40 bg-[#4C6FFF]/15 px-2 py-0.5 text-[10px] font-semibold text-blue-200 hover:bg-[#4C6FFF]/30 transition cursor-pointer";
+                                const askCls =
+                                  "rounded-md border border-slate-700 bg-slate-800/80 px-2 py-0.5 text-[10px] font-semibold text-slate-300 hover:border-cyan-400/50 hover:text-white transition cursor-pointer";
+                                return (
+                                  <>
+                                    {onTrade ? (
+                                      <button type="button" onClick={() => onTrade(x.symbol)} className={tradeCls}>
+                                        Trade {x.symbol}
+                                      </button>
+                                    ) : (
+                                      <Link href={`/?stock=${encodeURIComponent(x.symbol)}`} className={tradeCls}>
+                                        Trade {x.symbol}
+                                      </Link>
+                                    )}
+                                    {onAsk ? (
+                                      <button type="button" onClick={() => onAsk(askPrompt)} className={askCls}>
+                                        Ask Agent
+                                      </button>
+                                    ) : (
+                                      <Link href={`/?tab=agent&prompt=${encodeURIComponent(askPrompt)}`} className={askCls}>
+                                        Ask Agent
+                                      </Link>
+                                    )}
+                                  </>
+                                );
+                              })()}
                           </div>
                           {x.changePct !== null ? (
                             <span className="inline-flex items-center gap-2 text-[10px] text-slate-400" title={`Price source: ${x.priceSource === "DEX" ? "24/7 DEX price" : "Chainlink NAV"}`}>

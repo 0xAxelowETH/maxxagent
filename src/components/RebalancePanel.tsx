@@ -65,7 +65,7 @@ export function RebalancePanel({
   );
   if (holdings.length === 0) return null; // nothing to rebalance yet: the buy panel above covers a first purchase
 
-  const fmt = (n: number) => `$${n.toFixed(2)}`;
+  const fmt = (n: number) => `$${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   const nothingToDo = plan.sells.length === 0 && plan.buys.length === 0;
   // Selling while nothing can be bought back (below minimum or within tolerance) would leave the user in USDC
   const tooSmall =
