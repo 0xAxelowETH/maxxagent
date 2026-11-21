@@ -140,7 +140,8 @@ export default async function PreviewPage() {
         <div>
           <h2 className="text-lg font-bold text-white">Example: the agent&apos;s research for one brief</h2>
           <p className="mt-1 text-xs text-slate-400">
-            Brief: <span className="font-mono text-slate-200">&ldquo;{SAMPLE_BRIEF}&rdquo;</span> · computed live from current data
+            Brief: <span className="font-mono text-slate-200">&ldquo;{SAMPLE_BRIEF}&rdquo;</span> · computed live at{" "}
+            {new Date().toISOString().slice(11, 16)} UTC. Prices and pools move, so a later run can weigh the stocks differently.
           </p>
         </div>
         {!report ? (

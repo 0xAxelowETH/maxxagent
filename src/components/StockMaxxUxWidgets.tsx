@@ -1858,7 +1858,7 @@ export function BasketSnapshotCard({
           <TrendingUp className="h-3.5 w-3.5" />
           Basket snapshot (live data)
         </div>
-        <span className="text-[10px] text-slate-500">No backtest or projected returns are shown</span>
+        <span className="text-[10px] text-slate-500">No projected returns: past prices only</span>
       </div>
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 font-mono text-xs">
         <div className="rounded-xl border border-slate-800/90 bg-[#040814]/90 p-3">

@@ -43,7 +43,9 @@ export function BasketReplay({ legs }: { legs: { symbol: string; pct: number }[]
   return (
     <section className="rounded-2xl border border-slate-800 bg-[#070b14] p-4" data-testid="basket-replay" aria-label="30-day replay">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <h3 className="text-sm font-bold text-white">Replay: this mix over the last 30 days</h3>
+        <h3 className="text-sm font-bold text-white">
+          Replay: this mix over the last 30 days <span className="font-normal text-slate-400">(past prices, not a forecast)</span>
+        </h3>
         {data && (
           <span className={`font-mono text-lg font-bold ${data.basketPct >= 0 ? "text-emerald-300" : "text-rose-300"}`}>{signed(data.basketPct)}</span>
         )}

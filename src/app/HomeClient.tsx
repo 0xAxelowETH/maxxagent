@@ -786,7 +786,7 @@ export default function StockMaxxingDashboard() {
   const reviewBusyRef = useRef(false);
   // Step 1 (buy): quote one or more B20 stocks and open the review. Nothing is sent yet.
   const buyStocks = useCallback(
-    async (legs: BasketLeg[], label: string) => {
+    async (legs: BasketLeg[], label: string, typedTotalUsd?: number) => {
       if (orderLockRef.current || txPendingRef.current) return;
       setBasketError("");
       setBasketResult(null);
@@ -797,9 +797,11 @@ export default function StockMaxxingDashboard() {
       const validLegs = legs.filter((l) => l.usd >= MIN_BUY_USD);
       if (validLegs.length < legs.length) {
         // Never silently drop part of a basket: tell the user the smallest total that funds every stock
-        const total = legs.reduce((a, l) => a + l.usd, 0);
+        // Scaled to the amount the user typed (which may include USDC kept as cash), plus a cent for the
+        // per-leg rounding down, so the hint is never the amount they already entered
+        const total = typedTotalUsd && typedTotalUsd > 0 ? typedTotalUsd : legs.reduce((a, l) => a + l.usd, 0);
         const smallest = Math.min(...legs.map((l) => l.usd));
-        const needed = smallest > 0 ? Math.ceil((MIN_BUY_USD * total) / smallest) : 0;
+        const needed = smallest > 0 ? Math.ceil(((MIN_BUY_USD + 0.01) * total) / smallest) : 0;
         setBasketError(`Each stock needs at least $${MIN_BUY_USD.toFixed(2)}.${needed > 0 ? ` For this basket, use at least $${needed}.` : ""}`);
         return;
       }
@@ -1810,8 +1812,8 @@ export default function StockMaxxingDashboard() {
       });
     }
   }, []);
-  const shareLinkFor = (weightsBps: Record<string, number>) =>
-    `${typeof window !== "undefined" ? window.location.origin : PUBLIC_SITE_URL}/?${basketToQuery(weightsBps, basketUsd)}`;
+  const shareLinkFor = (weightsBps: Record<string, number>, amountUsd?: number) =>
+    `${typeof window !== "undefined" ? window.location.origin : PUBLIC_SITE_URL}/?${basketToQuery(weightsBps, amountUsd ?? basketUsd)}`;
 
   // Filter, Search & Sort B20 Equities for Tab 1 Table
   const filteredStocks = stocks

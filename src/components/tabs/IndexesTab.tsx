@@ -72,7 +72,7 @@ export interface IndexesTabProps {
   setIndexSort: (s: "volume" | "buys" | "newest") => void;
   copiedKey: string;
   copyToClipboard: (text: string, key: string) => void;
-  shareLinkFor: (weightsBps: Record<string, number>) => string;
+  shareLinkFor: (weightsBps: Record<string, number>, amountUsd?: number) => string;
 }
 
 export default function IndexesTab({

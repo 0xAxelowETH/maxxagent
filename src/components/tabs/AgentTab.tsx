@@ -44,7 +44,7 @@ export interface AgentTabProps {
   basketStatus: string;
   basketError: string;
   basketResult: BasketResult | null;
-  buyStocks: (legs: BasketLeg[], label: string) => void;
+  buyStocks: (legs: BasketLeg[], label: string, typedTotalUsd?: number) => void;
   sellStocks: (legs: SellLeg[], label: string) => void;
   savedTarget: SavedTarget | null;
   saveTarget: (t: SavedTarget | null) => void;
@@ -58,7 +58,7 @@ export interface AgentTabProps {
   setHighlightedAlloc: React.Dispatch<React.SetStateAction<string | null>>;
   copiedKey: string;
   copyToClipboard: (text: string, key: string) => void;
-  shareLinkFor: (weightsBps: Record<string, number>) => string;
+  shareLinkFor: (weightsBps: Record<string, number>, amountUsd?: number) => string;
   hasRegistry: boolean;
   txPending: boolean;
   publishStatus: string;
@@ -120,6 +120,11 @@ export default function AgentTab({
   proMode,
   setProMode,
 }: AgentTabProps) {
+  // A shared link opens the stocks only, so it carries the invested amount, not the cash kept in USDC:
+  // the recipient buys the same stocks for the same money ($30 of NVDAc for "only Nvidia, max 30%" on $100)
+  const sharedInvestedUsd = agentReport
+    ? Math.round(basketUsd * (100 - (agentReport.cashReservePct ?? 0))) / 100
+    : undefined;
   return (
     <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
       {/* Left Column: Agent Configuration & Strategy Prompt */}
@@ -347,9 +352,12 @@ export default function AgentTab({
                   href={`https://x.com/intent/tweet?text=${encodeURIComponent(
                     `My MAXXAGENT basket of tokenized stocks on @base:\n${agentReport.allocations
                       .slice(0, 5)
-                      .map((a) => `• $${a.symbol}: ${(a.targetWeightBps / 100).toFixed(0)}%`)
-                      .join("\n")}\n\nBuy the same basket: ${publicSiteUrl}/?${basketToQuery(
-                      Object.fromEntries(agentReport.allocations.map((a) => [a.symbol, a.targetWeightBps]))
+                      .map((a) => `• $${a.symbol}: ${(a.capitalSharePct ?? a.targetWeightBps / 100).toFixed(0)}%`)
+                      .join("\n")}${
+                      (agentReport.cashReservePct ?? 0) > 0 ? `\n• kept in USDC: ${(agentReport.cashReservePct ?? 0).toFixed(0)}%` : ""
+                    }\n\nBuy the same basket: ${publicSiteUrl}/?${basketToQuery(
+                      Object.fromEntries(agentReport.allocations.map((a) => [a.symbol, a.targetWeightBps])),
+                      sharedInvestedUsd
                     )}\n\nNot financial advice. #StocksMaxxing @buildonbase`
                   )}`}
                   target="_blank"
@@ -363,7 +371,7 @@ export default function AgentTab({
                 <button
                   onClick={() =>
                     copyToClipboard(
-                      shareLinkFor(Object.fromEntries(agentReport.allocations.map((a) => [a.symbol, a.targetWeightBps]))),
+                      shareLinkFor(Object.fromEntries(agentReport.allocations.map((a) => [a.symbol, a.targetWeightBps])), sharedInvestedUsd),
                       "share-agent"
                     )
                   }
@@ -556,7 +564,8 @@ export default function AgentTab({
                       usd: Math.floor(((basketUsd * ((100 - (agentReport.cashReservePct ?? 0)) / 100) * a.targetWeightBps) / 10000) * 100) / 100,
                       payWith: basketPayWith,
                     })),
-                    agentReport.strategyName
+                    agentReport.strategyName,
+                    basketUsd
                   )
                 }
                 disabled={basketPending || basketUsd < MIN_BUY_USD}
@@ -670,12 +679,18 @@ export default function AgentTab({
 
             <div className="rounded-2xl border border-slate-800/90 bg-[#050914]/90 p-4">
               <PortfolioDonutChart
-                items={agentReport.allocations.map((a) => ({
-                  symbol: a.symbol,
-                  weightBps: a.targetWeightBps,
-                  color: a.color || STOCK_COLOR_MAP[a.symbol] || "#4C6FFF",
-                  logoUrl: a.logoUrl || STOCK_LOGO_MAP[a.symbol],
-                }))}
+                // Shares of the money, with the USDC kept as its own slice, so a "max 25%" brief never shows 29%
+                items={[
+                  ...agentReport.allocations.map((a) => ({
+                    symbol: a.symbol,
+                    weightBps: Math.round((a.capitalSharePct ?? a.targetWeightBps / 100) * 100),
+                    color: a.color || STOCK_COLOR_MAP[a.symbol] || "#4C6FFF",
+                    logoUrl: a.logoUrl || STOCK_LOGO_MAP[a.symbol],
+                  })),
+                  ...((agentReport.cashReservePct ?? 0) > 0
+                    ? [{ symbol: "USDC (kept)", weightBps: Math.round((agentReport.cashReservePct ?? 0) * 100), color: "#64748b" }]
+                    : []),
+                ]}
                 centerLabel="Capital"
                 centerValue={`$${agentReport.portfolioCapitalUsd.toLocaleString("en-US")}`}
               />
@@ -799,8 +814,10 @@ export default function AgentTab({
                           Score <strong className="text-cyan-400">{alloc.quantScore}</strong>
                         </span>
                         <span className="text-white font-bold">
-                          {(alloc.targetWeightBps / 100).toFixed(1)}%
-                          {(agentReport.cashReservePct ?? 0) > 0 ? ` of stocks (${(alloc.capitalSharePct ?? 0).toFixed(1)}% of money)` : ""} · $
+                          {(agentReport.cashReservePct ?? 0) > 0
+                            ? `${(alloc.capitalSharePct ?? 0).toFixed(1)}% of your money (${(alloc.targetWeightBps / 100).toFixed(1)}% of the invested part)`
+                            : `${(alloc.targetWeightBps / 100).toFixed(1)}%`}{" "}
+                          · $
                           {alloc.usdAllocation.toFixed(2)}
                         </span>
                         <span className="text-emerald-400">
