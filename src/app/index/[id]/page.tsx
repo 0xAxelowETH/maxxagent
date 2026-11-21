@@ -64,7 +64,7 @@ export default async function IndexPage({ params }: { params: Promise<{ id: stri
             Onchain index #{ix.id} · v{ix.version} · factsheet
           </div>
           <h1 className="text-2xl font-extrabold text-white">
-            {ix.name} <span className="font-mono text-base text-blue-300">{ix.ticker}</span>
+            {ix.name} <span className="whitespace-nowrap font-mono text-base text-blue-300">{ix.ticker}</span>
           </h1>
           <p className="text-xs text-slate-400">
             Created {new Date(ix.createdAt * 1000).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })} by{" "}

@@ -107,18 +107,18 @@ export function RebalancePanel({
           <thead>
             <tr className="text-left text-[10px] uppercase tracking-wider text-slate-500 border-b border-slate-800">
               <th className="py-1.5">Stock</th>
-              <th className="py-1.5 text-right">Now</th>
-              <th className="py-1.5 text-right">Target</th>
-              <th className="py-1.5 text-right">Action</th>
+              <th className="py-1.5 pl-3 text-right"><span className="sm:hidden">Now → target</span><span className="hidden sm:inline">Now</span></th>
+              <th className="hidden sm:table-cell py-1.5 pl-3 text-right">Target</th>
+              <th className="py-1.5 pl-3 text-right">Action</th>
             </tr>
           </thead>
           <tbody className="font-mono">
             {plan.rows.map((r) => (
               <tr key={r.symbol} className="border-b border-slate-800/60">
-                <td className="py-1.5 font-sans font-semibold text-white">{r.symbol}</td>
-                <td className="py-1.5 text-right text-slate-300">{fmt(r.currentUsd)}</td>
-                <td className="py-1.5 text-right text-slate-300">{fmt(r.targetUsd)}</td>
-                <td className="py-1.5 text-right whitespace-nowrap">
+                <td className="py-1.5 pr-2 font-sans font-semibold text-white">{r.symbol}</td>
+                <td className="py-1.5 pl-3 text-right text-slate-300 whitespace-nowrap">{fmt(r.currentUsd)}<span className="block text-[10px] text-slate-500 sm:hidden">→ {fmt(r.targetUsd)}</span></td>
+                <td className="hidden sm:table-cell py-1.5 pl-3 text-right text-slate-300 whitespace-nowrap">{fmt(r.targetUsd)}</td>
+                <td className="py-1.5 pl-3 text-right whitespace-nowrap">
                   {r.action === "sell" ? (
                     <span className="text-rose-300">Sell {fmt(-r.deltaUsd)}</span>
                   ) : r.action === "buy" ? (

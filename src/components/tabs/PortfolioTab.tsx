@@ -186,7 +186,7 @@ function PortfolioPositionsView({
             <div className={`text-[10px] ${plTone(totalPl)}`}>{((totalPl / totalCost) * 100).toFixed(2)}%</div>
           )}
         </div>
-        <div className="rounded-xl border border-slate-800 bg-[#070b14] p-3" title="Gains or losses already locked in by selling">
+        <div className="col-span-2 sm:col-span-1 rounded-xl border border-slate-800 bg-[#070b14] p-3" title="Gains or losses already locked in by selling">
           <div className="text-[10px] font-sans text-slate-400">Realized P/L</div>
           <div className={`text-lg font-extrabold ${realizedPlUsd !== null ? plTone(realizedPlUsd) : "text-slate-300"}`}>
             {realizedPlUsd !== null ? fmtSignedUsd(realizedPlUsd) : pnlPlaceholder}

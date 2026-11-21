@@ -473,7 +473,8 @@ export function InteractiveB20TradingChart({
           })}
         </div>
 
-        <div className="flex flex-wrap items-center gap-2 shrink-0">
+        {/* Full width on phones so the controls wrap inside the card instead of running past its edge */}
+        <div className="flex w-full min-w-0 flex-wrap items-center gap-2 sm:w-auto sm:shrink-0">
           <label className="inline-flex items-center gap-1.5 rounded-xl border border-slate-800 bg-[#040814] px-2.5 py-1 text-[11px] text-slate-300">
             <GitCompareArrows className="h-3.5 w-3.5 text-cyan-400" />
             <select
