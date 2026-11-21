@@ -58,10 +58,10 @@ export function OrderReview({
     return () => clearInterval(t);
   }, []);
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && !busy && onCancelRef.current();
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onCancelRef.current();
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [busy]);
+  }, []);
 
   const isBuy = order.side === "buy";
   const secondsLeft = Math.max(0, Math.ceil((order.preparedAt + ttlMs - now) / 1000));
@@ -85,9 +85,10 @@ export function OrderReview({
               {isBuy ? "Buy" : "Sell"} {label}
             </h2>
           </div>
+          {/* Cancel stays available while a re-quote runs: nothing has been sent yet, and a hung wallet
+              network switch must never trap the user in this dialog */}
           <button
             onClick={onCancel}
-            disabled={busy}
             aria-label="Cancel"
             className="inline-flex min-h-[40px] min-w-[40px] items-center justify-center rounded-xl text-slate-400 hover:bg-slate-800 hover:text-white cursor-pointer disabled:opacity-40"
           >
@@ -256,7 +257,6 @@ export function OrderReview({
         <div className="flex gap-2">
           <button
             onClick={onCancel}
-            disabled={busy}
             className="flex-1 rounded-xl border border-slate-700 px-4 py-3 text-sm font-semibold text-slate-200 hover:bg-slate-800 cursor-pointer disabled:opacity-40"
           >
             Cancel

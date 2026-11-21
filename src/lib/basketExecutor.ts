@@ -28,6 +28,10 @@ const ERC20_ABI = parseAbi([
   "function approve(address spender, uint256 amount) returns (bool)",
 ]);
 const TRANSFER_TOPIC = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
+/** Stand-in id for a batch the wallet accepted without returning an id we can read (watched by onchain logs only) */
+const NO_BATCH_ID = "no-batch-id";
+const BATCH_ANSWER_MS = 180_000;
+const BATCH_NO_ANSWER = "wallet_sendCalls: no answer from the wallet";
 
 export interface EthProvider {
   request: (args: { method: string; params?: unknown[] }) => Promise<unknown>;
@@ -363,7 +367,12 @@ async function ensureBase(eth: EthProvider, onStatus: StatusFn) {
   if (chain !== BASE_CHAIN_HEX) {
     onStatus("Switching wallet to Base Mainnet…");
     try {
-      await eth.request({ method: "wallet_switchEthereumChain", params: [{ chainId: BASE_CHAIN_HEX }] });
+      // A wallet that never answers the switch request must not hang the order forever
+      await withTimeout(
+        eth.request({ method: "wallet_switchEthereumChain", params: [{ chainId: BASE_CHAIN_HEX }] }),
+        90_000,
+        "Your wallet didn't answer the network switch. Switch it to Base Mainnet yourself, then try again."
+      );
     } catch (err) {
       if (isChainMissingError(err)) {
         await eth.request({
@@ -545,7 +554,9 @@ async function isRelatedSwapTx(hash: string, sender: string, cache: Map<string, 
     withTimeout(basePublicRpc("eth_getTransactionByHash", [hash]), 2000).catch(() => null),
     withTimeout(basePublicRpc("eth_getTransactionReceipt", [hash]), 2000).catch(() => null),
   ])) as [{ from?: string; to?: string } | null, (RpcReceipt & { from?: string; to?: string }) | null];
-  if (!tx && !rec) return true;
+  // Both lookups failed: unknown, so not counted (and not cached, so the next poll asks again). Counting an
+  // unrelated incoming transfer as "done" could move on while the real prompt is still open.
+  if (!tx && !rec) return false;
   const from = String(tx?.from || rec?.from || "").toLowerCase();
   const to = String(tx?.to || rec?.to || "").toLowerCase();
   const logs = rec?.logs || [];
@@ -607,24 +618,34 @@ async function sendCalls(
   const base = { version: "2.0.0", chainId: BASE_CHAIN_HEX, from: sender, atomicRequired: false, calls };
 
   let batchId: string | undefined;
+  let batchSubmitted = false;
   if (preferSequentialWallet(eth, walletHint)) {
     onStatus("Confirming each step in your wallet…");
   } else {
     try {
       let sendRes: unknown;
       try {
-        sendRes = await eth.request({
-          method: "wallet_sendCalls",
-          params: [{ ...base, capabilities: { dataSuffix: { value: builderSuffix(builderCode), optional: true } } }],
-        });
+        sendRes = await withTimeout(
+          eth.request({
+            method: "wallet_sendCalls",
+            params: [{ ...base, capabilities: { dataSuffix: { value: builderSuffix(builderCode), optional: true } } }],
+          }),
+          BATCH_ANSWER_MS,
+          BATCH_NO_ANSWER
+        );
       } catch (capErr) {
         // Non-compliant wallets may reject the optional capability: retry once without it.
         if (!hasErrorCode(capErr, 5700) && !/capabilit/i.test(errorMessageText(capErr))) throw capErr;
-        sendRes = await eth.request({ method: "wallet_sendCalls", params: [base] });
+        sendRes = await withTimeout(eth.request({ method: "wallet_sendCalls", params: [base] }), BATCH_ANSWER_MS, BATCH_NO_ANSWER);
       }
+      batchSubmitted = true;
       batchId = extractBatchId(sendRes);
     } catch (err) {
       if (isUserRejection(err)) throw err;
+      // No answer at all (e.g. a WalletConnect deep link that never opened): the request may still be open in
+      // the wallet, so stop here and never fall back to sending the calls one by one
+      if (errorMessageText(err).includes(BATCH_NO_ANSWER))
+        throw new Error("Your wallet didn't answer for 3 minutes. Open it and reject any pending request before trying again, so it can't go through twice.");
       if (!isUnsupportedMethod(err)) {
         // Check whether sender is a pure ERC-4337 smart account (non-EIP-7702 bytecode): UserOps do not advance EOA nonce.
         const isErc4337Account = await isPureSmartAccount(eth, sender);
@@ -646,6 +667,11 @@ async function sendCalls(
     }
   }
 
+  if (batchSubmitted && !batchId) {
+    // The wallet accepted the batch but returned no id we can read: it was still submitted, so never fall
+    // through to sending the calls one by one (that would double the trade). Watch onchain logs instead.
+    batchId = NO_BATCH_ID;
+  }
   if (batchId) {
     // The batch was submitted: from here on, never resend the calls (that would double the trade).
     onStatus("Waiting for confirmation onchain…");
@@ -658,7 +684,8 @@ async function sendCalls(
     const relatedTxCache = new Map<string, boolean>();
     while (Date.now() - start < 180_000) {
       let status: CallsStatusResponse | undefined;
-      try {
+      if (batchId === NO_BATCH_ID) statusUnsupported = true;
+      else try {
         status = (await withTimeout(
           eth.request({ method: "wallet_getCallsStatus", params: [batchId] }),
           4500,
@@ -766,7 +793,7 @@ async function sendCalls(
         }
       }
 
-      if ((statusUnsupported && Date.now() - start > 45_000) || (misses > 15 && Date.now() - start > 60_000)) {
+      if ((statusUnsupported && Date.now() - start > (batchId === NO_BATCH_ID ? 120_000 : 45_000)) || (misses > 15 && Date.now() - start > 60_000)) {
         throw new Error("Batch was sent, but status is unavailable. Check your wallet activity before retrying.");
       }
       await sleep(2000);
@@ -859,7 +886,14 @@ async function sendCalls(
     const watchSwapOnchain = (async () => {
       await sleep(5000);
       const started = Date.now();
-      while (!swapSettled && Date.now() - started < 120_000) {
+      let toldStillWaiting = false;
+      // The wallet prompt can stay open for a long time and still be signed later, so keep watching (and keep
+      // the order locked) well past two minutes instead of telling the user to retry while it is open.
+      while (!swapSettled && Date.now() - started < 600_000) {
+        if (!toldStillWaiting && Date.now() - started > 120_000) {
+          toldStillWaiting = true;
+          onStatus(`Still waiting for ${labels[j]} in your wallet. Confirm or reject the open request there.`);
+        }
         if (legStartBlock !== null && watchToken) {
           try {
             const latestHex = (await basePublicRpc("eth_blockNumber", []).catch(() => null)) as string | null;
@@ -886,9 +920,12 @@ async function sendCalls(
             }
           } catch {}
         }
-        await sleep(2500);
+        await sleep(Date.now() - started > 120_000 ? 5000 : 2500);
       }
-      if (!swapSettled) throw new Error(`Timed out waiting for ${labels[j]} in your wallet. If no prompt appeared, open your wallet app or retry.`);
+      if (!swapSettled)
+        throw new Error(
+          `Timed out waiting for ${labels[j]} in your wallet. Open your wallet and reject any pending request before trying again, so it can't go through twice.`
+        );
       return new Promise<never>(() => {});
     })();
     try {
@@ -1355,10 +1392,16 @@ export async function submitOrder(params: {
   // A batch can be mined while its swaps revert (non-atomic wallets) -> judge by what actually arrived,
   // but only when every receipt was readable (an RPC hiccup must not be reported as a failed trade)
   if (mode === "batch" && tracked.txs.length > 0 && tracked.txs.every((t) => t.status !== "unknown")) {
+    // "Reverted" only when it is proven: every call went out in one mined transaction, or a receipt failed.
+    // A wallet that splits the batch into separate transactions can still be mining the missing legs.
+    const revertProven = txHashes.length === 1 || tracked.txs.some((t) => t.status === "failed");
+    const noStockError = revertProven
+      ? "No stock arrived: the swap reverted; only gas was spent"
+      : "Not confirmed yet: no stock has arrived. Check your wallet activity before buying it again";
     if (side === "buy") {
       for (const q of legs) {
         const got = tracked.received.find((r) => r.b20Address === q.b20Address!.toLowerCase());
-        if (!got || got.raw === "0") failed.push({ label: `${verb} ${q.symbol}`, error: "No stock arrived: the swap reverted; only gas was spent" });
+        if (!got || got.raw === "0") failed.push({ label: `${verb} ${q.symbol}`, error: noStockError });
       }
     } else if ((tracked.received[0]?.raw ?? "0") === "0") {
       for (const q of legs) failed.push({ label: `${verb} ${q.symbol}`, error: "No USDC arrived: the swap reverted; only gas was spent" });
