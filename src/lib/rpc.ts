@@ -17,9 +17,13 @@ export function baseTransport(opts: { timeout?: number } = {}) {
   const timeout = opts.timeout ?? 10_000;
   const custom = customRpc();
   const urls = [...(custom && !PUBLIC_RPCS.includes(custom) ? [custom] : []), ...PUBLIC_RPCS];
+  // Each fallback URL used to get the full timeout, so one failing call could take 3x as long and blow the
+  // route budgets built on it. The first provider (the one that normally answers) keeps the full timeout;
+  // fallbacks get 20% each (3 s floor), so the worst case is about 1.4x instead of 3x.
+  const share = (i: number) => (i === 0 ? timeout : Math.max(3_000, Math.round(timeout * 0.2)));
   // Zero transport-level retries per URL so fallback switches providers immediately instead of stacking latency
   return fallback(
-    urls.map((u) => http(u, { timeout, retryCount: 0 })),
+    urls.map((u, i) => http(u, { timeout: share(i), retryCount: 0 })),
     { rank: false, retryCount: 0 }
   );
 }

@@ -622,6 +622,7 @@ async function computePositions(history: WalletHistory) {
 }
 
 export async function GET(request: NextRequest) {
+  const requestStarted = Date.now();
   const wallet = request.nextUrl.searchParams.get("wallet") || "";
   if (!/^0x[a-fA-F0-9]{40}$/.test(wallet)) {
     return NextResponse.json({ ok: false, error: "Invalid wallet address." }, { status: 400 });
@@ -647,8 +648,18 @@ export async function GET(request: NextRequest) {
       }
       history = done;
     }
-    const { positions, activity } = await computePositions(history);
-    const fromTimeSec = await blockTime(history.scannedFrom);
+    // Valuing the history reads historical NAVs one tx at a time, which can be slow for a busy wallet. Keep the
+    // whole request under the 60 s function limit: past the budget, answer "still loading" and let it finish
+    // in the background (the NAV reads are cached, so the next request is fast).
+    const valuing = computePositions(history);
+    const left = Math.max(1_000, RESPONSE_BUDGET_MS + 5_000 - (Date.now() - requestStarted));
+    const valued = await Promise.race([valuing, new Promise<null>((r) => setTimeout(() => r(null), left))]);
+    if (!valued) {
+      after(() => valuing.then(() => undefined, () => undefined));
+      return NextResponse.json({ ok: false, loading: true, error: "P/L is still loading for this wallet." }, { status: 202 });
+    }
+    const { positions, activity } = valued;
+    const fromTimeSec = await Promise.race([blockTime(history.scannedFrom), new Promise<null>((r) => setTimeout(() => r(null), 4_000))]);
     return NextResponse.json({
       ok: true,
       wallet,

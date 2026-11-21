@@ -66,6 +66,10 @@ interface KyberRouteHop {
 }
 
 export async function POST(request: NextRequest) {
+  // One budget for the whole request (quotes, builds, retries), so a slow aggregator ends in a JSON error the
+  // app can show instead of a bare 504 at the 60 s function limit
+  const deadline = Date.now() + 45_000;
+  const remaining = () => deadline - Date.now();
   let rawBody: string;
   try {
     rawBody = await request.text();
@@ -142,9 +146,10 @@ export async function POST(request: NextRequest) {
       const exclude = excluded.length ? `&excludedSources=${encodeURIComponent(excluded.join(","))}` : "";
       for (let attempt = 0; attempt < 3; attempt++) {
         if (attempt > 0) await sleep(700 * attempt);
+        if (remaining() < 1_500) break;
         const res = await fetch(
           `${KYBER_API}/routes?tokenIn=${tokenIn}&tokenOut=${tokenOut}&amountIn=${amountIn}${exclude}`,
-          { headers: KYBER_HEADERS, cache: "no-store", signal: AbortSignal.timeout(KYBER_TIMEOUT_MS) }
+          { headers: KYBER_HEADERS, cache: "no-store", signal: AbortSignal.timeout(Math.max(1, Math.min(KYBER_TIMEOUT_MS, remaining()))) }
         ).catch(() => null);
         const q = res ? await res.json().catch(() => null) : null;
         if (q?.code === 0 && q?.data?.routeSummary) return q.data.routeSummary;
@@ -154,11 +159,12 @@ export async function POST(request: NextRequest) {
     const buildRoute = async (summary: unknown): Promise<Build | null> => {
       for (let attempt = 0; attempt < 3; attempt++) {
         if (attempt > 0) await sleep(900 * attempt); // 403 "Forbidden" = aggregator rate limit
+        if (remaining() < 1_500) break;
         const res = await fetch(`${KYBER_API}/route/build`, {
           method: "POST",
           headers: KYBER_HEADERS,
           cache: "no-store",
-          signal: AbortSignal.timeout(KYBER_TIMEOUT_MS),
+          signal: AbortSignal.timeout(Math.max(1, Math.min(KYBER_TIMEOUT_MS, remaining()))),
           body: JSON.stringify({ routeSummary: summary, sender, recipient: sender, slippageTolerance: slippageBps, source: "maxxagent" }),
         }).catch(() => null);
         const b = (res ? await res.json().catch(() => null) : null) as Build | null;
