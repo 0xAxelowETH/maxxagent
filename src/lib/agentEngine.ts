@@ -407,6 +407,19 @@ export function runAutonomousStockAgent(params: {
       fixedSum = fixedSyms.reduce((a, s) => a + fixedOfStocks(s), 0);
     }
   }
+  // A stock the user named but that has no room because their set weights already fill the basket: say so,
+  // instead of the "always included" note quietly being wrong
+  const namedNoRoom = mandate.include.filter((s) => !fixedSyms.includes(s) && !selected.some((x) => x.stock.symbol === s) && scored.some((x) => x.stock.symbol === s));
+  if (namedNoRoom.length && fixedSum >= 99.5) {
+    const namedIdx = interpretation.findIndex((n) => n.startsWith("You named "));
+    const stillIn = mandate.include.filter((s) => !namedNoRoom.includes(s));
+    if (namedIdx >= 0)
+      if (stillIn.length) interpretation[namedIdx] = `You named ${stillIn.join(", ")}: always included.`;
+      else interpretation.splice(namedIdx, 1);
+    interpretation.push(
+      `${namedNoRoom.join(", ")} left out: the weights you set (${fixedSyms.map((s) => `${s} ${mandate.weightsPct[s]}%`).join(", ")}) already fill the basket. Lower one of them to make room, e.g. "${fixedSyms[0]} ${Math.max(5, Math.round(mandate.weightsPct[fixedSyms[0]] / 2))}%".`
+    );
+  }
   const added = selected.filter((x) => !mandate.include.includes(x.stock.symbol) && !themeOf(x.stock.symbol).length).length;
   if (added > 0 && (mandate.include.length || mandate.themes.length) && !mandate.only)
     interpretation.push(`Added ${added} more by score to diversify (say "only" to keep just what you named).`);
@@ -494,7 +507,11 @@ export function runAutonomousStockAgent(params: {
     const capOfStocks = (capPct / investPct) * 10000;
     const capBps = Math.max(capOfStocks, Math.ceil(10000 / n));
     if (!fixedSyms.length) weights = capWeightsBps(weights, capBps) ?? weights;
-    maxWeightOfStocksPct = Math.round(capOfStocks) / 100;
+    // Rounding to whole bps can leave the largest leg a hair over the limit (3 x max 30%: 3334 bps of 90% = 30.01%).
+    // Keep that hair in USDC instead, so the limit holds exactly.
+    const topBps = Math.max(...weights);
+    if (topBps > 0 && (topBps / 10000) * investPct > capPct + 1e-9) investPct = Math.floor(((capPct * 10000) / topBps) * 100) / 100;
+    maxWeightOfStocksPct = Math.round((capPct / investPct) * 10000) / 100;
     if (!limits.length) {
       const top = Math.max(...weights) * (investPct / 10000);
       limits.push({ label: `Max ${capPct}% per stock`, status: "kept", detail: `The largest position is ${top.toFixed(1)}% of your money.` });

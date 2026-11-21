@@ -79,9 +79,15 @@ export function capWeightsBps(weights: number[], capBps: number): number[] | nul
   return roundWeightsBps(w, capBps);
 }
 
-/** Caps multi-step agent history while preserving the initial mandate at index 0. */
+/**
+ * Caps multi-step agent history while preserving the initial mandate at index 0. Middle steps that no longer
+ * fit are merged into one step instead of dropped, so an earlier "no Nvidia" still counts.
+ */
 export function capPromptSteps(steps: string[], max = 6): string[] {
   if (steps.length <= max) return steps;
   if (max <= 1) return steps.slice(0, Math.max(0, max));
-  return [steps[0], ...steps.slice(-(max - 1))];
+  if (max === 2) return [steps[0], steps.slice(1).join(". ")];
+  const keepTail = max - 2;
+  const merged = steps.slice(1, steps.length - keepTail).join(". ");
+  return [steps[0], merged, ...steps.slice(-keepTail)];
 }

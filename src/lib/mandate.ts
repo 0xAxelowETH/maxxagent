@@ -165,7 +165,7 @@ function mentions(text: string) {
 
 /** Words that make a percent a limit or cash reserve, not a stock weight ("max 30%", "cap Apple at 25%", "cash 30%") */
 const CAP_BEFORE = new RegExp(
-  `(?:\\b(?:cap(?:ped)?|limit(?:ed)?)(?:\\s+(?:each|every|any|all))?(?:\\s+(?:[a-z0-9.&]+\\s+){0,4})?(?:at|to)?\\s*|\\b(?:max(?:imum)?|under|below|less than|at most|no more than|not more than|up to|kurang dari|di\\s*bawah|maks(?:imal|imum)?|paling banyak|tidak lebih dari|over|above|more than|lebih dari|di atas)\\s*(?:of\\s+|at\\s+)?|${CASH_WORDS}\\s*(?:reserve\\s*)?(?:of\\s+)?)$`
+  `(?:\\b(?:cap(?:ped)?|limit(?:ed)?)(?:\\s+(?:each|every|any|all))?(?:\\s+(?:[a-z0-9.&]+\\s+){0,4})?(?:at|to)?\\s*|\\b(?:max(?:imum)?|under|below|less than|at most|no more than|not more than|up to|kurang dari|di\\s*bawah|maks(?:imal|imum)?|paling banyak|tidak lebih dari|over|above|more than|larger than|bigger than|greater than|lebih dari|di atas)\\s*(?:of\\s+|at\\s+)?|${CASH_WORDS}\\s*(?:reserve\\s*)?(?:of\\s+)?)$`
 );
 /** Words that make a percent a cash amount or a per-stock rule ("20% in cash", "30% each", "Apple 30% cap") */
 const NOT_WEIGHT_AFTER = new RegExp(
@@ -212,8 +212,26 @@ function explicitWeights(text: string): Record<string, number> {
   return out;
 }
 
+/** Number words before a basket size ("five stocks"); "one" is left alone so "no one stock over 30%" still reads as a cap */
+const NUMBER_WORDS: Record<string, string> = { two: "2", three: "3", four: "4", five: "5", six: "6", seven: "7", eight: "8", nine: "9", ten: "10" };
+
+/**
+ * Rewrites other ways of leaving a stock out into "without" so one exclusion reader handles them all:
+ * "remove Tesla", "drop Tesla", "leave out Tesla", "take out Meta", "anything but Tesla", "other than Tesla",
+ * "apart from Tesla", "ex-Tesla", "I hate Tesla", and "replace Tesla with Apple" (Tesla out, Apple in).
+ */
+function normalizeExclusions(text: string): string {
+  return text
+    .replace(/\breplace\s+([a-z0-9.&' -]+?)\s+(?:with|by|for)\s+/g, " without $1 plus ")
+    .replace(/\b(?:anything|everything|all|any stock|any stocks|all stocks)\s+but\s+/g, " without ")
+    .replace(/\b(?:other than|apart from|aside from|leave out|leaving out|take out|taking out|get rid of|cut out|i hate|i don't want|i dont want|i do not want|not interested in)\s+/g, " without ")
+    .replace(/\b(?:remove|removing|drop|dropping|ditch|hate)\s+(?!(?:the\s+|this\s+)?(?:\d{1,3}(?:\.\d+)?\s*%\s+)?(?:per[- ]stock\s+|single[- ]stock\s+|weight\s+)?(?:cap|limit|max(?:imum)?|cash|usdc|reserve|stablecoins?)\b)/g, " without ")
+    .replace(/\bex-(?=[a-z])/g, "ex ")
+    .replace(/\b(two|three|four|five|six|seven|eight|nine|ten)\s+(?=(?:stocks?|names?|picks?|tickers?|companies)\b)/g, (_, w: string) => `${NUMBER_WORDS[w]} `);
+}
+
 export function parseMandate(input: string): ParsedMandate {
-  const text = ` ${(input || "").toLowerCase().replace(/\s+/g, " ")} `;
+  const text = ` ${normalizeExclusions((input || "").toLowerCase().replace(/\s+/g, " ")).replace(/\s+/g, " ")} `;
 
   // 1) Exclusions: "no tesla", "without crypto", "except NVDA and META", "tanpa tesla dan meta", "no tesla, no meta"
   const exclude = new Set<string>();
@@ -392,7 +410,9 @@ export function parseMandate(input: string): ParsedMandate {
   let maxWeightPct: number | undefined;
   const maxMatch =
     text.match(new RegExp(`(?:max(?:imum)?|cap(?:ped)?(?:\\s+at)?|at most|no more than|not more than|up to|limit(?:ed)?(?:\\s+to)?|maks(?:imal|imum)?|paling banyak|tidak lebih dari)\\s*(?:of\\s+)?${pct}${cashAfterPct}`)) ||
-    text.match(new RegExp(`(?:no|not|tidak ada)\\s+(?:single\\s+|one\\s+)?(?:stock|company|name|position|holding|saham)s?\\s+(?:over|above|more than|bigger than|exceeding|di atas|lebih dari)\\s+${pct}`)) ||
+    // "cap each at 35%", "limit each to 25%", "cap it at 30%", "cap them at 20%", "limit positions to 25%"
+    text.match(new RegExp(`(?:cap(?:ped)?|limit(?:ed)?|batasi)\\s+(?:each|every|it|them|all|any|positions?|stocks?|names?|holdings?)(?:\\s+(?:one|stock|position|name|holding))?\\s+(?:at|to|di|ke)\\s+${pct}${cashAfterPct}`)) ||
+    text.match(new RegExp(`(?:no|not|tidak ada)\\s+(?:single\\s+|one\\s+)?(?:stock|company|name|position|holding|saham)s?\\s+(?:over|above|more than|bigger than|larger than|greater than|exceeding|beyond|di atas|lebih dari)\\s+${pct}`)) ||
     // "nothing above 25%", "none of them over 30%", "tidak ada yang lebih dari 30%"
     text.match(new RegExp(`(?:nothing|none(?:\\s+of\\s+them)?|no\\s+one|(?:tidak|jangan)\\s+ada\\s+yang)\\s+(?:is\\s+|should\\s+be\\s+|goes\\s+)?(?:over|above|more than|bigger than|larger than|greater than|exceeding|beyond|di atas|lebih dari)\\s+${pct}${cashAfterPct}`)) ||
     // "each at most 25%", "every stock under 30%", "any company below 20%"

@@ -328,6 +328,29 @@ ok(
   cappedSteps.length === 6 && cappedSteps[0] === "s1" && cappedSteps[5] === "s7",
   `capPromptSteps keeps Step 1 + latest refinements -> ${JSON.stringify(cappedSteps)}`,
 );
+ok(cappedSteps[1] === "s2. s3", `capPromptSteps merges middle steps instead of dropping them -> ${JSON.stringify(cappedSteps[1])}`);
+
+// Audit 2026-11-21: other ways of leaving a stock out must exclude it, never include it
+for (const phrase of ["remove Tesla", "drop Tesla", "leave out Tesla", "take out Tesla", "other than Tesla", "apart from Tesla", "everything but Tesla", "anything but Tesla", "I hate Tesla", "AI stocks ex-Tesla"]) {
+  const m = parseMandate(phrase);
+  ok(m.exclude.includes("TSLAc") && !m.include.includes("TSLAc"), `"${phrase}" excludes TSLAc -> inc=${m.include} exc=${m.exclude}`);
+}
+{
+  const m = parseMandate("replace Tesla with Apple");
+  ok(m.exclude.includes("TSLAc") && m.include.includes("AAPLc"), `"replace Tesla with Apple" -> inc=${m.include} exc=${m.exclude}`);
+  const c = parseMandate("anything but crypto, aggressive, 6 stocks");
+  ok(c.exclude.includes("MSTRc") && !c.themes.includes("crypto") && c.count === 6 && c.riskHint === "Aggressive", `"anything but crypto, aggressive, 6 stocks" -> exc=${c.exclude} themes=${c.themes} count=${c.count} risk=${c.riskHint}`);
+  const f = parseMandateSteps(["AI and cloud plus Tesla", "remove Tesla"]);
+  ok(f.exclude.includes("TSLAc") && !f.include.includes("TSLAc"), `follow-up "remove Tesla" drops it -> inc=${f.include} exc=${f.exclude}`);
+  const rc = parseMandateSteps(["AI, max 25%", "remove the cap"]);
+  ok(rc.maxWeightPct === undefined && !rc.exclude.length, `follow-up "remove the cap" clears the cap only -> max=${rc.maxWeightPct} exc=${rc.exclude}`);
+}
+// Cap phrasings that used to be ignored
+for (const [phrase, want] of [["cap each at 35%", 35], ["limit each to 25%", 25], ["cap it at 30%", 30], ["no position larger than 20%", 20], ["Tesla, Amazon and Strategy, cap each at 35%", 35], ["nothing above 25%", 25], ["no one stock over 30%", 30]]) {
+  const m = parseMandate(phrase);
+  ok(m.maxWeightPct === want && !Object.keys(m.weightsPct).length, `"${phrase}" -> max=${m.maxWeightPct} w=${JSON.stringify(m.weightsPct)}`);
+}
+ok(parseMandate("five stocks, AI").count === 5, `"five stocks" -> count=${parseMandate("five stocks, AI").count}`);
 
 console.log(fail ?`\n❌ ${fail} check(s) failed` : "\n✅ All mandate checks passed");
 process.exitCode = fail ? 1 : 0;

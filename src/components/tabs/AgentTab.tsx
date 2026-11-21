@@ -464,9 +464,13 @@ export default function AgentTab({
                 {[
                   { label: "Max 25% per stock", cmd: "max 25% per stock" },
                   { label: "Equal weight", cmd: "equal weight" },
-                  (agentReport.cashReservePct ?? 0) > 0
+                  // Cash the user asked for can be cleared; cash that only exists because the weight limit can't hold
+                  // all the money goes away by lifting the limit, not by "0% cash"
+                  agentReport.limits?.some((l) => /^Keep .*% in USDC$/.test(l.label))
                     ? { label: "0% cash", cmd: "0% cash" }
-                    : { label: "Keep 15% in USDC", cmd: "keep 15% in cash" },
+                    : (agentReport.cashReservePct ?? 0) > 0
+                      ? { label: "Invest all (remove limit)", cmd: "remove the cap" }
+                      : { label: "Keep 15% in USDC", cmd: "keep 15% in cash" },
                   { label: "Prefer below NAV", cmd: "prefer below NAV" },
                   { label: "Safer / low vol", cmd: "safer low risk", risk: "Conservative" as const },
                   { label: "No crypto", cmd: "no crypto" },
