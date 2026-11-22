@@ -127,8 +127,7 @@ const FAQ: { q: string; a: React.ReactNode }[] = [
     q: "How is a MAXXAGENT basket different from an index token?",
     a: (
       <>
-        Index tokens (for example the ones you can create on Bankr) wrap several stocks into one new token: you hold that
-        token. With MAXXAGENT you hold the <strong>tokenized stocks themselves</strong>, each in your own wallet, bought in
+        Index tokens wrap several stocks into one new token: you hold that token. With MAXXAGENT you hold the <strong>tokenized stocks themselves</strong>, each in your own wallet, bought in
         one confirmation from about $1.50. There is no new token, no pooled fund and no fee from us; a published index here
         is only a recipe (names and weights) in an onchain registry, and anyone can buy the same stocks from their own
         wallet. The agent also shows its research with sources and keeps your limits. Both are useful; they are different
