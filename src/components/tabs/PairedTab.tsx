@@ -1,9 +1,11 @@
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, ExternalLink, RefreshCw } from "lucide-react";
+import Link from "next/link";
+import { AlertTriangle, ExternalLink, RefreshCw, Zap } from "lucide-react";
 import { STOCK_COLOR_MAP, STOCK_LOGO_MAP } from "@/components/PortfolioDonutChart";
 import type { PairedToken } from "@/app/api/paired/route";
+import type { LiveTokenizedStock } from "@/lib/tokenizedStocks";
 
 type Resp = {
   ok: boolean;
@@ -49,11 +51,31 @@ function TokenLogo({ symbol, src }: { symbol: string; src?: string | null }) {
   );
 }
 
-export default function PairedTab() {
+export default function PairedTab({
+  stocks = [],
+  initialStock,
+  onTrade,
+}: {
+  /** live stocks, for each paired stock's own 24h move next to the token's */
+  stocks?: LiveTokenizedStock[];
+  /** open filtered to one stock (from "See all" under a stock's chart, or ?pair=SPCXc) */
+  initialStock?: string;
+  /** buy the paired stock in the Swap panel (MAXXAGENT routes the stock, never the token) */
+  onTrade?: (symbol: string) => void;
+}) {
   const [data, setData] = useState<Resp | null>(null);
   const [sort, setSort] = useState<Sort>("liquidity");
-  const [stock, setStock] = useState<string>("all");
+  const [stock, setStock] = useState<string>(initialStock || "all");
   const [reload, setReload] = useState(0);
+  useEffect(() => {
+    if (initialStock) return;
+    const fromUrl = new URLSearchParams(window.location.search).get("pair");
+    if (fromUrl && /^[A-Za-z]{1,8}c$/.test(fromUrl)) setStock(fromUrl);
+  }, [initialStock]);
+  useEffect(() => {
+    if (initialStock) setStock(initialStock);
+  }, [initialStock]);
+  const stockBySymbol = useMemo(() => new Map(stocks.map((s) => [s.symbol, s])), [stocks]);
 
   useEffect(() => {
     let off = false;
@@ -160,15 +182,35 @@ export default function PairedTab() {
                     <div className="truncate text-[11px] text-slate-400">{t.token.name}</div>
                   </div>
                 </div>
-                <span
-                  className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border px-2 py-1 font-mono text-[11px] font-bold text-white"
+                <Link
+                  href={`/stock/${t.stock}`}
+                  className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border px-2 py-1 font-mono text-[11px] font-bold text-white hover:bg-slate-800/60"
                   style={{ borderColor: `${STOCK_COLOR_MAP[t.stock] || "#4C6FFF"}88` }}
-                  title={`Pool pairs $${t.token.symbol} with ${t.stock}`}
+                  title={`Pool pairs $${t.token.symbol} with ${t.stock}: open the ${t.stock} stock page`}
                 >
                   ↔ {STOCK_LOGO_MAP[t.stock] && <img src={STOCK_LOGO_MAP[t.stock]} alt="" className="h-3.5 w-3.5 rounded-full" />}
                   {t.stock}
-                </span>
+                </Link>
               </div>
+              {(() => {
+                // The token is priced in the stock, so its dollar price carries the stock's move too: show both
+                const st = stockBySymbol.get(t.stock);
+                const stockChg = st && Number.isFinite(st.change24hPct) ? st.change24hPct : null;
+                if (stockChg === null && t.priceChange24hPct === null) return null;
+                const pct = (v: number) => (
+                  <span className={v >= 0 ? "text-emerald-300" : "text-rose-300"}>
+                    {v >= 0 ? "+" : ""}
+                    {v.toFixed(1)}%
+                  </span>
+                );
+                return (
+                  <div className="rounded-lg border border-slate-800/80 bg-[#050914] px-2.5 py-1.5 font-mono text-[11px] text-slate-400">
+                    24h: ${t.token.symbol} {t.priceChange24hPct !== null ? pct(t.priceChange24hPct) : "—"} · {t.stock}{" "}
+                    {stockChg !== null ? pct(stockChg) : "—"}
+                    <span className="font-sans text-[10px] text-slate-500"> · priced in {t.stock}, so it moves with it too</span>
+                  </div>
+                );
+              })()}
               <div className="grid grid-cols-3 gap-2 font-mono tabular-nums text-[11px]">
                 <div>
                   <div className="font-sans text-[10px] text-slate-500">Liquidity</div>
@@ -196,7 +238,17 @@ export default function PairedTab() {
                   {DEX_NAMES[t.dex] ?? t.dex} · pool age {age(t.createdAt)}
                   {t.fdvUsd ? ` · FDV ${usdShort(t.fdvUsd)}` : ""}
                 </span>
-                <span className="flex gap-2.5">
+                <span className="flex items-center gap-2.5">
+                  {onTrade && (
+                    <button
+                      type="button"
+                      onClick={() => onTrade(t.stock)}
+                      className="inline-flex items-center gap-1 rounded-md border border-[#4C6FFF]/40 bg-[#4C6FFF]/15 px-2 py-0.5 font-semibold text-blue-200 hover:bg-[#4C6FFF]/30 cursor-pointer"
+                      title={`Buy ${t.stock} itself in the Swap panel (MAXXAGENT routes the stock, not $${t.token.symbol})`}
+                    >
+                      <Zap className="h-3 w-3" /> Trade {t.stock}
+                    </button>
+                  )}
                   <a
                     href={`https://dexscreener.com/base/${t.pairAddress}`}
                     target="_blank"

@@ -86,6 +86,7 @@ const IndexesTab = dynamic(() => import("@/components/tabs/IndexesTab"), { loadi
 const PortfolioTab = dynamic(() => import("@/components/tabs/PortfolioTab"), { loading: TabLoading });
 const PublicAttributionTab = dynamic(() => import("@/components/tabs/PublicAttributionTab"), { loading: TabLoading });
 const NewsFeed = dynamic(() => import("@/components/NewsFeed").then((m) => m.NewsFeed), { loading: TabLoading });
+const PairedForStock = dynamic(() => import("@/components/PairedForStock").then((m) => m.PairedForStock), { ssr: false });
 const PairedTab = dynamic(() => import("@/components/tabs/PairedTab"), { loading: TabLoading });
 
 type ActiveTab = "terminal" | "agent" | "indexes" | "news" | "paired" | "traction" | "public";
@@ -476,6 +477,8 @@ export default function StockMaxxingDashboard() {
   }>({ col: "default", dir: "desc" });
   const [highlightedAlloc, setHighlightedAlloc] = useState<string | null>(null);
   const [chartSelectedSymbol, setChartSelectedSymbol] = useState<string>("NVDAc");
+  // Stock the Paired tab opens filtered to ("See all" under a stock's chart)
+  const [pairedFilter, setPairedFilter] = useState<string>("");
   const [searchQuery, setSearchQuery] = useState<string>("");
   const [selectedSectorFilter, setSelectedSectorFilter] = useState<string>("ALL");
   const [selectedSignalFilter, setSelectedSignalFilter] = useState<string>("ALL");
@@ -2376,6 +2379,7 @@ export default function StockMaxxingDashboard() {
            ===================================================================== */}
         {activeTab === "terminal" && (() => {
           const terminalChart = (
+            <>
             <InteractiveB20TradingChart
               stocks={stocks}
               selectedSymbol={chartSelectedSymbol}
@@ -2410,6 +2414,16 @@ export default function StockMaxxingDashboard() {
               pending={basketPending}
               pendingLabel={basketStatus || "Working…"}
             />
+            {/* Community tokens whose pools trade against the selected stock (hidden when there are none) */}
+            <PairedForStock
+              symbol={chartSelectedSymbol}
+              onSeeAll={(sym) => {
+                setPairedFilter(sym);
+                setActiveTab("paired");
+                window.scrollTo({ top: 0, behavior: "smooth" });
+              }}
+            />
+            </>
           );
           return (
           <div className="space-y-6">
@@ -3376,7 +3390,17 @@ export default function StockMaxxingDashboard() {
         )}
 
         {/* Third-party tokens whose pools trade against the tokenized stocks (read-only, never routed) */}
-        {activeTab === "paired" && <PairedTab />}
+        {activeTab === "paired" && (
+          <PairedTab
+            stocks={stocks}
+            initialStock={pairedFilter || undefined}
+            onTrade={(sym) => {
+              setChartSelectedSymbol(sym);
+              setActiveTab("terminal");
+              scrollWhenReady("#swap-panel", "center");
+            }}
+          />
+        )}
 
         {activeTab === "indexes" && (
           <IndexesTab
