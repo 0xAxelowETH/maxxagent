@@ -49,13 +49,16 @@ export function PairedForStock({ symbol, onSeeAll }: { symbol: string; onSeeAll?
   const seeAllCls = "shrink-0 text-[11px] font-semibold text-cyan-300 hover:text-white cursor-pointer";
   return (
     <div className="rounded-2xl border border-slate-800 bg-[#0b1120] p-3.5 space-y-2.5" data-testid="paired-for-stock">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="flex items-center gap-2 text-xs font-bold text-white">
-          <Coins className="h-3.5 w-3.5 text-amber-300" />
-          Community tokens paired with {symbol}
-          <span className="font-mono text-[11px] font-semibold text-slate-400">
-            {mine.length} · {usdShort(totalLiq)} in pools
-          </span>
+      <div className="flex items-start justify-between gap-3">
+        {/* Title and count stacked, "See all" on the right: stays tidy on a phone */}
+        <div className="min-w-0">
+          <div className="flex items-center gap-2 text-xs font-bold text-white">
+            <Coins className="h-3.5 w-3.5 shrink-0 text-amber-300" />
+            <span>Community tokens paired with {symbol}</span>
+          </div>
+          <div className="mt-0.5 pl-5 font-mono text-[11px] font-semibold text-slate-400">
+            {mine.length} token{mine.length > 1 ? "s" : ""} · {usdShort(totalLiq)} in pools
+          </div>
         </div>
         {onSeeAll ? (
           <button type="button" onClick={() => onSeeAll(symbol)} className={seeAllCls}>

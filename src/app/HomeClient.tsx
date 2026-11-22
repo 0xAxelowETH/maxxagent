@@ -2429,10 +2429,11 @@ export default function StockMaxxingDashboard() {
           <div className="space-y-6">
             {/* Market workspace switcher: Overview (Hero + Heatmap) vs Pro Terminal (Chart + Swap immediately above fold) */}
             <div className="flex items-center justify-between gap-2">
-              <div className="text-[11px] text-slate-400">
+              {/* a description only where it fits on one line; phones show just the switch */}
+              <div className="hidden sm:block text-[11px] text-slate-400">
                 {marketView === "terminal" ? "Pro Terminal · dual-feed chart, swap & 10-stock matrix" : "Overview · Agent quick-ask, heatmap & live market"}
               </div>
-              <div className="inline-flex rounded-xl border border-slate-800 bg-[#050914] p-0.5 text-[11px]" role="group" aria-label="Market view">
+              <div className="ml-auto inline-flex rounded-xl border border-slate-800 bg-[#050914] p-0.5 text-[11px]" role="group" aria-label="Market view">
                 {(
                   [
                     { id: "overview", label: "Overview" },

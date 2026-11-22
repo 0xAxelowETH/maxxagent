@@ -95,7 +95,16 @@ export function StockLive({ symbol, color }: { symbol: string; color: string }) 
 
   const cards: [string, string, string?][] = live
     ? [
-        ["Chainlink NAV", usd(live.navPrice), live.isOracleStale ? "oracle stale" : `updated ${ago(live.oracleAgeMinutes)}`],
+        [
+          "Chainlink NAV",
+          usd(live.navPrice),
+          // Over a weekend or holiday the feed simply holds the last close: say that, not "stale"
+          usMarketStatus().state !== "open" && live.oracleAgeMinutes > 0 && live.oracleAgeMinutes < 80 * 60
+            ? `last close · ${ago(live.oracleAgeMinutes)}`
+            : live.isOracleStale
+              ? "oracle stale"
+              : `updated ${ago(live.oracleAgeMinutes)}`,
+        ],
         ["Base DEX price", usd(live.dexPrice24_7), `${pct(live.weekendGapPct)} vs NAV`],
         ["24h change", pct(live.change24hPct)],
         ["DEX liquidity", live.dexLiquidityUsd ? compact(live.dexLiquidityUsd) : "—"],

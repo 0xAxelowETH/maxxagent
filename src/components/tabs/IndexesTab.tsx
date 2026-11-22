@@ -761,10 +761,18 @@ export default function IndexesTab({
                           )
                         }
                         disabled={basketPending || basketUsd < MIN_BUY_USD}
-                        className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-xl bg-emerald-600 px-3 py-2.5 text-xs font-bold text-white shadow-lg shadow-emerald-600/20 hover:bg-emerald-500 disabled:opacity-50 transition cursor-pointer"
+                        className="flex-1 min-w-0 inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded-xl bg-emerald-600 px-3 py-2.5 text-xs font-bold text-white shadow-lg shadow-emerald-600/20 hover:bg-emerald-500 disabled:opacity-50 transition cursor-pointer"
                       >
-                        <Zap className="h-3.5 w-3.5" />
-                        {basketPending ? basketStatus || "Working…" : `Buy $${basketUsd} ${payLabel}`}
+                        <Zap className="h-3.5 w-3.5 shrink-0" />
+                        {basketPending ? (
+                          <span className="truncate">{basketStatus || "Working…"}</span>
+                        ) : (
+                          <>
+                            Buy ${basketUsd}
+                            {/* the pay token only where it fits: the amount picker above already shows it */}
+                            <span className="hidden sm:inline">{payLabel}</span>
+                          </>
+                        )}
                       </button>
                       <button
                         type="button"
