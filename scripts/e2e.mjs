@@ -464,7 +464,8 @@ await step(`Portfolio: balances, P/L and visible Sell buttons at ${WIDTH}px`, as
   await tab("Portfolio");
   await page.waitForFunction(() => [...document.querySelectorAll("table button")].some((b) => b.textContent.trim() === "All"), { timeout: 40000 });
   // The real wallet can hold nothing (the balances here are simulated), so either P/L figure proves the history loaded
-  await page.waitForFunction(() => /(Unrealized|Realized) P\/L[^\n]*\n\s*[+−-]\$/.test(document.body.innerText), { timeout: 150000 });
+  // (a zero P/L reads "$0.00" without a sign)
+  await page.waitForFunction(() => /(Unrealized|Realized) P\/L[^\n]*\n\s*[+−-]?\$\d/.test(document.body.innerText), { timeout: 150000 });
   const box = await page.evaluate(() => {
     const b = [...document.querySelectorAll("table button")].find((x) => x.textContent.trim() === "All");
     const r = b.getBoundingClientRect();

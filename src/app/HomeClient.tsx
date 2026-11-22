@@ -11,6 +11,7 @@ import {
   Copy,
   ExternalLink,
   FileText,
+  Coins,
   Flame,
   Layers,
   LogOut,
@@ -85,11 +86,12 @@ const IndexesTab = dynamic(() => import("@/components/tabs/IndexesTab"), { loadi
 const PortfolioTab = dynamic(() => import("@/components/tabs/PortfolioTab"), { loading: TabLoading });
 const PublicAttributionTab = dynamic(() => import("@/components/tabs/PublicAttributionTab"), { loading: TabLoading });
 const NewsFeed = dynamic(() => import("@/components/NewsFeed").then((m) => m.NewsFeed), { loading: TabLoading });
+const PairedTab = dynamic(() => import("@/components/tabs/PairedTab"), { loading: TabLoading });
 
-type ActiveTab = "terminal" | "agent" | "indexes" | "news" | "traction" | "public";
+type ActiveTab = "terminal" | "agent" | "indexes" | "news" | "paired" | "traction" | "public";
 // Tab <-> URL (?tab=…): shareable links, and the browser's Back button goes to the previous tab
-const SLUG_BY_TAB: Partial<Record<ActiveTab, string>> = { agent: "agent", indexes: "indexes", news: "news", traction: "portfolio" };
-const TAB_BY_SLUG: Record<string, ActiveTab> = { market: "terminal", agent: "agent", indexes: "indexes", news: "news", portfolio: "traction" };
+const SLUG_BY_TAB: Partial<Record<ActiveTab, string>> = { agent: "agent", indexes: "indexes", news: "news", paired: "paired", traction: "portfolio" };
+const TAB_BY_SLUG: Record<string, ActiveTab> = { market: "terminal", agent: "agent", indexes: "indexes", news: "news", paired: "paired", portfolio: "traction" };
 
 interface EthereumProvider {
   request: (args: { method: string; params?: unknown[] }) => Promise<unknown>;
@@ -2188,6 +2190,12 @@ export default function StockMaxxingDashboard() {
                 badge: "Live",
               },
               {
+                id: "paired",
+                label: "Paired",
+                icon: Coins,
+                badge: "Meme",
+              },
+              {
                 id: "traction",
                 label: "Portfolio",
                 icon: Zap,
@@ -3367,6 +3375,9 @@ export default function StockMaxxingDashboard() {
           </div>
         )}
 
+        {/* Third-party tokens whose pools trade against the tokenized stocks (read-only, never routed) */}
+        {activeTab === "paired" && <PairedTab />}
+
         {activeTab === "indexes" && (
           <IndexesTab
             publicSiteUrl={PUBLIC_SITE_URL}
@@ -3692,13 +3703,14 @@ export default function StockMaxxingDashboard() {
         className="md:hidden fixed bottom-0 inset-x-0 z-40 border-t border-slate-800 bg-[#050a18]/95 backdrop-blur-xl pb-[env(safe-area-inset-bottom)]"
         aria-label="Mobile sections"
       >
-        <div className="grid grid-cols-5">
+        <div className="grid grid-cols-6">
           {(
             [
               { id: "terminal", label: "Market", icon: TrendingUp },
               { id: "agent", label: "Agent", icon: Bot },
               { id: "indexes", label: "Indexes", icon: Layers },
               { id: "news", label: "News", icon: Newspaper },
+              { id: "paired", label: "Paired", icon: Coins },
               { id: "traction", label: "Portfolio", icon: Wallet },
             ] as const
           ).map((t) => {
@@ -3716,7 +3728,7 @@ export default function StockMaxxingDashboard() {
                 }`}
                 aria-current={active ? "page" : undefined}
               >
-                <span className={`rounded-xl px-3 py-1 ${active ? "bg-[#4C6FFF]/25" : ""}`}>
+                <span className={`rounded-xl px-2.5 py-1 ${active ? "bg-[#4C6FFF]/25" : ""}`}>
                   <Icon className={`h-5 w-5 ${active ? "text-blue-300" : ""}`} />
                 </span>
                 {t.label}

@@ -89,6 +89,7 @@ const LIMITS: Record<string, number> = {
   "/api/pnl": 20,
   "/api/stats": 30,
   "/api/news": 60,
+  "/api/paired": 30,
   "/api/health": 30,
   "/api/watch": 20,
   "/api/cron": 5,
