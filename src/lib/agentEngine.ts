@@ -172,6 +172,7 @@ export function runAutonomousStockAgent(params: {
 }): AgentAnalysisReport {
   const { stocks, userPrompt, promptSteps, capitalUsd, builderCode, currentWeights = {}, fundamentals = {}, unsupportedLive = {}, risk = {} } = params;
   const mandate = promptSteps && promptSteps.length > 0 ? parseMandateSteps(promptSteps) : parseMandate(userPrompt);
+  const marketOpen = usMarketStatus().state === "open";
   // Words in the request ("safe", "aggressive") refine the selected profile only when it was left on Balanced
   const riskProfile = params.riskProfile === "Balanced" && mandate.riskHint ? mandate.riskHint : params.riskProfile;
   const interpretation = mandate.notes.filter((n) => !n.startsWith("Risk read"));
@@ -343,8 +344,10 @@ export function runAutonomousStockAgent(params: {
       if (level >= 1.6) reasons.push(`higher volatility (${riskText}) for an aggressive profile`);
     } else score += 10 - Math.abs(1.45 - level) * 8;
 
-    // 4. Stale oracle penalty
-    if (stock.isOracleStale) {
+    // 4. Stale oracle penalty. Over a weekend or holiday the NAV is simply the last close (Chainlink stops
+    // updating stock feeds when the market is shut), so that is not "stale" and costs no points.
+    const closedGap = !marketOpen && stock.oracleAgeMinutes > 0 && stock.oracleAgeMinutes < 80 * 60;
+    if (stock.isOracleStale && !closedGap) {
       score -= 8;
       reasons.push("NAV oracle is stale");
     }
@@ -617,7 +620,10 @@ export function runAutonomousStockAgent(params: {
     };
   });
 
-  const topTickers = allocations.map((a) => `${a.symbol} ${(a.targetWeightBps / 100).toFixed(1)}%`).join(", ");
+  // Shares of the money, like the donut and the allocation rows (not of the invested part), plus the USDC kept
+  const topTickers =
+    allocations.map((a) => `${a.symbol} ${a.capitalSharePct.toFixed(1)}%`).join(", ") +
+    (cashReservePct > 0 ? `, ${cashReservePct.toFixed(cashReservePct % 1 ? 1 : 0)}% kept in USDC` : "");
   const NAMES: Record<string, [string, string]> = {
     ai: ["MAXX AI Basket", "MAXX-AI"],
     chips: ["MAXX Chips Basket", "MAXX-CHIP"],
