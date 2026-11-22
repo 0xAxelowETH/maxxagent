@@ -36,6 +36,19 @@ const DEX_NAMES: Record<string, string> = { uniswap: "Uniswap", aerodrome: "Aero
 
 type Sort = "liquidity" | "volume";
 
+/** The logo the token's team registered on DexScreener, or its initials when there is none or it fails to load */
+function TokenLogo({ symbol, src }: { symbol: string; src?: string | null }) {
+  const [broken, setBroken] = useState(false);
+  const cls = "h-8 w-8 shrink-0 rounded-full border border-slate-700 bg-slate-900";
+  if (src && !broken)
+    return <img src={src} alt={`${symbol} logo`} loading="lazy" referrerPolicy="no-referrer" onError={() => setBroken(true)} className={`${cls} object-cover`} />;
+  return (
+    <span className={`${cls} inline-flex items-center justify-center font-mono text-[11px] font-bold text-slate-200`}>
+      {symbol.slice(0, 2).toUpperCase()}
+    </span>
+  );
+}
+
 export default function PairedTab() {
   const [data, setData] = useState<Resp | null>(null);
   const [sort, setSort] = useState<Sort>("liquidity");
@@ -141,9 +154,7 @@ export default function PairedTab() {
               <div className="flex items-center justify-between gap-2">
                 <div className="flex min-w-0 items-center gap-2.5">
                   <span className="font-mono text-[11px] text-slate-500 w-5 shrink-0">#{i + 1}</span>
-                  <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-slate-700 bg-slate-900 font-mono text-[11px] font-bold text-slate-200">
-                    {t.token.symbol.slice(0, 2).toUpperCase()}
-                  </span>
+                  <TokenLogo symbol={t.token.symbol} src={t.token.logoUrl} />
                   <div className="min-w-0">
                     <div className="truncate font-mono text-sm font-bold text-white">${t.token.symbol}</div>
                     <div className="truncate text-[11px] text-slate-400">{t.token.name}</div>

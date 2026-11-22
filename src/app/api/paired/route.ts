@@ -70,7 +70,7 @@ type DsPair = {
 };
 
 export type PairedToken = {
-  token: { symbol: string; name: string; address: string };
+  token: { symbol: string; name: string; address: string; logoUrl?: string | null };
   stock: string;
   dex: string;
   pairAddress: string;
@@ -167,7 +167,7 @@ async function load(): Promise<{
           const perStock = Number(p.priceNative);
           const price = baseIsStock ? (perStock > 0 ? basePrice / perStock : NaN) : basePrice;
           byPair.set(key, {
-            token: { symbol, name: name || symbol, address: other.address },
+            token: { symbol, name: name || symbol, address: other.address, logoUrl: null },
             stock: s.symbol,
             dex: cleanIndexName(p.dexId, 20) || "dex",
             pairAddress: p.pairAddress,
@@ -186,7 +186,36 @@ async function load(): Promise<{
   const rows = [...byPair.values()]
     .sort((a, b) => b.liquidityUsd - a.liquidityUsd)
     .slice(0, MAX_ROWS);
+  const logos = await fetchLogos(rows.map((r) => r.token.address));
+  for (const r of rows) r.token.logoUrl = logos.get(r.token.address.toLowerCase()) ?? null;
   return { rows, scanned, failed };
+}
+
+/**
+ * Logos the token teams registered on DexScreener (a pool's `info` only describes its base token, so they are
+ * read per token in one batched call). Only DexScreener's own image CDN is accepted.
+ */
+async function fetchLogos(addresses: string[]): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  const unique = [...new Set(addresses.map((a) => a.toLowerCase()))].slice(0, 30);
+  if (!unique.length) return out;
+  const res = await fetch(`https://api.dexscreener.com/tokens/v1/base/${unique.join(",")}`, {
+    cache: "no-store",
+    signal: AbortSignal.timeout(8_000),
+  }).catch(() => null);
+  const pairs = (res && res.ok ? await res.json().catch(() => null) : null) as (DsPair & { info?: { imageUrl?: string } })[] | null;
+  for (const p of Array.isArray(pairs) ? pairs : []) {
+    const addr = p.baseToken?.address?.toLowerCase();
+    const img = p.info?.imageUrl;
+    if (!addr || out.has(addr) || !unique.includes(addr) || typeof img !== "string") continue;
+    try {
+      const u = new URL(img);
+      // Used as given: the CDN only serves its own preset sizes (a custom width answers 422)
+      if (u.protocol !== "https:" || u.hostname !== "cdn.dexscreener.com") continue;
+      out.set(addr, u.toString());
+    } catch {}
+  }
+  return out;
 }
 
 export async function GET() {
