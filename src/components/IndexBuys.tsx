@@ -59,8 +59,8 @@ export function IndexBuys({ id }: { id: number }) {
         <div className="font-semibold text-white">No buys yet. Be the first.</div>
       )}
       <p className="mt-1.5 text-[11px] text-slate-500">
-        Counted from onchain swaps made through MAXXAGENT that match this index&apos;s stocks and weights. The team&apos;s test wallet is
-        excluded.{" "}
+        Counted from onchain swaps made through MAXXAGENT that match this index&apos;s stocks and weights. The team&apos;s test wallets
+        are excluded.{" "}
         <Link href="/stats" className="text-cyan-300 underline">
           Live stats
         </Link>

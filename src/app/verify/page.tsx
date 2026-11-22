@@ -14,6 +14,7 @@ const GITHUB = "https://github.com/0xAxelowETH/maxxagent";
 const BUILDER_CODE = process.env.NEXT_PUBLIC_BASE_BUILDER_CODE || "bc_ewm6gcvz";
 const ROUTER = "0x6131B5fae19EA4f9D964eAc0408E4408b66337b5";
 const TEAM_WALLET = "0xD986C711F575C71dA22Bd08742b9DB2091Ba9e33";
+const TEAM_WALLET_2 = "0xA711F79634Bbc4e99736cd95431EB6536C30fDb8";
 const REGISTRY = process.env.NEXT_PUBLIC_INDEX_REGISTRY_ADDRESS || "";
 
 const a = "text-cyan-300 underline break-all";
@@ -94,11 +95,15 @@ export default function VerifyPage() {
             volume, unique wallets and the share carrying the Builder Code, with a BaseScan link per trade.
           </p>
           <p>
-            The team&apos;s own test wallet{" "}
+            The team&apos;s own test wallets{" "}
             <a className={a} href={`https://basescan.org/address/${TEAM_WALLET}`} target="_blank" rel="noopener noreferrer">
               {TEAM_WALLET}
             </a>{" "}
-            is excluded, so the numbers only count other people. We never trade to inflate them.
+            and{" "}
+            <a className={a} href={`https://basescan.org/address/${TEAM_WALLET_2}`} target="_blank" rel="noopener noreferrer">
+              {TEAM_WALLET_2}
+            </a>{" "}
+            are excluded, so the numbers only count other people. We never trade to inflate them.
           </p>
           <p>
             To check one wallet from a terminal: <code className={code}>npm run verify:trades -- --wallet=0x… --hours=72</code>{" "}

@@ -145,7 +145,7 @@ const FAQ: { q: string; a: React.ReactNode }[] = [
           Live stats
         </Link>{" "}
         page counts trades, volume and wallets routed through MAXXAGENT, read directly from onchain swap events, with each
-        transaction linked so anyone can verify it. The team&apos;s own test wallet is excluded.
+        transaction linked so anyone can verify it. The team&apos;s own test wallets are excluded.
       </>
     ),
   },

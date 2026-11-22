@@ -7,7 +7,7 @@ export const metadata: Metadata = {
   description: "Terms of use and risk disclosure for MAXXAGENT, a non-custodial tool for Coinbase tokenized stocks on Base.",
 };
 
-const LAST_UPDATED = "November 7, 2026";
+const LAST_UPDATED = "November 18, 2026";
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
