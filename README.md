@@ -102,7 +102,7 @@ Checks (no funds needed):
 
 ```bash
 npm run test                   # all 6 suites: contracts, agent, rebalance, indexmatch, drift, market
-npm run test:e2e               # 28 user journeys in a browser with a read-only mock wallet (-- --url=https://maxxagent.xyz for production)
+npm run test:e2e               # 29 user journeys in a browser with a read-only mock wallet (-- --url=https://maxxagent.xyz for production)
 npm run test:agent             # mandate parser, multi-step follow-up, weights & limits checks
 npm run test:rebalance         # rebalance planner unit checks
 npm run test:attribution       # Builder Code survives EOA, EIP-7702 and ERC-4337 batching

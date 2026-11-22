@@ -599,8 +599,9 @@ export function InteractiveB20TradingChart({
             ) : (
               <div className="text-right font-mono tabular-nums">
                 <div className="flex items-center justify-end gap-2">
-                  <span className="text-2xl font-extrabold text-white">${displayedNav.toFixed(2)}</span>
-                  {hoverT === null && (
+                  {/* "…" until live data lands, instead of a $0.00 price that looks real */}
+                  <span className="text-2xl font-extrabold text-white">{displayedNav > 0 ? `$${displayedNav.toFixed(2)}` : "…"}</span>
+                  {hoverT === null && liveActive && (
                     <span
                       className={`rounded-lg px-2 py-0.5 text-xs font-bold ${
                         change24h >= 0
@@ -615,8 +616,14 @@ export function InteractiveB20TradingChart({
                   )}
                 </div>
                 <div className="text-[11px] text-cyan-300 mt-0.5">
-                  DEX: <strong>${displayedDex.toFixed(2)}</strong> ({gapAtCursor >= 0 ? "+" : ""}
-                  {gapAtCursor.toFixed(2)}% vs NAV)
+                  {displayedDex > 0 && displayedNav > 0 ? (
+                    <>
+                      DEX: <strong>${displayedDex.toFixed(2)}</strong> ({gapAtCursor >= 0 ? "+" : ""}
+                      {gapAtCursor.toFixed(2)}% vs NAV)
+                    </>
+                  ) : (
+                    "DEX: …"
+                  )}
                 </div>
                 {hoverT !== null && <div className="text-[10px] text-slate-400">{fmtTime(hoverT)}</div>}
               </div>

@@ -597,6 +597,36 @@ await step("News tab lists SEC filings, press releases and company news with the
   return `${links.length} links, all to original sources`;
 });
 
+await step("Paired tab lists third-party tokens read-only; 'Trade <stock>' opens the Swap panel on the stock", async () => {
+  await tab("Paired");
+  await page.waitForSelector('[data-testid="paired-tab"]', { timeout: 30000 });
+  // Cards, or an honest empty / unavailable state when DexScreener has nothing right now
+  await page.waitForFunction(
+    () => /#1\b|No token passes|unavailable/.test(document.querySelector('[data-testid="paired-tab"]')?.innerText || ""),
+    { timeout: 120000 }
+  );
+  const t = await page.$eval('[data-testid="paired-tab"]', (e) => e.innerText);
+  assert(/Not verified, reviewed or endorsed/.test(t) && /not tradable here/i.test(t) && /Not financial advice/i.test(t), "third-party notice missing");
+  const buyLike = await page.$$eval('[data-testid="paired-tab"] button', (bs) => bs.filter((b) => /^(buy|swap)\b|\$\d/i.test(b.textContent.trim())).length);
+  assert(buyLike === 0, "the Paired tab must not offer a buy or swap button for third-party tokens");
+  if (!/#1\b/.test(t)) {
+    await tab("Market");
+    return "no token listed right now (empty state shown)";
+  }
+  const links = await page.$$eval('[data-testid="paired-tab"] a[target="_blank"]', (as) => as.map((a) => a.href));
+  assert(links.every((h) => /^https:\/\/(dexscreener\.com|basescan\.org)\//.test(h)), "external links must go to DexScreener or BaseScan only");
+  const stockSym = await page.evaluate(() => {
+    const b = [...document.querySelectorAll('[data-testid="paired-tab"] button')].find((x) => /^Trade \w+c$/.test(x.textContent.trim()));
+    const s = b?.textContent.trim().slice(6);
+    b?.click();
+    return s;
+  });
+  assert(stockSym, "no 'Trade <stock>' button on the cards");
+  await page.waitForSelector("#swap-panel", { timeout: 30000 });
+  const n = (t.match(/#\d+\b/g) || []).length;
+  return `${n} tokens, read-only; Trade opened the Swap panel on ${stockSym}`;
+});
+
 await step("Shared basket link opens the index builder with validated, normalized weights", async () => {
   await page.goto(URL_BASE + "/?basket=NVDAc-50,MSFTc-30,XXX-20&amount=7", { waitUntil: "load", timeout: 120000 });
   await waitText(/Shared basket loaded/, 30000);
