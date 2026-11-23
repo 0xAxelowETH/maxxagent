@@ -291,18 +291,6 @@ function Chart({
           )}
         </div>
         <span className="flex flex-wrap items-center gap-3 font-mono tabular-nums">
-          {hoverT !== null && (
-            <span className="text-cyan-200">
-              {new Date(hoverT * 1000).toLocaleString("en-US", {
-                month: "short",
-                day: "numeric",
-                hour: tf === "30D" ? undefined : "2-digit",
-                minute: tf === "24H" ? "2-digit" : undefined,
-              })}
-              {navAt ? ` · NAV ${usd(navAt[1])}` : ""}
-              {dexAt ? ` · DEX ${usd(dexAt[1])}` : ""}
-            </span>
-          )}
           <button
             type="button"
             onClick={() => setShowNav((v) => (!v ? true : showDex ? false : true))}
@@ -327,6 +315,24 @@ function Chart({
         </span>
       </div>
       <div className="relative">
+            {/* Hover readout floats over the chart: in the header it wrapped onto a new line on phones,
+                pushing the chart down and making the news dots jump while the cursor moved onto them */}
+            {hoverT !== null && (
+              <div
+                className={`pointer-events-none absolute top-1 z-10 rounded-lg border border-slate-700/90 bg-[#070d1d]/95 px-2 py-1 font-mono tabular-nums text-[10px] text-cyan-200 shadow-xl ${
+                  t1 > t0 && (hoverT - t0) / (t1 - t0) > 0.55 ? "left-2" : "right-12"
+                }`}
+              >
+                {new Date(hoverT * 1000).toLocaleString("en-US", {
+                  month: "short",
+                  day: "numeric",
+                  hour: tf === "30D" ? undefined : "2-digit",
+                  minute: tf === "24H" ? "2-digit" : undefined,
+                })}
+                {navAt ? ` · NAV ${usd(navAt[1])}` : ""}
+                {dexAt ? ` · DEX ${usd(dexAt[1])}` : ""}
+              </div>
+            )}
             <svg
               viewBox={`0 0 ${W} ${H}`}
               className="h-[190px] w-full cursor-crosshair touch-pan-y"

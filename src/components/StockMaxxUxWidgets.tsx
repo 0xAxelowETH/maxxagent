@@ -594,7 +594,8 @@ export function InteractiveB20TradingChart({
                     {(peerAt?.[1] ?? 0).toFixed(2)}%
                   </strong>
                 </div>
-                {hoverT !== null && <div className="text-[10px] text-slate-400">{fmtTime(hoverT)}</div>}
+                {/* always the same height, so hovering never pushes the chart (and its news dots) up or down */}
+                <div className="h-[15px] text-[10px] text-slate-400">{hoverT !== null ? fmtTime(hoverT) : ""}</div>
               </div>
             ) : (
               <div className="text-right font-mono tabular-nums">
@@ -625,7 +626,8 @@ export function InteractiveB20TradingChart({
                     "DEX: …"
                   )}
                 </div>
-                {hoverT !== null && <div className="text-[10px] text-slate-400">{fmtTime(hoverT)}</div>}
+                {/* always the same height, so hovering never pushes the chart (and its news dots) up or down */}
+                <div className="h-[15px] text-[10px] text-slate-400">{hoverT !== null ? fmtTime(hoverT) : ""}</div>
               </div>
             )}
           </div>
