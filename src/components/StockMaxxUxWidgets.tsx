@@ -553,7 +553,7 @@ export function InteractiveB20TradingChart({
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch">
-        <div className="lg:col-span-8 flex flex-col justify-between rounded-2xl border border-slate-800/90 bg-[#040814]/90 p-4 sm:p-5 relative">
+        <div className="lg:col-span-8 lg:self-start flex flex-col rounded-2xl border border-slate-800/90 bg-[#040814]/90 p-4 sm:p-5 relative">
           <div className="flex flex-wrap items-start justify-between gap-4 z-10">
             <div className="flex items-center gap-3.5">
               <img
@@ -594,8 +594,6 @@ export function InteractiveB20TradingChart({
                     {(peerAt?.[1] ?? 0).toFixed(2)}%
                   </strong>
                 </div>
-                {/* always the same height, so hovering never pushes the chart (and its news dots) up or down */}
-                <div className="h-[15px] text-[10px] text-slate-400">{hoverT !== null ? fmtTime(hoverT) : ""}</div>
               </div>
             ) : (
               <div className="text-right font-mono tabular-nums">
@@ -626,13 +624,11 @@ export function InteractiveB20TradingChart({
                     "DEX: …"
                   )}
                 </div>
-                {/* always the same height, so hovering never pushes the chart (and its news dots) up or down */}
-                <div className="h-[15px] text-[10px] text-slate-400">{hoverT !== null ? fmtTime(hoverT) : ""}</div>
               </div>
             )}
           </div>
 
-          {!peerStock && hasData && (periodSummary || (avgCostUsd !== null && avgCostUsd > 0) || (isMarketClosed && Math.abs(gapAtCursor) >= 0.3)) && (
+          {!peerStock && hasData && (periodSummary || (avgCostUsd !== null && avgCostUsd > 0)) && (
             <div className="mt-2.5 flex flex-wrap items-center gap-2 text-[10px] font-mono tabular-nums">
               {periodSummary && (
                 <>
@@ -658,17 +654,6 @@ export function InteractiveB20TradingChart({
                   Your Avg <strong>${avgCostUsd.toFixed(2)}</strong>{" "}
                   ({displayedNav >= avgCostUsd ? "+" : ""}
                   {(((displayedNav - avgCostUsd) / avgCostUsd) * 100).toFixed(1)}%)
-                </span>
-              )}
-              {isMarketClosed && Math.abs(gapAtCursor) >= 0.3 && (
-                <span
-                  className={`rounded-lg border px-2 py-0.5 font-semibold ${
-                    gapAtCursor < 0
-                      ? "border-emerald-500/40 bg-emerald-500/15 text-emerald-300"
-                      : "border-amber-500/40 bg-amber-500/15 text-amber-200"
-                  }`}
-                >
-                  NY closed · DEX {Math.abs(gapAtCursor).toFixed(2)}% {gapAtCursor < 0 ? "below" : "above"} last NAV
                 </span>
               )}
             </div>
@@ -974,6 +959,20 @@ export function InteractiveB20TradingChart({
                       );
                     });
                   })()}
+
+                  {/* "NY closed" gap badge floats inside the chart (bottom left, above the time axis): it depends on the
+                      cursor, and as a line above the chart it wrapped and pushed the chart (and its news dots) around */}
+                  {!peerStock && isMarketClosed && Math.abs(gapAtCursor) >= 0.3 && (
+                    <span
+                      className={`pointer-events-none absolute bottom-8 left-3 z-10 rounded-lg border px-2 py-0.5 font-mono tabular-nums text-[10px] font-semibold backdrop-blur-sm ${
+                        gapAtCursor < 0
+                          ? "border-emerald-500/40 bg-emerald-950/80 text-emerald-300"
+                          : "border-amber-500/40 bg-amber-950/80 text-amber-200"
+                      }`}
+                    >
+                      NY closed · DEX {Math.abs(gapAtCursor).toFixed(2)}% {gapAtCursor < 0 ? "below" : "above"} last NAV
+                    </span>
+                  )}
 
                   {/* Floating crosshair tooltip */}
                   {hoverT !== null && (
