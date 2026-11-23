@@ -37,6 +37,7 @@ Built for the **Base Builder Quest: Stocks Maxxing Season** (Nov 5 – Dec 5, 20
 | **Index factsheet** | Each published index page reads like a fund factsheet: key facts (holdings, largest weight, top-3 concentration, published / last change, no index fee, no custody), sector mix, the weighted change of the constituents' Chainlink NAV since publication (labelled hypothetical), data sources per stock (Chainlink feed, token contract, Coinbase prospectus) and the main risks |
 | **Market heatmap** | Treemap of the 10 stocks on the Market tab: tile size = value of the tokens on Base (supply × NAV) or 24h DEX volume, colour = 24h DEX price change, or the gap between the DEX price and the last Chainlink NAV; when Wall Street is closed a strip says when it opens (New York time) while the tokens keep trading; refreshes every minute while the tab is open; each tile opens the stock page |
 | **News & filings** | A News tab (and a section on each stock page) lists the companies' own SEC filings, the press releases they attach to them (earnings, leadership changes, deals) and company news from the official newsroom feeds of NVIDIA, Apple, Microsoft, Meta and Google (free public RSS, deduplicated against the SEC press releases), each with topic tags, a short opening line, a link to the original on sec.gov and the token's price change since it was published (24/7 DEX price, or the Chainlink NAV for older items). Public documents only; no article text, images or outlet logos. Labelled "not financial advice" |
+| **Paired tokens** | A Paired tab lists the meme and community tokens on Base whose pools trade against one of the 10 tokenized stocks (for example a token paired with SPCXc), read from DexScreener's public API: only pools with at least $10K of liquidity that are 7+ days old or traded $1K+ in 24h; stablecoins, ETH/BTC and other wrappers of the same stocks are left out. Each card shows the token's registered logo, liquidity, 24h volume, price, pool age and its 24h move next to its paired stock's (it is priced in that stock, so it moves with it too), with links to the pool and the token. Linked both ways with the stocks: "Trade SPCXc" opens the Swap panel on the stock, and every stock page and the terminal show "Community tokens paired with …". Read-only and labelled third-party: MAXXAGENT never routes swaps into these tokens |
 | **Share cards** | A shared basket link or index page previews as a card of the basket (name, index ticker chip, creator pill, proportional weight bar, stocks) on X, Farcaster and chat apps (`/api/og`, 1200×630 and 3:2) |
 | **Mini app** | Opens inside Farcaster clients with the host wallet connected automatically; shared links render as a launch card; casts shared to MAXXAGENT open the stocks they mention |
 | **Index registry** | [`StockMaxxIndexRegistry`](https://basescan.org/address/0xdd059D85d1327a5A4b9cA14cF0A6DF82C7b86909) on Base (source verified on [BaseScan](https://basescan.org/address/0xdd059D85d1327a5A4b9cA14cF0A6DF82C7b86909#code) and [Sourcify](https://repo.sourcify.dev/8453/0xdd059D85d1327a5A4b9cA14cF0A6DF82C7b86909)) publishes index names and weights onchain so anyone can buy the same basket. No deposits, no payable functions, no token transfers, no fees; only an index's creator can change its weights. First index: #1 `MAXX-AIC3` (GOOGLc / MSFTc / NVDAc). Buys of each index are counted from onchain swaps |
@@ -66,7 +67,7 @@ Full walk-through: **[maxxagent.xyz/verify](https://maxxagent.xyz/verify)**.
 | Path | Purpose |
 | --- | --- |
 | `src/app/HomeClient.tsx` | App shell: Market overview, Pro Terminal, swap execution orchestration, wallet state & dynamic tab loader |
-| `src/components/tabs/*` | Lazy-loaded tabs: `AgentTab.tsx`, `IndexesTab.tsx`, `PortfolioTab.tsx` (incl. demo preview), `PublicAttributionTab.tsx` (`/?studio`) |
+| `src/components/tabs/*` | Lazy-loaded tabs: `AgentTab.tsx`, `IndexesTab.tsx`, `PortfolioTab.tsx` (incl. demo preview), `PairedTab.tsx`, `PublicAttributionTab.tsx` (`/?studio`) |
 | `src/components/PortfolioDonutChart.tsx` | Shared portfolio/index weight ring and token color map |
 | `src/app/page.tsx` | Server wrapper: a shared basket link gets its own preview card |
 | `src/app/stock/[symbol]`, `index/[id]`, `preview`, `stats`, `verify`, `faq`, `terms`, `share` | Stock pages, index factsheets, read-only Reg S preview, live stats, verification guide, FAQ, terms, cast-share handler |
@@ -76,6 +77,7 @@ Full walk-through: **[maxxagent.xyz/verify](https://maxxagent.xyz/verify)**.
 | `src/app/api/agent` | Rule-based basket proposal (adds SEC figures, live risk and unsupported-stock liquidity) |
 | `src/app/api/og` | Share card image for a basket or index |
 | `src/app/api/news`, `src/lib/newsFeed.ts`, `src/components/NewsFeed.tsx` | News & filings feed (SEC EDGAR filings and press releases, official company newsroom RSS, price change since publication; cached 15 min and on the CDN) |
+| `src/app/api/paired`, `src/components/PairedForStock.tsx` | Tokens paired with the stocks (DexScreener, filtered, cached 10 min) and the panel under each stock's chart |
 | `src/app/api/pnl` | P/L and trade history from the wallet's onchain transfers |
 | `src/app/api/stats` | Onchain usage stats from router events |
 | `src/app/api/history`, `indexes`, `health` | Price history, registry reads, health check |
@@ -142,6 +144,7 @@ Brand and mini app assets: `npm run brand`, `node scripts/generate-miniapp-asset
 - The aggregator may throttle bursts; the swap API retries and re-routes.
 - Right after a deploy the agent's SEC figures and live risk take about a minute to load; until then it says so and uses fixed beta estimates. P/L and stats answer "loading" instead of timing out, and the pages retry.
 - The news feed covers official SEC filings and press releases, not media coverage; the first load after a deploy takes about a minute (the tab retries by itself).
+- The Paired tab depends on DexScreener's public API and lists third-party tokens as found onchain; it does not review them.
 - Fonts are self-hosted (`src/app/fonts`, SIL Open Font License): `next/font/google` broke builds when Google Fonts changed its responses.
 - Coinbase lists 358 tokenized stocks; MAXXAGENT supports the 10 with deep Base liquidity and a Chainlink price, and names the others as not supported.
 - The registry's owner can only add or remove tokens from its allowlist; it cannot touch indexes or funds.
