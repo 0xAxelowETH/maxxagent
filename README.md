@@ -58,7 +58,9 @@ Full walk-through: **[maxxagent.xyz/verify](https://maxxagent.xyz/verify)**.
 - **Non-custodial:** transactions are built for the user's own address and signed in their wallet; the server never sees a key.
 - **Terms gate:** the first visit requires 6 explicit confirmations (non-US/OFAC, 18+, not advice, risks, non-custodial, Terms). See `/terms`.
 - **Geo-block:** U.S. visitors see a "not available" page and every API returns HTTP 451 (host geo header). The mini app manifest, brand images and link-preview tags stay public for crawlers that run in the U.S.
-- **Double-trade guards:** if a wallet errors after a batch may have been sent, token balances and the nonce are compared before anything is sent again.
+- **Double-trade guards:** if a wallet errors after a batch may have been sent, token balances and the nonce are compared before anything is sent again. A batch the wallet accepted is never resent, a wallet prompt left open keeps the order locked (the app asks you to reject it before retrying), and a leg that hasn't arrived yet is reported as "not confirmed", never as reverted, unless a receipt proves it.
+- **Third-party tokens:** the Paired tab only lists tokens paired with the stocks, read-only and labelled as third-party; MAXXAGENT never routes swaps into them.
+- **Reporting a vulnerability:** see [SECURITY.md](SECURITY.md) (private advisory, no public issues).
 - **Security headers:** CSP `frame-ancestors` limited to the site and mini app hosts (Farcaster, Base App), HSTS, nosniff, Permissions-Policy; `x-powered-by` removed.
 - **API hardening:** per-IP rate limits, whitelisted tokens and router, size limits, bounded slippage, secrets redacted from errors. Private RPC server-side only with failover.
 

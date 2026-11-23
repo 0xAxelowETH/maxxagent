@@ -7,7 +7,7 @@ export const metadata: Metadata = {
   description: "Terms of use and risk disclosure for MAXXAGENT, a non-custodial tool for Coinbase tokenized stocks on Base.",
 };
 
-const LAST_UPDATED = "November 18, 2026";
+const LAST_UPDATED = "November 23, 2026";
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
@@ -98,6 +98,15 @@ export default function TermsPage() {
             MAXXAGENT relies on third parties, including Base, Coinbase, Chainlink, KyberSwap, DexScreener,
             GeckoTerminal, SEC EDGAR, Upstash Redis (for optional Farcaster Drift Alerts), Farcaster, and newsroom RSS
             feeds. Their services are governed by their own terms, and we are not responsible for them.
+          </p>
+          <p>
+            The Paired tab and the &quot;Community tokens paired with …&quot; panels list third-party tokens whose
+            liquidity pools on Base trade against a tokenized stock, as reported by DexScreener&apos;s public data. They
+            are shown for information only: MAXXAGENT did not create, review, audit or verify them, does not endorse or
+            recommend them, earns nothing from them, and does not let you buy or sell them (it only routes the 10
+            tokenized stocks it supports). Their names, logos and figures come from third parties and can be wrong,
+            impersonate other projects or change at any time. Such tokens are often extremely volatile or illiquid, and
+            you can lose everything you put into them. Do your own research before interacting with any of them.
           </p>
         </Section>
 

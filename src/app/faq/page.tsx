@@ -136,6 +136,24 @@ const FAQ: { q: string; a: React.ReactNode }[] = [
     ),
   },
   {
+    q: "What is the Paired tab?",
+    a: (
+      <>
+        A read-only list of community and meme tokens on Base whose liquidity pool trades against one of the 10 tokenized
+        stocks (for example a token paired with SPCXc). It is built from DexScreener&apos;s public data and keeps only pools
+        with at least $10K of liquidity that are 7+ days old or traded $1K+ in the last 24h; stablecoins, ETH/BTC and other
+        wrappers of the same stocks are left out. Because such a token is priced in its stock, its dollar price also moves
+        with that stock, so each card shows both 24h moves. <strong>These are third-party tokens:</strong> MAXXAGENT did not
+        create or review them, doesn&apos;t endorse them and can&apos;t trade them. <em>Trade SPCXc</em> opens the stock
+        itself in the Swap panel, never the token. Meme tokens can lose all their value. See the{" "}
+        <Link href="/terms" className="text-cyan-300 underline">
+          risk disclosure
+        </Link>
+        .
+      </>
+    ),
+  },
+  {
     q: "Where can I see MAXXAGENT's usage?",
     a: (
       <>
