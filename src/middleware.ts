@@ -14,7 +14,10 @@ const STOCK_SYMBOLS = ["NVDAc", "AAPLc", "TSLAc", "MSFTc", "METAc", "GOOGLc", "A
 // Server-to-server endpoints (Vercel Cron and Farcaster's webhook run in the US) and public health monitors stay reachable
 // "/preview" is the read-only, no-trading page for reviewers anywhere (informational only, rendered on the server)
 const PUBLIC_EXACT = new Set(["/preview", "/agent-registration.json", "/api/og", "/api/miniapp/webhook", "/api/health", "/robots.txt", "/sitemap.xml", "/icon.svg", "/apple-icon.png", "/favicon.ico"]);
-const PUBLIC_PREFIXES = ["/.well-known/", "/api/cron/", "/brand/"];
+// "/api/og/" = the share card images (home, per stock, agent): read-only pictures that preview crawlers fetch from the US
+// "/api/skill/" = read-only basket proposals and prices for the MAXXAGENT Baskets skill (Bankr's agents call it
+// from their servers); it never trades, and the buy link it returns opens the geo-gated site
+const PUBLIC_PREFIXES = ["/.well-known/", "/api/cron/", "/api/og/", "/api/skill/", "/brand/"];
 const SITE = (process.env.NEXT_PUBLIC_SITE_URL || "https://maxxagent.xyz").replace(/\/$/, "");
 const esc = (v: string) => v.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
 const PREVIEW_DESC = "Build your own index of Coinbase tokenized stocks on Base, or let an agent propose one, and buy it in one flow from your own wallet. Not financial advice.";
@@ -34,16 +37,25 @@ const previewTags = (path: string, searchParams?: URLSearchParams) => {
   const parsedBasket = parseBasketParam(searchParams?.get("basket"));
   const rawName = parsedBasket ? cleanIndexName(searchParams?.get("name"), 48) : "";
   const rawTicker = parsedBasket ? cleanIndexName(searchParams?.get("ticker"), 24) : "";
+  // An agent link (/?tab=agent&prompt=…) on the home page
+  const prompt = path === "/" && !parsedBasket ? cleanIndexName(searchParams?.get("prompt"), 160) : "";
   const title = stock
     ? `${stock} tokenized stock on Base — MAXXAGENT`
     : indexId
     ? `Onchain stock index #${indexId} — MAXXAGENT`
     : parsedBasket && rawName
     ? `${rawName} — Custom stock index on Base | MAXXAGENT`
+    : prompt
+    ? `“${prompt}” — MAXXAGENT agent basket`
     : "MAXXAGENT — Tokenized stock indexes on Base";
+  // Same share cards as the real pages (see /api/og/*), so links shared from the US look the same
   const ogImage = parsedBasket
     ? `${SITE}${basketImagePath(parsedBasket, { name: rawName || undefined, ticker: rawTicker || undefined })}`
-    : `${SITE}/brand/maxxagent-og.png`;
+    : stock
+    ? `${SITE}/api/og/stock?symbol=${stock}`
+    : prompt
+    ? `${SITE}/api/og/agent?${new URLSearchParams({ prompt })}`
+    : `${SITE}/api/og/home`;
   const embed = stock
     ? { siteUrl: SITE, path: `/stock/${stock}`, buttonTitle: `Trade ${stock}` }
     : indexId
@@ -96,6 +108,8 @@ const LIMITS: Record<string, number> = {
   "/api/replay": 30,
   "/api/miniapp/webhook": 30,
   "/api/og": 60,
+  "/api/skill/basket": 20,
+  "/api/skill/stocks": 60,
   "/preview": 30,
 };
 const WINDOW_MS = 60_000;

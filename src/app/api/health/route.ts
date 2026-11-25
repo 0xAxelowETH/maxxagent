@@ -2,10 +2,13 @@ import { NextResponse } from "next/server";
 import { createPublicClient, parseAbi } from "viem";
 import { baseTransport, redactSecrets } from "@/lib/rpc";
 import { base } from "viem/chains";
+import { checkB20Transfers } from "@/lib/b20Guard";
 
 /**
  * Health check for every data source MAXXAGENT depends on.
  * Point an uptime monitor (e.g. UptimeRobot) at /api/health; it returns 503 when a critical source is down.
+ * `b20Transfers` also fails when an issuer control (transfer pause, sender/receiver/executor policy) would
+ * stop swaps of one of the 10 stocks; a GitHub Actions workflow checks this endpoint every 6 hours.
  */
 export const dynamic = "force-dynamic";
 
@@ -26,7 +29,7 @@ async function timed<T>(fn: () => Promise<T>): Promise<{ ok: boolean; ms: number
     const value = await fn();
     return { ok: true, ms: Date.now() - t, value };
   } catch (e) {
-    return { ok: false, ms: Date.now() - t, detail: redactSecrets(e instanceof Error ? ((e as { shortMessage?: string }).shortMessage || e.message) : "failed").slice(0, 120) };
+    return { ok: false, ms: Date.now() - t, detail: redactSecrets(e instanceof Error ? ((e as { shortMessage?: string }).shortMessage || e.message) : "failed").slice(0, 300) };
   }
 }
 
@@ -48,7 +51,7 @@ export async function GET() {
   }
   if (!inflight) {
     inflight = (async () => {
-      const [rpc, chainlink, dexscreener, kyber, gecko] = await Promise.all([
+      const [rpc, chainlink, dexscreener, kyber, gecko, b20] = await Promise.all([
         timed(() => client.getBlockNumber()),
         timed(async () => {
           const r = await client.readContract({
@@ -69,6 +72,11 @@ export async function GET() {
           })
         ),
         timed(() => fetchOk(`https://api.geckoterminal.com/api/v2/networks/base/tokens/${NVDA}`)),
+        timed(async () => {
+          const r = await checkB20Transfers(client);
+          if (!r.ok) throw new Error(r.problems.slice(0, 3).join("; "));
+          return r;
+        }),
       ]);
 
       const checks = {
@@ -83,6 +91,8 @@ export async function GET() {
         dexscreener: { ok: dexscreener.ok, ms: dexscreener.ms, detail: dexscreener.detail, critical: false },
         kyberswap: { ok: kyber.ok, ms: kyber.ms, detail: kyber.detail, critical: true },
         geckoterminal: { ok: gecko.ok, ms: gecko.ms, detail: gecko.detail, critical: false },
+        // Issuer controls on the 10 B20 stocks still let swaps through (see src/lib/b20Guard.ts)
+        b20Transfers: { ok: b20.ok, ms: b20.ms, detail: b20.detail, policies: b20.value?.policies.NVDAc, critical: true },
       };
       const healthy = Object.values(checks).every((c) => c.ok || !c.critical);
       const body = { ok: healthy, checkedAt: new Date().toISOString(), checks };

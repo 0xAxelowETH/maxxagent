@@ -93,7 +93,7 @@ const MOCK = (wallet, fixture) => {
   const USDC = "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913";
   const ROUTER = "0x6131b5fae19ea4f9d964eac0408e4408b66337b5";
   window.__fakeTx = {}; // hash -> receipt status
-  let swapCount = 0;
+  window.__swapCount = 0; // router swaps sent; setMock resets it so `revertSwap: n` counts from the current step
   const listeners = {};
   const provider = {
     request: async ({ method, params }) => {
@@ -145,8 +145,8 @@ const MOCK = (wallet, fixture) => {
         const hash = "0x" + Math.random().toString(16).slice(2).padEnd(64, "0").slice(0, 64);
         let status = "0x1";
         if (to === ROUTER) {
-          swapCount++;
-          if (m.revertSwap === swapCount) status = "0x0";
+          window.__swapCount++;
+          if (m.revertSwap === window.__swapCount) status = "0x0";
         }
         window.__fakeTx[hash] = status;
         return hash;
@@ -228,12 +228,51 @@ const click = (selector, re, timeout = 10000) =>
     .then(() => true)
     .catch(() => false);
 const waitText = (re, timeout = 30000) => page.waitForFunction((src) => new RegExp(src).test(document.body.innerText), { timeout }, re.source);
-const setMock = (m) => page.evaluate((m) => { Object.assign(window.__mock, m); sessionStorage.setItem("__mock", JSON.stringify(window.__mock)); window.__calls = []; }, m);
+const setMock = (m) => page.evaluate((m) => { Object.assign(window.__mock, m); sessionStorage.setItem("__mock", JSON.stringify(window.__mock)); window.__calls = []; window.__swapCount = 0; }, m);
 const calls = () => page.evaluate(() => window.__calls.slice());
 const shortAddr = `${WALLET.slice(0, 6)}...${WALLET.slice(-4)}`;
 const connected = async () => (await text()).includes(shortAddr);
 const tab = (name) => click("nav button", new RegExp(`^${name}`));
 const dismissToast = () => page.evaluate(() => document.querySelector('[aria-label="Dismiss"]')?.click());
+
+/**
+ * Confirms the open order review. Late in a full run the aggregator answers slowly, so a multi-stock
+ * review can open with its quotes already expired: then press "Quote expired — refresh" (up to twice,
+ * like a person would) and confirm the fresh quotes. true once Confirm was clicked.
+ */
+const confirmReview = async () => {
+  // A Confirm in the last 2s of a quote refreshes it instead of sending (the app's price guard): then the
+  // review stays open with fresh quotes and needs another Confirm. Done once the wallet is asked to send.
+  for (let attempt = 0; attempt < 3; attempt++) {
+    if (!(await pressConfirm())) return false;
+    const sent = await page
+      .waitForFunction(() => window.__calls.some((c) => c === "wallet_sendCalls" || c === "eth_sendTransaction") || !document.querySelector('[role="dialog"] button'), { timeout: 30000, polling: 300 })
+      .then(() => true)
+      .catch(() => false);
+    if (sent) return true;
+  }
+  return false;
+};
+const pressConfirm = async () => {
+  for (let i = 0; i < 3; i++) {
+    const state = await page
+      .waitForFunction(
+        () => {
+          const b = [...document.querySelectorAll('[role="dialog"] button')].find((x) => /Confirm in wallet ·|Quote expired — refresh/.test(x.textContent));
+          if (!b || b.disabled) return null;
+          return /Quote expired/.test(b.textContent) ? "expired" : "ready";
+        },
+        { timeout: 90000 }
+      )
+      .then((h) => h.jsonValue())
+      .catch(() => null);
+    if (state === "ready") return click('[role="dialog"] button', /Confirm in wallet ·/, 3000);
+    if (state !== "expired") return false;
+    await click('[role="dialog"] button', /Quote expired — refresh/, 3000);
+    await sleep(1500);
+  }
+  return false;
+};
 
 const buyOneDollar = async () => {
   await tab("Market");
@@ -337,8 +376,8 @@ await step("Wallet without batching ('unsupported') falls back to one-by-one", a
 await step("Wallet with an odd batch error also falls back (after the no-double-send check)", async () => {
   await setMock({ sendCalls: "weird" });
   await buyOneDollar();
-  await page.waitForSelector('[role="dialog"]', { timeout: 60000 });
-  await click('[role="dialog"] button', /Confirm in wallet/);
+  await page.waitForSelector('[role="dialog"]', { timeout: 120000 });
+  assert(await confirmReview(), "Confirm (quote never became confirmable)");
   await waitText(/Order not completed/, 40000);
   const c = await calls();
   assert(c.includes("eth_sendTransaction"), "no fallback after an unrecognised batch error");
@@ -434,11 +473,34 @@ await step("Basket where one swap reverts (one-by-one): reports 'Partly complete
   await page.evaluate(() => { window.__fakeTx = {}; });
   await tab("Agent");
   await waitText(/Buy basket for \$/, 60000);
+  // Pay with USDC: an earlier step may have left the basket on ETH (the mock's 1000 USDC is what this step funds)
+  await page.evaluate(() => [...document.querySelectorAll("button[aria-pressed]")].find((b) => /^usdc$/i.test(b.textContent.trim()) && b.getAttribute("aria-pressed") === "false")?.click());
   assert(await click("button", /^Buy basket for \$/), "basket button");
   await page.waitForSelector('[role="dialog"]', { timeout: 120000 });
   const legs = await page.$$eval('[role="dialog"] .divide-y > div', (e) => e.length);
-  assert(await click('[role="dialog"] button', /Confirm in wallet/), "Confirm");
-  await waitText(/Partly completed/, 120000);
+  assert(await confirmReview(), "Confirm (quotes never became confirmable)");
+  // Wait for any end state, so a failure says what the app showed instead of only "timeout":
+  // the distinct status lines seen every 10s and the wallet calls made
+  const end = /Partly completed|Basket bought|All \d+ (swaps|stocks)|failed|Not enough|error/i;
+  const seen = [];
+  const watch = setInterval(async () => {
+    const s = await page
+      .evaluate(() => {
+        const st = [...document.querySelectorAll('[role="dialog"] button, [role="status"], [aria-live]')].map((e) => e.textContent.trim()).filter(Boolean).join(" | ");
+        return st.replace(/\s+/g, " ").slice(0, 90);
+      })
+      .catch(() => "");
+    if (s && seen.at(-1) !== s) seen.push(s);
+  }, 10000);
+  try {
+    await waitText(/Partly completed/, 150000);
+  } catch {
+    const swaps = await page.evaluate(() => window.__swapCount);
+    const c = [...new Set(await calls())].join(",");
+    throw new Error(`no 'Partly completed' after 150s (${swaps} swaps sent; wallet calls: ${c}) states: ${seen.slice(-4).join(" » ")}`);
+  } finally {
+    clearInterval(watch);
+  }
   const t = await text();
   assert(/Not completed: Buy \w+c \(Swap reverted onchain/.test(t), "failed stock not listed with the revert reason");
   return `${legs} legs, 1 reverted, the rest reported as done`;
