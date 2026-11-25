@@ -8,6 +8,7 @@ import { NewsFeed } from "@/components/NewsFeed";
 import { PairedForStock } from "@/components/PairedForStock";
 import { BASE_TOKENIZED_STOCKS } from "@/lib/tokenizedStocks";
 import { miniappEmbedTags } from "@/lib/miniappEmbed";
+import { SITE_URL, ogPaths, stockDescription, stockTitle } from "@/lib/siteMeta";
 
 const find = (symbol: string) => BASE_TOKENIZED_STOCKS.find((s) => s.symbol.toLowerCase() === symbol.toLowerCase());
 
@@ -18,20 +19,22 @@ export function generateStaticParams() {
 export async function generateMetadata({ params }: { params: Promise<{ symbol: string }> }): Promise<Metadata> {
   const s = find((await params).symbol);
   if (!s) return { title: "Stock not found — MAXXAGENT" };
-  const title = `${s.symbol} (${s.companyName}) tokenized stock on Base — MAXXAGENT`;
-  const description = `Live Chainlink NAV, Base DEX price and liquidity for ${s.symbol}, Coinbase's tokenized ${s.companyName} stock on Base. Buy or sell from your own wallet. Not financial advice.`;
-  const image = `/api/og/stock/${s.symbol}`; // pre-rendered (ISR), so crawlers never wait
+  const title = stockTitle(s);
+  const description = stockDescription(s);
+  const og = ogPaths.stock(s.symbol); // pre-rendered (ISR), so crawlers never wait
+  const image = og.card;
   return {
     title,
     description,
     alternates: { canonical: `/stock/${s.symbol}` },
-    openGraph: { type: "website", siteName: "MAXXAGENT", title, description, images: [{ url: image, width: 1200, height: 630, alt: `${s.symbol}: live price and 7-day chart` }] },
+    openGraph: { type: "website", siteName: "MAXXAGENT", url: `/stock/${s.symbol}`, title, description, images: [{ url: image, width: 1200, height: 630, alt: `${s.symbol}: live price and 7-day chart` }] },
     twitter: { card: "summary_large_image", title, description, images: [image] },
     // Shared in Farcaster, the card launches the mini app straight on this stock
     other: miniappEmbedTags({
-      siteUrl: (process.env.NEXT_PUBLIC_SITE_URL || "https://maxxagent.xyz").replace(/\/$/, ""),
+      siteUrl: SITE_URL,
       path: `/stock/${s.symbol}`,
       buttonTitle: `Trade ${s.symbol}`,
+      imageUrl: `${SITE_URL}${og.tall}`,
     }),
   };
 }

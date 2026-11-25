@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { miniappEmbedTags } from "@/lib/miniappEmbed";
 import { basketImagePath, cleanIndexName, parseBasketParam } from "@/lib/shareBasket";
+import { BASE_TOKENIZED_STOCKS } from "@/lib/tokenizedStocks";
+import { INDEX_DESCRIPTION_FALLBACK, SITE_DESCRIPTION, SITE_TITLE, indexTitleFallback, ogPaths, stockDescription, stockTitle } from "@/lib/siteMeta";
 
 /**
  * Coinbase tokenized stocks are only available to persons in eligible jurisdictions
@@ -10,7 +12,6 @@ import { basketImagePath, cleanIndexName, parseBasketParam } from "@/lib/shareBa
  */
 const BLOCKED_COUNTRIES = new Set(["US", "PR", "GU", "VI", "AS", "MP", "UM"]);
 
-const STOCK_SYMBOLS = ["NVDAc", "AAPLc", "TSLAc", "MSFTc", "METAc", "GOOGLc", "AMZNc", "MSTRc", "SNDKc", "SPCXc"];
 // Server-to-server endpoints (Vercel Cron and Farcaster's webhook run in the US) and public health monitors stay reachable
 // "/preview" is the read-only, no-trading page for reviewers anywhere (informational only, rendered on the server)
 const PUBLIC_EXACT = new Set(["/preview", "/agent-registration.json", "/api/og", "/api/miniapp/webhook", "/api/health", "/robots.txt", "/sitemap.xml", "/icon.svg", "/apple-icon.png", "/favicon.ico"]);
@@ -20,7 +21,6 @@ const PUBLIC_EXACT = new Set(["/preview", "/agent-registration.json", "/api/og",
 const PUBLIC_PREFIXES = ["/.well-known/", "/api/cron/", "/api/og/", "/api/skill/", "/brand/"];
 const SITE = (process.env.NEXT_PUBLIC_SITE_URL || "https://maxxagent.xyz").replace(/\/$/, "");
 const esc = (v: string) => v.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
-const PREVIEW_DESC = "Build your own index of Coinbase tokenized stocks on Base, or let an agent propose one, and buy it in one flow from your own wallet. Not financial advice.";
 const EARLY_SECURITY_HEADERS = {
   "X-Content-Type-Options": "nosniff",
   "Referrer-Policy": "strict-origin-when-cross-origin",
@@ -28,55 +28,71 @@ const EARLY_SECURITY_HEADERS = {
   "Permissions-Policy": "camera=(), microphone=(), geolocation=(), payment=()",
   "Content-Security-Policy": "default-src 'self'; style-src 'unsafe-inline'; base-uri 'self'; form-action 'self'; object-src 'none'; frame-ancestors 'self' https://farcaster.xyz https://*.farcaster.xyz https://warpcast.com https://*.warpcast.com https://base.app https://*.base.app https://base.dev https://*.base.dev",
 };
-// Same embed as the real pages (stock pages launch on that stock), because preview crawlers run in the US
+// Same titles, descriptions, share cards and embeds as the real pages (see src/lib/siteMeta.ts), because
+// preview crawlers (X, Farcaster, Telegram…) run in the US and get this page instead of the app
 const previewTags = (path: string, searchParams?: URLSearchParams) => {
   // Only the 10 listed symbols: never reflect arbitrary URL text into the preview
   const asked = path.match(/^\/stock\/([A-Za-z]{2,8}c)$/)?.[1]?.toLowerCase();
-  const stock = STOCK_SYMBOLS.find((s) => s.toLowerCase() === asked);
+  const stock = BASE_TOKENIZED_STOCKS.find((s) => s.symbol.toLowerCase() === asked);
   const indexId = path.match(/^\/index\/(\d{1,9})$/)?.[1];
-  const parsedBasket = parseBasketParam(searchParams?.get("basket"));
+  const parsedBasket = path === "/" ? parseBasketParam(searchParams?.get("basket")) : null;
   const rawName = parsedBasket ? cleanIndexName(searchParams?.get("name"), 48) : "";
   const rawTicker = parsedBasket ? cleanIndexName(searchParams?.get("ticker"), 24) : "";
   // An agent link (/?tab=agent&prompt=…) on the home page
   const prompt = path === "/" && !parsedBasket ? cleanIndexName(searchParams?.get("prompt"), 160) : "";
-  const title = stock
-    ? `${stock} tokenized stock on Base — MAXXAGENT`
-    : indexId
-    ? `Onchain stock index #${indexId} — MAXXAGENT`
-    : parsedBasket && rawName
-    ? `${rawName} — Custom stock index on Base | MAXXAGENT`
-    : prompt
-    ? `“${prompt}” — MAXXAGENT agent basket`
-    : "MAXXAGENT — Tokenized stock indexes on Base";
-  // Same share cards as the real pages (see /api/og/*), so links shared from the US look the same
-  const ogImage = parsedBasket
-    ? `${SITE}${basketImagePath(parsedBasket, { name: rawName || undefined, ticker: rawTicker || undefined })}`
-    : stock
-    ? `${SITE}/api/og/stock/${stock}`
-    : prompt
-    ? `${SITE}/api/og/agent?${new URLSearchParams({ prompt })}`
-    : `${SITE}/api/og/home`;
-  const embed = stock
-    ? { siteUrl: SITE, path: `/stock/${stock}`, buttonTitle: `Trade ${stock}` }
-    : indexId
-    ? { siteUrl: SITE, path: `/index/${indexId}`, buttonTitle: `Buy index #${indexId}` }
-    : parsedBasket
-    ? {
-        siteUrl: SITE,
-        buttonTitle: "Buy this basket",
-        imageUrl: `${SITE}${basketImagePath(parsedBasket, { name: rawName || undefined, ticker: rawTicker || undefined, tall: true })}`,
-      }
-    : { siteUrl: SITE };
+  const legs = parsedBasket
+    ? Object.entries(parsedBasket)
+        .sort((a, b) => b[1] - a[1])
+        .map(([sym, w]) => `${sym} ${Number((w / 100).toFixed(1))}%`)
+        .join(", ")
+    : "";
+
+  let title = SITE_TITLE;
+  let description = SITE_DESCRIPTION;
+  let ogImage = `${SITE}${ogPaths.home.card}`;
+  let embed: Parameters<typeof miniappEmbedTags>[0] = { siteUrl: SITE };
+  let url = SITE + "/";
+  if (stock) {
+    title = stockTitle(stock);
+    description = stockDescription(stock);
+    const og = ogPaths.stock(stock.symbol);
+    ogImage = `${SITE}${og.card}`;
+    embed = { siteUrl: SITE, path: `/stock/${stock.symbol}`, buttonTitle: `Trade ${stock.symbol}`, imageUrl: `${SITE}${og.tall}` };
+    url = `${SITE}/stock/${stock.symbol}`;
+  } else if (indexId) {
+    // The registry isn't read here (no RPC in middleware); the pre-rendered card carries the index's name and weights
+    title = indexTitleFallback(indexId);
+    description = INDEX_DESCRIPTION_FALLBACK;
+    const og = ogPaths.index(indexId);
+    ogImage = `${SITE}${og.card}`;
+    embed = { siteUrl: SITE, path: `/index/${indexId}`, buttonTitle: `Buy index #${indexId}`, imageUrl: `${SITE}${og.tall}` };
+    url = `${SITE}/index/${indexId}`;
+  } else if (parsedBasket) {
+    const name = rawName || "Custom stock index";
+    title = `${name} — tokenized stock index on Base`;
+    description = `${legs}. Buy the whole basket from your own wallet with USDC or ETH on MAXXAGENT. Not financial advice.`;
+    ogImage = `${SITE}${basketImagePath(parsedBasket, { name, ticker: rawTicker || undefined })}`;
+    embed = { siteUrl: SITE, buttonTitle: "Buy this basket", imageUrl: `${SITE}${basketImagePath(parsedBasket, { name, ticker: rawTicker || undefined, tall: true })}` };
+    url = `${SITE}/?${searchParams}`;
+  } else if (prompt) {
+    title = `“${prompt}” — MAXXAGENT agent basket`;
+    description = "A rule-based agent turns this request into a basket of tokenized stocks on Base. Review it and buy from your own wallet. Not financial advice.";
+    ogImage = `${SITE}/api/og/agent?${new URLSearchParams({ prompt })}`;
+    url = `${SITE}/?${new URLSearchParams({ tab: "agent", prompt })}`;
+  }
   const tags: [string, string][] = [
-    ["description", PREVIEW_DESC],
+    ["description", description],
     ["og:type", "website"],
     ["og:site_name", "MAXXAGENT"],
+    ["og:url", url],
     ["og:title", title],
-    ["og:description", PREVIEW_DESC],
+    ["og:description", description],
     ["og:image", ogImage],
+    ["og:image:width", "1200"],
+    ["og:image:height", "630"],
     ["twitter:card", "summary_large_image"],
     ["twitter:title", title],
-    ["twitter:description", PREVIEW_DESC],
+    ["twitter:description", description],
     ["twitter:image", ogImage],
     ...Object.entries(miniappEmbedTags(embed)),
   ];

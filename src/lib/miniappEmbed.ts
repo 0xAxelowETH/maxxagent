@@ -7,8 +7,8 @@ export function miniappEmbedTags(opts: { siteUrl: string; path?: string; buttonT
   const embed = (type: string) =>
     JSON.stringify({
       version: "1",
-      // 3:2 card image (1200x800)
-      imageUrl: opts.imageUrl || `${base}/brand/miniapp-embed-1200x800.png`,
+      // 3:2 card image (1200x800): the live site card unless the page passes its own
+      imageUrl: opts.imageUrl || `${base}/api/og/home/tall`,
       button: {
         title: (opts.buttonTitle || "Build a stock index").slice(0, 32),
         action: {

@@ -3,6 +3,7 @@ import localFont from "next/font/local";
 import { Analytics } from "@vercel/analytics/next";
 import { MiniAppReady } from "@/components/MiniAppReady";
 import { miniappEmbedTags } from "@/lib/miniappEmbed";
+import { SITE_DESCRIPTION, SITE_TITLE, ogPaths } from "@/lib/siteMeta";
 import "./globals.css";
 
 // Self-hosted (SIL Open Font License, see src/app/fonts/OFL-*.txt). The build no longer downloads them from
@@ -21,27 +22,27 @@ const jetbrainsMono = localFont({
 });
 
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || "https://maxxagent.xyz";
-const DESCRIPTION =
-  "Build your own index of Coinbase tokenized stocks on Base, or let an agent propose one, and buy it in one flow from your own wallet. Live Chainlink NAV vs DEX prices, non-custodial. Not financial advice.";
+const DESCRIPTION = SITE_DESCRIPTION;
 
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
-  title: "MAXXAGENT — Tokenized stock baskets on Base",
+  title: SITE_TITLE,
   description: DESCRIPTION,
   applicationName: "MAXXAGENT",
   openGraph: {
     type: "website",
     siteName: "MAXXAGENT",
-    title: "MAXXAGENT — Tokenized stock baskets on Base",
+    url: "/",
+    title: SITE_TITLE,
     description: DESCRIPTION,
-    // Live card (the 10 stocks with NAV and 24h move), cached for an hour; see /api/og/home
-    images: [{ url: "/api/og/home", width: 1200, height: 630, alt: "MAXXAGENT: build your own index of tokenized stocks on Base" }],
+    // Live card (the 10 stocks with NAV and 24h move), pre-rendered and refreshed hourly; see /api/og/home
+    images: [{ url: ogPaths.home.card, width: 1200, height: 630, alt: "MAXXAGENT: build your own index of tokenized stocks on Base" }],
   },
   twitter: {
     card: "summary_large_image",
-    title: "MAXXAGENT — Tokenized stock baskets on Base",
+    title: SITE_TITLE,
     description: DESCRIPTION,
-    images: ["/api/og/home"],
+    images: [ogPaths.home.card],
   },
   // Mini app embed: a shared link renders as a 3:2 card with a launch button in Farcaster clients
   other: miniappEmbedTags({ siteUrl: SITE_URL }),

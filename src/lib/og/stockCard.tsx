@@ -9,7 +9,9 @@ import { Brand, Chip, Footer, Frame, MUTED, OG_SITE, UP, fmtPct, liveMarket, nav
  */
 export const findStock = (symbol: string) => BASE_TOKENIZED_STOCKS.find((s) => s.symbol.toLowerCase() === symbol.toLowerCase());
 
-export async function stockCard(symbol: string, timeoutMs?: number) {
+export async function stockCard(symbol: string, timeoutMs?: number, height: 630 | 800 = 630) {
+  // 800 = the 3:2 Farcaster / Base App embed: same layout, content centered, header and footer at the edges
+  const dy = height === 800 ? 85 : 0;
   const meta = findStock(symbol) ?? BASE_TOKENIZED_STOCKS[0];
   const color = meta.color || "#4C6FFF";
 
@@ -26,18 +28,18 @@ export async function stockCard(symbol: string, timeoutMs?: number) {
   return new ImageResponse(
     (
       <Frame
-        height={630}
+        height={height}
         glows={[
-          { x: 980, y: 140, size: 820, color: `${color}40` },
-          { x: 160, y: 320, size: 520, color: "rgba(76,111,255,0.14)" },
+          { x: 980, y: 140 + dy, size: 820, color: `${color}40` },
+          { x: 160, y: 320 + dy, size: 520, color: "rgba(76,111,255,0.14)" },
         ]}
       >
-        <div style={{ position: "absolute", left: 60, right: 60, top: 50, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <div style={{ position: "absolute", left: 60, right: 60, top: dy ? 64 : 50, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <Brand mark={mark} />
           <Chip dot={UP}>Tokenized on Base</Chip>
         </div>
 
-        <div style={{ position: "absolute", left: 60, top: 146, display: "flex", alignItems: "center", gap: 24 }}>
+        <div style={{ position: "absolute", left: 60, top: 146 + dy, display: "flex", alignItems: "center", gap: 24 }}>
           {logo ? <img src={logo} width={100} height={100} style={{ borderRadius: 26, boxShadow: `0 0 70px ${color}66` }} alt="" /> : null}
           <div style={{ display: "flex", flexDirection: "column" }}>
             <div style={{ display: "flex", fontSize: 58, fontWeight: 800, letterSpacing: -1.2, lineHeight: 1 }}>{meta.symbol}</div>
@@ -45,7 +47,7 @@ export async function stockCard(symbol: string, timeoutMs?: number) {
           </div>
         </div>
 
-        <div style={{ position: "absolute", left: 60, top: 300, display: "flex", flexDirection: "column" }}>
+        <div style={{ position: "absolute", left: 60, top: 300 + dy, display: "flex", flexDirection: "column" }}>
           {price !== null ? (
             <div style={{ display: "flex", fontFamily: "Mono", fontSize: 84, fontWeight: 700, letterSpacing: -3 }}>{`$${price.toFixed(2)}`}</div>
           ) : (
@@ -67,7 +69,7 @@ export async function stockCard(symbol: string, timeoutMs?: number) {
         </div>
 
         {spark ? (
-          <div style={{ position: "absolute", right: 60, top: 168, width: W, height: H, display: "flex" }}>
+          <div style={{ position: "absolute", right: 60, top: 168 + dy, width: W, height: H, display: "flex" }}>
             <svg width={W} height={H + 20} viewBox={`0 0 ${W} ${H + 20}`}>
               <defs>
                 <linearGradient id="fill" x1="0" y1="0" x2="0" y2="1">
@@ -83,9 +85,9 @@ export async function stockCard(symbol: string, timeoutMs?: number) {
           </div>
         ) : null}
 
-        <Footer left="Chainlink NAV · 24/7 DEX price · Not financial advice" url={`maxxagent.xyz/stock/${meta.symbol}`} />
+        <Footer bottom={dy ? 44 : 34} left="Chainlink NAV · 24/7 DEX price · Not financial advice" url={`maxxagent.xyz/stock/${meta.symbol}`} />
       </Frame>
     ),
-    await ogOptions(630, 1800)
+    await ogOptions(height, 1800)
   );
 }

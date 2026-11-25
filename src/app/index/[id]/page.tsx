@@ -9,7 +9,7 @@ import { IndexFactsheet } from "@/components/IndexFactsheet";
 import { REGISTRY, readIndex } from "@/lib/indexRegistry";
 import { BASE_TOKENIZED_STOCKS } from "@/lib/tokenizedStocks";
 import { miniappEmbedTags } from "@/lib/miniappEmbed";
-import { basketImagePath } from "@/lib/shareBasket";
+import { ogPaths } from "@/lib/siteMeta";
 
 export const revalidate = 60;
 
@@ -28,21 +28,20 @@ export async function generateMetadata({ params }: { params: Promise<{ id: strin
   const legs = ix.constituents.map((c) => `${c.symbol} ${(c.weightBps / 100).toFixed(0)}%`).join(", ");
   const title = `${ix.name} (${ix.ticker}) — onchain stock index on Base`;
   const description = `${legs}. A tokenized stock index published onchain on Base; buy the whole basket from your own wallet with USDC or ETH. Not financial advice.`;
-  const weights = Object.fromEntries(ix.constituents.map((c) => [c.symbol, c.weightBps]));
-  const shortAddr = `${ix.creator.slice(0, 6)}…${ix.creator.slice(-4)}`;
-  const card = { name: ix.name, ticker: `${ix.ticker} · onchain index #${ix.id}`, creator: shortAddr };
-  const image = basketImagePath(weights, card);
+  // Pre-rendered from the registry (ISR), so crawlers never wait; see /api/og/index/<id>
+  const og = ogPaths.index(ix.id);
+  const image = og.card;
   return {
     title: `${title} — MAXXAGENT`,
     description,
     alternates: { canonical: `/index/${ix.id}` },
-    openGraph: { type: "website", siteName: "MAXXAGENT", title, description, images: [{ url: image, width: 1200, height: 630, alt: `${ix.name}: ${legs}` }] },
+    openGraph: { type: "website", siteName: "MAXXAGENT", url: `/index/${ix.id}`, title, description, images: [{ url: image, width: 1200, height: 630, alt: `${ix.name}: ${legs}` }] },
     twitter: { card: "summary_large_image", title, description, images: [image] },
     other: miniappEmbedTags({
       siteUrl: SITE,
       path: `/index/${ix.id}`,
       buttonTitle: `Buy ${ix.ticker}`,
-      imageUrl: `${SITE}${basketImagePath(weights, { ...card, tall: true })}`,
+      imageUrl: `${SITE}${og.tall}`,
     }),
   };
 }
