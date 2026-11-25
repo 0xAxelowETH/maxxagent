@@ -15,7 +15,21 @@ const first = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v
 export async function generateMetadata({ searchParams }: { searchParams: Search }): Promise<Metadata> {
   const q = await searchParams;
   const weights = parseBasketParam(first(q.basket));
-  if (!weights) return {};
+  if (!weights) {
+    // An agent link (/?tab=agent&prompt=…) previews as the request plus the basket the agent builds for it
+    const prompt = cleanIndexName(first(q.prompt), 160);
+    if (!prompt) return {};
+    const title = `“${prompt}” — MAXXAGENT agent basket`;
+    const description = "A rule-based agent turns this request into a basket of tokenized stocks on Base. Review it and buy from your own wallet. Not financial advice.";
+    const image = `/api/og/agent?${new URLSearchParams({ prompt })}`;
+    return {
+      title,
+      description,
+      robots: { index: false },
+      openGraph: { type: "website", siteName: "MAXXAGENT", title, description, images: [{ url: image, width: 1200, height: 630, alt: `Agent basket for: ${prompt}` }] },
+      twitter: { card: "summary_large_image", title, description, images: [image] },
+    };
+  }
   const name = cleanIndexName(first(q.name), 48) || "Custom stock index";
   const ticker = cleanIndexName(first(q.ticker), 24);
   const legs = Object.entries(weights)

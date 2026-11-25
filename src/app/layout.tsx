@@ -34,13 +34,14 @@ export const metadata: Metadata = {
     siteName: "MAXXAGENT",
     title: "MAXXAGENT — Tokenized stock baskets on Base",
     description: DESCRIPTION,
-    images: [{ url: "/brand/maxxagent-og.png", width: 1200, height: 630, alt: "MAXXAGENT" }],
+    // Live card (the 10 stocks with NAV and 24h move), cached for an hour; see /api/og/home
+    images: [{ url: "/api/og/home", width: 1200, height: 630, alt: "MAXXAGENT: build your own index of tokenized stocks on Base" }],
   },
   twitter: {
     card: "summary_large_image",
     title: "MAXXAGENT — Tokenized stock baskets on Base",
     description: DESCRIPTION,
-    images: ["/brand/maxxagent-og.png"],
+    images: ["/api/og/home"],
   },
   // Mini app embed: a shared link renders as a 3:2 card with a launch button in Farcaster clients
   other: miniappEmbedTags({ siteUrl: SITE_URL }),
