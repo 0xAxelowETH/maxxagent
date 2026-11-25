@@ -1,0 +1,30 @@
+# Checks the live site every 6 hours. If /api/health stays unhealthy for three tries (about 6 minutes),
+# the run fails and GitHub emails the repo owner. The usual cause worth acting on is `b20Transfers`:
+# an issuer control on one of the 10 B20 stocks (transfer pause, sender/receiver/executor policy)
+# that would make swaps revert. Run it by hand from the Actions tab with "Run workflow".
+name: Site health
+
+on:
+  schedule:
+    - cron: "17 */6 * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  health:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check https://maxxagent.xyz/api/health
+        run: |
+          for try in 1 2 3; do
+            code=$(curl -s -m 60 -o health.json -w "%{http_code}" https://maxxagent.xyz/api/health || echo 000)
+            echo "try $try: HTTP $code"
+            if [ "$code" = "200" ]; then cat health.json; exit 0; fi
+            cat health.json 2>/dev/null || true
+            echo
+            [ "$try" -lt 3 ] && sleep 150
+          done
+          echo "::error title=MAXXAGENT health check failed::/api/health stayed unhealthy for 3 tries. Look at the failing check above (b20Transfers = an issuer control on a stock)."
+          exit 1
