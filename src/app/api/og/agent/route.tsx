@@ -4,7 +4,7 @@ import { POST as runAgent } from "@/app/api/agent/route";
 import { BASE_TOKENIZED_STOCKS } from "@/lib/tokenizedStocks";
 import { cleanIndexName } from "@/lib/shareBasket";
 import type { AgentAnalysisReport } from "@/lib/agentEngine";
-import { Brand, Chip, Footer, Frame, MUTED, logoUrl, ogMark, ogOptions, ogOrigin } from "@/lib/og/kit";
+import { Brand, Chip, Footer, Frame, MUTED, ogLogos, ogMark, ogOptions, ogOrigin } from "@/lib/og/kit";
 
 /**
  * Share card for an agent link (/?tab=agent&prompt=…): /api/og/agent?prompt=…
@@ -17,7 +17,8 @@ export const maxDuration = 30;
 
 const META = new Map(BASE_TOKENIZED_STOCKS.map((s) => [s.symbol, s]));
 const USDC_BLUE = "#2775ca";
-const AGENT_TIMEOUT_MS = 8000;
+// Crawlers give up after a few seconds: past this the card shows the request without the basket
+const AGENT_TIMEOUT_MS = 3000;
 
 async function proposal(origin: string, prompt: string): Promise<AgentAnalysisReport | null> {
   const req = new NextRequest(new URL("/api/agent", origin), {
@@ -35,12 +36,12 @@ async function proposal(origin: string, prompt: string): Promise<AgentAnalysisRe
 export async function GET(req: Request) {
   const origin = ogOrigin(req);
   const prompt = cleanIndexName(new URL(req.url).searchParams.get("prompt"), 160) || "AI and cloud, anything but Tesla, cap each at 30%, keep 10% in cash";
-  const [mark, report] = await Promise.all([ogMark(), proposal(origin, prompt)]);
+  const [mark, report, logos] = await Promise.all([ogMark(), proposal(origin, prompt), ogLogos(BASE_TOKENIZED_STOCKS)]);
 
   const legs = (report?.allocations ?? [])
     .filter((a) => a.capitalSharePct > 0 && META.has(a.symbol))
     .sort((a, b) => b.capitalSharePct - a.capitalSharePct)
-    .map((a) => ({ symbol: a.symbol, pct: a.capitalSharePct, color: META.get(a.symbol)!.color || "#4C6FFF", logo: logoUrl(origin, META.get(a.symbol)!.logoUrl) }));
+    .map((a) => ({ symbol: a.symbol, pct: a.capitalSharePct, color: META.get(a.symbol)!.color || "#4C6FFF", logo: logos.get(a.symbol) || "" }));
   const cash = report && report.cashReservePct > 0.05 ? report.cashReservePct : 0;
   const bar = [...legs.map((l) => ({ key: l.symbol, pct: l.pct, color: l.color })), ...(cash ? [{ key: "USDC", pct: cash, color: USDC_BLUE }] : [])];
   const chips = legs.slice(0, cash ? 5 : 6);
@@ -104,7 +105,7 @@ export async function GET(req: Request) {
                 {chips.map((l) => (
                   <div key={l.symbol} style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 14px", borderRadius: 14, background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.09)" }}>
                     { }
-                    <img src={l.logo} width={28} height={28} style={{ borderRadius: 8 }} alt="" />
+                    {l.logo ? <img src={l.logo} width={28} height={28} style={{ borderRadius: 8 }} alt="" /> : null}
                     <span style={{ fontSize: 18, fontWeight: 800 }}>{l.symbol}</span>
                     <span style={{ fontFamily: "Mono", fontSize: 17, color: MUTED }}>{pctText(l.pct)}</span>
                   </div>

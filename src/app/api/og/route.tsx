@@ -1,7 +1,7 @@
 import { ImageResponse } from "next/og";
 import { BASE_TOKENIZED_STOCKS } from "@/lib/tokenizedStocks";
 import { cleanIndexName, parseBasketParam } from "@/lib/shareBasket";
-import { Brand, Chip, Footer, Frame, INK, MUTED, UP, donutPaths, fmtPct, logoUrl, navHistory7d, ogMark, ogOptions, ogOrigin, seriesChangePct, shortCompany, signColor } from "@/lib/og/kit";
+import { Brand, Chip, Footer, Frame, INK, MUTED, UP, donutPaths, fmtPct, navHistory7d, ogLogos, ogMark, ogOptions, ogOrigin, seriesChangePct, shortCompany, signColor } from "@/lib/og/kit";
 
 /**
  * Share card for a basket: /api/og?basket=NVDAc-40,MSFTc-60&name=…&ticker=…&creator=…&h=800
@@ -27,7 +27,7 @@ export async function GET(req: Request) {
     .sort((a, b) => b[1] - a[1])
     .map(([symbol, bps]) => {
       const m = META.get(symbol);
-      return { symbol, pct: bps / 100, color: m?.color || "#4C6FFF", logo: m ? logoUrl(origin, m.logoUrl) : "", company: shortCompany(m?.companyName || "") };
+      return { symbol, pct: bps / 100, color: m?.color || "#4C6FFF", logo: "", company: shortCompany(m?.companyName || "") };
     });
   const fmt = (p: number) => `${Number.isInteger(p) ? p : p.toFixed(1)}%`;
   const many = legs.length > 5;
@@ -35,7 +35,13 @@ export async function GET(req: Request) {
   const hidden = legs.length - shown.length;
 
   // Past 7 days with these weights (each leg's NAV change, weighted); all legs must load or it's left out
-  const [mark, hist] = await Promise.all([ogMark(), Promise.all(legs.map((l) => navHistory7d(origin, l.symbol)))]);
+  // Short timeout: crawlers give up after a few seconds, and the card is fine without the 7-day figure
+  const [mark, hist, logos] = await Promise.all([
+    ogMark(),
+    Promise.all(legs.map((l) => navHistory7d(origin, l.symbol, 2000))),
+    ogLogos(legs.flatMap((l) => (META.has(l.symbol) ? [{ symbol: l.symbol, logoUrl: META.get(l.symbol)!.logoUrl }] : []))),
+  ]);
+  for (const l of legs) l.logo = logos.get(l.symbol) || "";
   const past7d = hist.every(Boolean) ? legs.reduce((a, l, i) => a + (l.pct / 100) * seriesChangePct(hist[i]!), 0) : null;
 
   const D = tall ? 420 : 380;

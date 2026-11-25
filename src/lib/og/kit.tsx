@@ -10,7 +10,9 @@ import type { LiveTokenizedStock } from "@/lib/tokenizedStocks";
  * Shared pieces for the share cards under /api/og (1200x630, or 1200x800 for Farcaster embeds).
  * Rendered with next/og (satori): flexbox only, inline styles, fonts must be TTF.
  * Live data is read in-process from the same routes the site uses and never blocks a card:
- * anything slower than LIVE_TIMEOUT_MS is left out and the card renders without it.
+ * anything slower than its timeout is left out and the card renders without it. Preview crawlers (X above
+ * all) give up after a few seconds, so the home and stock cards are pre-rendered (ISR) and the per-link
+ * cards (basket, agent) keep their live parts on short timeouts.
  */
 
 export const OG_W = 1200;
@@ -20,6 +22,9 @@ export const MUTED = "#8b97b5";
 export const INK = "#eef2fb";
 export const BG = "#04060d";
 const LIVE_TIMEOUT_MS = 4500;
+
+/** The public site, for links and in-process calls (cards never depend on the request's host) */
+export const OG_SITE = (process.env.NEXT_PUBLIC_SITE_URL || "https://maxxagent.xyz").replace(/\/$/, "");
 
 // ---------- fonts and logo (bundled in assets/og, licenses next to them) ----------
 const asset = (f: string) => readFile(join(process.cwd(), "assets", "og", f));
@@ -38,6 +43,29 @@ export function ogFonts() {
 }
 let markP: Promise<string> | null = null;
 export const ogMark = () => (markP ??= asset("mark.svg").then((b) => `data:image/svg+xml;base64,${b.toString("base64")}`));
+
+/**
+ * Stock logos as data URIs, read from public/logos once per instance (no HTTP fetch while rendering).
+ * `path` is a stock's logoUrl, e.g. "/logos/stocks/NVDAc.png". Missing files resolve to "".
+ */
+const logoCache = new Map<string, Promise<string>>();
+export function ogLogo(path: string): Promise<string> {
+  const clean = path.replace(/^\/+/, "");
+  if (!/^logos\/stocks\/[A-Za-z0-9]+\.png$/.test(clean)) return Promise.resolve("");
+  let p = logoCache.get(clean);
+  if (!p) {
+    p = readFile(join(process.cwd(), "public", ...clean.split("/")))
+      .then((b) => `data:image/png;base64,${b.toString("base64")}`)
+      .catch(() => "");
+    logoCache.set(clean, p);
+  }
+  return p;
+}
+/** symbol -> logo data URI for a list of stocks */
+export async function ogLogos(stocks: { symbol: string; logoUrl: string }[]): Promise<Map<string, string>> {
+  const pairs = await Promise.all(stocks.map(async (s) => [s.symbol, await ogLogo(s.logoUrl)] as const));
+  return new Map(pairs);
+}
 
 /** Options for ImageResponse: size, fonts and CDN caching */
 export async function ogOptions(height: number, maxAgeSec = 3600) {
@@ -59,12 +87,12 @@ export const shortCompany = (n: string) =>
   /^Space Exploration/.test(n) ? "SpaceX" : n.replace(/,?\s+(Inc\.?|Corporation|Corp\.?|Platforms Inc\.?|\.com Inc\.?)$/, "").replace(/\.com$/, "");
 
 // ---------- live data ----------
-function withTimeout<T>(p: Promise<T>, ms = LIVE_TIMEOUT_MS): Promise<T | null> {
+export function withTimeout<T>(p: Promise<T>, ms = LIVE_TIMEOUT_MS): Promise<T | null> {
   return Promise.race([p.catch(() => null), new Promise<null>((r) => setTimeout(() => r(null), ms))]);
 }
 
 export type OgMarket = { stocks: LiveTokenizedStock[]; tvlUsd?: number; volume24hUsd?: number };
-export function liveMarket(origin: string): Promise<OgMarket | null> {
+export function liveMarket(origin: string, timeoutMs = LIVE_TIMEOUT_MS): Promise<OgMarket | null> {
   return withTimeout(
     (async () => {
       const res = await getStocks(new NextRequest(new URL("/api/stocks", origin)));
@@ -72,12 +100,13 @@ export function liveMarket(origin: string): Promise<OgMarket | null> {
       const j = await res.json();
       if (!Array.isArray(j?.stocks) || j.stocks.length === 0) return null;
       return { stocks: j.stocks as LiveTokenizedStock[], tvlUsd: j.totalBaseStocksTvlUsd, volume24hUsd: j.totalBaseDexVolume24hUsd };
-    })()
+    })(),
+    timeoutMs
   );
 }
 
 /** 7-day Chainlink NAV points [unixSec, price] for one stock, or null */
-export function navHistory7d(origin: string, symbol: string): Promise<[number, number][] | null> {
+export function navHistory7d(origin: string, symbol: string, timeoutMs = LIVE_TIMEOUT_MS): Promise<[number, number][] | null> {
   return withTimeout(
     (async () => {
       const res = await getHistory(new NextRequest(new URL(`/api/history?symbol=${encodeURIComponent(symbol)}&tf=7D&only=nav`, origin)));
@@ -85,7 +114,8 @@ export function navHistory7d(origin: string, symbol: string): Promise<[number, n
       const j = await res.json();
       const nav = Array.isArray(j?.nav) ? (j.nav as [number, number][]).filter((p) => Number.isFinite(p?.[1]) && p[1] > 0) : [];
       return nav.length >= 2 ? nav : null;
-    })()
+    })(),
+    timeoutMs
   );
 }
 
@@ -215,8 +245,6 @@ export function Footer({ left, url, bottom = 34 }: { left: ReactNode; url: strin
   );
 }
 
-/** Stock logo from the site's own /logos (absolute URL so the renderer can load it) */
-export const logoUrl = (origin: string, path: string) => new URL(path, origin).toString();
 
 /** The public origin for asset URLs: the configured site, else the request's own origin */
 export function ogOrigin(req: Request) {

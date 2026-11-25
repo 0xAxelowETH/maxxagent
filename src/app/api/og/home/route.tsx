@@ -1,21 +1,24 @@
 import { ImageResponse } from "next/og";
 import { BASE_TOKENIZED_STOCKS } from "@/lib/tokenizedStocks";
-import { Brand, Chip, Footer, Frame, INK, MUTED, UP, fmtPct, fmtUsd, liveMarket, logoUrl, ogMark, ogOptions, ogOrigin, signColor } from "@/lib/og/kit";
+import { Brand, Chip, Footer, Frame, INK, MUTED, OG_SITE, UP, fmtPct, fmtUsd, liveMarket, ogLogos, ogMark, ogOptions, signColor } from "@/lib/og/kit";
 
 /**
  * Site-wide share card (/api/og/home): headline on the left, the 10 stocks as a live wall on the right
- * (logo, Chainlink NAV, 24h move), and the total tokenized on Base in the footer. Cached for an hour.
- * If live data doesn't load in time the tiles show the stocks without numbers.
+ * (logo, Chainlink NAV, 24h move), and the total tokenized on Base in the footer.
+ * Pre-rendered and refreshed in the background every hour (ISR): link-preview crawlers give up after a few
+ * seconds, so they must never wait for a render. If live data doesn't load in time the tiles show the
+ * stocks without numbers.
  */
 export const runtime = "nodejs";
+export const revalidate = 3600;
 
-export async function GET(req: Request) {
-  const origin = ogOrigin(req);
-  const [mark, market] = await Promise.all([ogMark(), liveMarket(origin)]);
+export async function GET() {
+  const stocks10 = BASE_TOKENIZED_STOCKS.slice(0, 10);
+  const [mark, market, logos] = await Promise.all([ogMark(), liveMarket(OG_SITE, 20000), ogLogos(stocks10)]);
   const live = new Map((market?.stocks ?? []).map((s) => [s.symbol, s]));
-  const tiles = BASE_TOKENIZED_STOCKS.slice(0, 10).map((m) => {
+  const tiles = stocks10.map((m) => {
     const s = live.get(m.symbol);
-    return { symbol: m.symbol, logo: logoUrl(origin, m.logoUrl), price: s && s.navPrice > 0 ? s.navPrice : null, ch: s && Number.isFinite(s.change24hPct) ? s.change24hPct : null };
+    return { symbol: m.symbol, logo: logos.get(m.symbol) || "", price: s && s.navPrice > 0 ? s.navPrice : null, ch: s && Number.isFinite(s.change24hPct) ? s.change24hPct : null };
   });
   const columns = [tiles.filter((_, i) => i % 2 === 0), tiles.filter((_, i) => i % 2 === 1)];
 
@@ -35,7 +38,7 @@ export async function GET(req: Request) {
       }}
     >
       { }
-      <img src={t.logo} width={42} height={42} style={{ borderRadius: 11 }} alt="" />
+      {t.logo ? <img src={t.logo} width={42} height={42} style={{ borderRadius: 11 }} alt="" /> : null}
       <div style={{ display: "flex", flexDirection: "column", flex: 1 }}>
         <div style={{ display: "flex", fontSize: 19, fontWeight: 800 }}>{t.symbol}</div>
         {t.price !== null ? <div style={{ display: "flex", fontFamily: "Mono", fontSize: 15, color: MUTED }}>{`$${t.price.toFixed(2)}`}</div> : null}

@@ -52,7 +52,7 @@ const previewTags = (path: string, searchParams?: URLSearchParams) => {
   const ogImage = parsedBasket
     ? `${SITE}${basketImagePath(parsedBasket, { name: rawName || undefined, ticker: rawTicker || undefined })}`
     : stock
-    ? `${SITE}/api/og/stock?symbol=${stock}`
+    ? `${SITE}/api/og/stock/${stock}`
     : prompt
     ? `${SITE}/api/og/agent?${new URLSearchParams({ prompt })}`
     : `${SITE}/api/og/home`;

@@ -20,7 +20,7 @@ export async function generateMetadata({ params }: { params: Promise<{ symbol: s
   if (!s) return { title: "Stock not found — MAXXAGENT" };
   const title = `${s.symbol} (${s.companyName}) tokenized stock on Base — MAXXAGENT`;
   const description = `Live Chainlink NAV, Base DEX price and liquidity for ${s.symbol}, Coinbase's tokenized ${s.companyName} stock on Base. Buy or sell from your own wallet. Not financial advice.`;
-  const image = `/api/og/stock?symbol=${s.symbol}`;
+  const image = `/api/og/stock/${s.symbol}`; // pre-rendered (ISR), so crawlers never wait
   return {
     title,
     description,

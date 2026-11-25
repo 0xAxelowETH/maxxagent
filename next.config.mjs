@@ -30,7 +30,7 @@ const nextConfig = {
   // next/image is not used; no remote image hosts are allowed (avoids an open image proxy)
   images: { remotePatterns: [] },
   // Share cards read their TTF fonts and logo from assets/og at runtime; ship them with those functions
-  outputFileTracingIncludes: { "/api/og/**": ["./assets/og/**"] },
+  outputFileTracingIncludes: { "/api/og/**": ["./assets/og/**", "./public/logos/stocks/**"] },
   async headers() {
     return [{ source: "/:path*", headers: securityHeaders }];
   },
