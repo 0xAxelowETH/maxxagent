@@ -1,0 +1,28 @@
+# Warms the share-card cache right after each production deploy. A deploy empties Vercel's cache, and the
+# first request for a card can take several seconds, longer than link-preview crawlers (X above all) wait.
+# GitHub's runners are in the US, the same region those crawlers come from. Also runnable from the Actions tab.
+name: Warm share cards
+
+on:
+  deployment_status:
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  warm:
+    if: github.event_name == 'workflow_dispatch' || (github.event.deployment_status.state == 'success' && github.event.deployment.environment == 'Production')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Request every pre-rendered card twice
+        run: |
+          base=https://maxxagent.xyz/api/og
+          paths="home home/tall"
+          for s in NVDAc AAPLc TSLAc MSFTc METAc GOOGLc AMZNc MSTRc SNDKc SPCXc; do paths="$paths stock/$s stock/$s/tall"; done
+          for i in 0 1 2 3 4 5 6 7 8; do paths="$paths index/$i index/$i/tall"; done
+          for round in 1 2; do
+            for p in $paths; do
+              curl -s -o /dev/null -m 60 -A "Twitterbot/1.0" -w "round $round  %{http_code}  %{time_total}s  $p\n" "$base/$p" || true
+            done
+          done
