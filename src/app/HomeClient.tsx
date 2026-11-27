@@ -4,7 +4,11 @@ import React, { useEffect, useState, useCallback, useRef } from "react";
 import dynamic from "next/dynamic";
 import {
   Activity,
+  BarChart3,
   Bot,
+  CircleHelp,
+  Code2,
+  Puzzle,
   Check,
   CheckCircle2,
   ChevronDown,
@@ -90,6 +94,24 @@ const PairedForStock = dynamic(() => import("@/components/PairedForStock").then(
 const PairedTab = dynamic(() => import("@/components/tabs/PairedTab"), { loading: TabLoading });
 
 type ActiveTab = "terminal" | "agent" | "indexes" | "news" | "paired" | "traction" | "public";
+// App sections, shared by the wide-screen sidebar and the tab bar below the header
+const SECTION_TABS: { id: ActiveTab; label: string; icon: typeof TrendingUp; badge: string }[] = [
+  { id: "terminal", label: "Market", icon: TrendingUp, badge: "10 stocks" },
+  { id: "agent", label: "Agent", icon: Bot, badge: "Agentic" },
+  { id: "indexes", label: "Indexes", icon: Layers, badge: "Onchain" },
+  { id: "news", label: "News", icon: Newspaper, badge: "Live" },
+  { id: "paired", label: "Paired", icon: Coins, badge: "Meme" },
+  { id: "traction", label: "Portfolio", icon: Zap, badge: "Yours" },
+  { id: "public", label: "Studio", icon: Flame, badge: "Team" },
+];
+// Pages outside the app: guides, proofs and terms
+const RESOURCE_LINKS: { href: string; label: string; icon: typeof TrendingUp; isNew?: boolean }[] = [
+  { href: "/bankr", label: "Bankr skill", icon: Puzzle, isNew: true },
+  { href: "/verify", label: "Verify", icon: ShieldCheck },
+  { href: "/stats", label: "Live stats", icon: BarChart3 },
+  { href: "/faq", label: "FAQ", icon: CircleHelp },
+  { href: "/terms", label: "Terms", icon: FileText },
+];
 // Tab <-> URL (?tab=…): shareable links, and the browser's Back button goes to the previous tab
 const SLUG_BY_TAB: Partial<Record<ActiveTab, string>> = { agent: "agent", indexes: "indexes", news: "news", paired: "paired", traction: "portfolio" };
 const TAB_BY_SLUG: Record<string, ActiveTab> = { market: "terminal", agent: "agent", indexes: "indexes", news: "news", paired: "paired", portfolio: "traction" };
@@ -1864,13 +1886,92 @@ export default function StockMaxxingDashboard() {
     );
 
   return (
-    <div className="min-h-screen flex flex-col bg-[#03060e] text-slate-100 relative overflow-x-clip bg-cyber-grid">
+    <div className="min-h-screen flex flex-col bg-[#03060e] text-slate-100 relative overflow-x-clip bg-cyber-grid xl:pl-60">
       {/* Ambient Base Blue & Cyan Aurora Lighting */}
       <div className="pointer-events-none fixed inset-0 z-0 overflow-hidden">
         <div className="absolute -top-44 left-1/4 h-[460px] w-[680px] rounded-full bg-[#4C6FFF]/15 blur-[140px]" />
         <div className="absolute top-64 right-1/6 h-[380px] w-[520px] rounded-full bg-cyan-500/10 blur-[130px]" />
         <div className="absolute bottom-0 left-1/3 h-[340px] w-[580px] rounded-full bg-emerald-500/8 blur-[140px]" />
       </div>
+
+      {/* Wide screens: the sections and resources live in a fixed sidebar (the tab bar under the header hides) */}
+      <aside
+        className="fixed inset-y-0 left-0 z-40 hidden w-60 flex-col border-r border-slate-800/80 bg-[#040814]/95 backdrop-blur-xl xl:flex"
+        aria-label="Sidebar"
+      >
+        <button
+          type="button"
+          onClick={() => {
+            setActiveTab("terminal");
+            window.scrollTo({ top: 0, behavior: "smooth" });
+          }}
+          className="px-4 pt-4 pb-3 text-left cursor-pointer"
+          aria-label="MAXXAGENT home"
+        >
+          <MaxxAgentLogo size={34} tagline="Stock indexes on Base" />
+        </button>
+        <nav className="flex-1 overflow-y-auto px-3 pb-3" aria-label="Sidebar sections">
+          <p className="px-2 pb-1.5 pt-2 font-mono text-[10px] font-bold uppercase tracking-wider text-slate-500">App</p>
+          <div className="space-y-1">
+            {SECTION_TABS.filter((tab) => tab.id !== "public" || studioMode).map((tab) => {
+              const Icon = tab.icon;
+              const isActive = activeTab === tab.id;
+              return (
+                <button
+                  key={tab.id}
+                  onClick={() => {
+                    setActiveTab(tab.id);
+                    window.scrollTo({ top: 0, behavior: "smooth" });
+                  }}
+                  aria-current={isActive ? "page" : undefined}
+                  className={`flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-left text-[13px] font-semibold transition-all cursor-pointer ${
+                    isActive
+                      ? "bg-gradient-to-r from-[#4C6FFF] to-[#1d4ed8] text-white shadow-lg shadow-[#4C6FFF]/25 border border-blue-400/30"
+                      : "text-slate-400 hover:bg-slate-800/60 hover:text-slate-200 border border-transparent"
+                  }`}
+                >
+                  <Icon className="h-4 w-4 shrink-0" />
+                  <span className="flex-1">{tab.label}</span>
+                  <span className={`rounded-full px-1.5 py-0.5 font-mono text-[9px] font-bold ${isActive ? "bg-white/20 text-white" : "bg-slate-800/90 text-slate-500"}`}>
+                    {tab.badge}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+          <p className="px-2 pb-1.5 pt-5 font-mono text-[10px] font-bold uppercase tracking-wider text-slate-500">Resources</p>
+          <div className="space-y-1">
+            {RESOURCE_LINKS.map((l) => {
+              const Icon = l.icon;
+              return (
+                <a
+                  key={l.href}
+                  href={l.href}
+                  className="flex items-center gap-2.5 rounded-xl border border-transparent px-3 py-2 text-[13px] font-semibold text-slate-400 transition hover:bg-slate-800/60 hover:text-slate-200"
+                >
+                  <Icon className="h-4 w-4 shrink-0" />
+                  <span className="flex-1">{l.label}</span>
+                  {l.isNew && <span className="rounded-full bg-cyan-500/15 px-1.5 py-0.5 font-mono text-[9px] font-bold text-cyan-300">New</span>}
+                </a>
+              );
+            })}
+          </div>
+        </nav>
+        <div className="space-y-2 border-t border-slate-800/80 px-4 py-3">
+          <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-0.5 font-mono text-[10px] font-bold text-emerald-300">
+            <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
+            LIVE · BASE MAINNET
+          </span>
+          <a
+            href="https://github.com/0xAxelowETH/maxxagent"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center gap-1.5 text-[11px] font-semibold text-slate-500 hover:text-slate-300"
+          >
+            <Code2 className="h-3.5 w-3.5" /> Open source (MIT)
+          </a>
+        </div>
+      </aside>
 
       {/* Compact context bar */}
       <div className="relative z-30 border-b border-slate-800/80 bg-[#040814]/95 px-3 sm:px-4 py-1 text-[10px] sm:text-[11px] backdrop-blur-md">
@@ -1943,7 +2044,10 @@ export default function StockMaxxingDashboard() {
       <header className="sticky top-0 z-30 border-b border-slate-800/80 bg-[#040814]/90 backdrop-blur-xl shadow-2xl shadow-black/50">
         <div className="mx-auto flex max-w-7xl items-center justify-between gap-2 sm:gap-3 px-3 sm:px-4 py-2 sm:py-2.5">
           <div className="flex min-w-0 items-center gap-2 sm:gap-3.5">
-            <MaxxAgentLogo size={40} tagline="Tokenized stock indexes on Base" />
+            {/* On wide screens the logo is in the sidebar */}
+            <span className="xl:hidden">
+              <MaxxAgentLogo size={40} tagline="Tokenized stock indexes on Base" />
+            </span>
             <span className="hidden 2xl:inline-flex items-center gap-1.5 rounded-full bg-emerald-500/10 px-2.5 py-0.5 font-mono text-[10px] font-bold text-emerald-300 border border-emerald-500/30">
               <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
               LIVE · BASE MAINNET
@@ -2165,52 +2269,9 @@ export default function StockMaxxingDashboard() {
         </div>
 
         {/* Navigation Tabs */}
-        <nav className="mx-auto max-w-7xl px-4 hidden md:block" aria-label="Sections">
+        <nav className="mx-auto max-w-7xl px-4 hidden md:block xl:hidden" aria-label="Sections">
           <div className="flex overflow-x-auto gap-1.5 border-t border-slate-800/60 pt-1.5 pb-1.5">
-            {[
-              {
-                id: "terminal",
-                label: "Market",
-                icon: TrendingUp,
-                badge: "10 stocks",
-              },
-              {
-                id: "agent",
-                label: "Agent",
-                icon: Bot,
-                badge: "Agentic",
-              },
-              {
-                id: "indexes",
-                label: "Indexes",
-                icon: Layers,
-                badge: "Onchain",
-              },
-              {
-                id: "news",
-                label: "News",
-                icon: Newspaper,
-                badge: "Live",
-              },
-              {
-                id: "paired",
-                label: "Paired",
-                icon: Coins,
-                badge: "Meme",
-              },
-              {
-                id: "traction",
-                label: "Portfolio",
-                icon: Zap,
-                badge: "Yours",
-              },
-              {
-                id: "public",
-                label: "Studio",
-                icon: Flame,
-                badge: "Team",
-              },
-            ]
+            {SECTION_TABS
               .filter((tab) => tab.id !== "public" || studioMode)
               .map((tab) => {
               const Icon = tab.icon;
@@ -2230,18 +2291,15 @@ export default function StockMaxxingDashboard() {
                   }`}
                 >
                   <Icon className="h-4 w-4" />
+                  {/* The badges ("10 stocks", "Agentic"…) show in the wide-screen sidebar; here they'd crowd out the links */}
                   <span>{tab.label}</span>
-                  <span
-                    className={`rounded-full px-2 py-0.5 text-[10px] font-mono font-bold ${
-                      isActive ? "bg-white/20 text-white" : "bg-slate-800/90 text-slate-400"
-                    }`}
-                  >
-                    {tab.badge}
-                  </span>
                 </button>
               );
             })}
             <span className="ml-auto flex items-center gap-1">
+              <a href="/bankr" className="whitespace-nowrap rounded-xl px-3 py-2 text-xs font-semibold text-cyan-300 hover:bg-slate-800/60 hover:text-cyan-200">
+                Bankr skill
+              </a>
               <a href="/verify" className="whitespace-nowrap rounded-xl px-3 py-2 text-xs font-semibold text-slate-400 hover:bg-slate-800/60 hover:text-slate-200">
                 Verify
               </a>
@@ -2255,7 +2313,8 @@ export default function StockMaxxingDashboard() {
           </div>
         </nav>
         {/* Phones: the bottom bar holds the tabs, so the help links sit under the header */}
-        <div className="md:hidden mx-auto flex max-w-7xl justify-center gap-6 px-3 pb-1.5 text-[11px] font-semibold text-slate-400">
+        <div className="md:hidden mx-auto flex max-w-7xl justify-center gap-5 px-3 pb-1.5 text-[11px] font-semibold text-slate-400">
+          <a href="/bankr" className="text-cyan-300 hover:text-white">Bankr skill</a>
           <a href="/verify" className="hover:text-white">Verify</a>
           <a href="/stats" className="hover:text-white">Live stats</a>
           <a href="/faq" className="hover:text-white">FAQ</a>
@@ -3663,7 +3722,7 @@ export default function StockMaxxingDashboard() {
               <MaxxAgentMark size={20} />
               <span>
                 MAXXAGENT — an independent project built for the Base Builder Quest: Stocks Maxxing
-                Season (Nov 5 – Dec 5, 2026).
+                Season (Nov 5 – Dec 12, 2026).
               </span>
             </div>
             <p>
@@ -3694,6 +3753,9 @@ export default function StockMaxxingDashboard() {
             </a>
             <a href="/faq" className="hover:text-white underline">
               FAQ
+            </a>
+            <a href="/bankr" className="hover:text-white underline">
+              Bankr skill
             </a>
             <a
               href="https://github.com/0xAxelowETH/maxxagent"

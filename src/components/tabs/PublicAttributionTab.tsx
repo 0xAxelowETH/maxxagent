@@ -339,7 +339,7 @@ const walletClient = createWalletClient({
               <li className="flex items-start gap-2">
                 <CheckCircle2 className="h-4 w-4 text-emerald-400 shrink-0 mt-0.5" />
                 <span>
-                  <strong>Before Dec 5, 2026 (11:59 PM UTC):</strong> Post Loom demo
+                  <strong>Before Dec 12, 2026 (11:59 PM UTC):</strong> Post Loom demo
                   publicly on X tagging <code className="text-blue-400">@buildonbase</code>{" "}
                   and submit the official form.
                 </span>
