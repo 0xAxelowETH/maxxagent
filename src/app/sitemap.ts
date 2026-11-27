@@ -22,7 +22,7 @@ async function publishedIndexPaths(): Promise<string[]> {
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   const stocks = BASE_TOKENIZED_STOCKS.map((s) => `/stock/${s.symbol}`);
   const indexes = await publishedIndexPaths();
-  return ["", "/stats", "/verify", "/faq", "/terms", ...stocks, ...indexes].map((path) => ({
+  return ["", "/stats", "/verify", "/faq", "/bankr", "/terms", ...stocks, ...indexes].map((path) => ({
     url: `${SITE_URL}${path}`,
     changeFrequency: path === "" || path.startsWith("/stock/") || path.startsWith("/index/") ? "daily" : "monthly",
     priority: path === "" ? 1 : path.startsWith("/index/") ? 0.6 : 0.5,

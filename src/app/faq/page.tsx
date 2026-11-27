@@ -154,6 +154,20 @@ const FAQ: { q: string; a: React.ReactNode }[] = [
     ),
   },
   {
+    q: "Can I use MAXXAGENT from Bankr?",
+    a: (
+      <>
+        Yes. Install the <em>MAXXAGENT Baskets</em> skill in your Bankr agent and ask for a basket in plain English. Bankr
+        shows the weights, the limits kept and the sources, and gives you a link that opens the basket here, where you buy
+        it from your own wallet. The skill never trades and needs no API key.{" "}
+        <Link href="/bankr" className="text-cyan-300 underline">
+          Step-by-step guide
+        </Link>
+        .
+      </>
+    ),
+  },
+  {
     q: "Where can I see MAXXAGENT's usage?",
     a: (
       <>

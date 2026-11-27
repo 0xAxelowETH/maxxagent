@@ -3,11 +3,16 @@ import { POST as runAgent } from "@/app/api/agent/route";
 import type { AgentAnalysisReport } from "@/lib/agentEngine";
 import { BASE_TOKENIZED_STOCKS } from "@/lib/tokenizedStocks";
 import { cleanIndexName } from "@/lib/shareBasket";
+import { MIN_BUY_USD } from "@/lib/tokenizedStocks";
 
 /**
  * Read-only basket proposals for other agents (the MAXXAGENT Baskets skill in the Bankr skills catalog).
  *
- *   GET /api/skill/basket?prompt=AI and cloud, no Tesla, max 30% each&risk=Balanced
+ *   GET /api/skill/basket?prompt=AI and cloud, no Tesla, max 30% each&risk=Balanced&amount=200
+ *   GET /api/skill/basket?prompt=…&then=replace Microsoft with Apple&then=drop Meta   (follow-ups, in order)
+ *
+ * `amount` (USD) is optional; without it the first "$200" in the request is used. With an amount, `buyUrl`
+ * opens the basket with that amount filled in (minus the USDC the user keeps).
  *
  * Runs the same rule-based engine as the Agent tab and returns the basket, the cash kept in USDC, how the
  * request was read, the limits and what was done with them, the stocks left out and why, and checkable facts
@@ -35,12 +40,19 @@ export async function GET(request: NextRequest) {
   }
   const riskParam = (q.get("risk") || "Balanced").toLowerCase();
   const riskProfile = RISKS.find((r) => r.toLowerCase() === riskParam) ?? "Balanced";
+  // Follow-ups refine the same basket step by step, like "Refine this basket" on the site
+  const followUps = q.getAll("then").map((t) => cleanIndexName(t, 300)).filter(Boolean).slice(0, 5);
+  const promptSteps = followUps.length ? [prompt, ...followUps] : undefined;
+  // Amount: ?amount=, else the first dollar figure in the request ("split $200 across…")
+  const rawAmount = q.get("amount") ?? [prompt, ...followUps].join(" ").match(/\$\s?(\d[\d,]*(?:\.\d+)?)/)?.[1]?.replace(/,/g, "");
+  const amountNum = Number(rawAmount);
+  const amountUsd = Number.isFinite(amountNum) && amountNum >= MIN_BUY_USD && amountNum <= 100_000 ? Math.round(amountNum * 100) / 100 : undefined;
 
   const res = await runAgent(
     new NextRequest(new URL("/api/agent", request.url), {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ userPrompt: prompt, riskProfile }),
+      body: JSON.stringify({ userPrompt: prompt, promptSteps, riskProfile, ...(amountUsd ? { capitalUsd: amountUsd } : {}) }),
     })
   ).catch(() => null);
   const j = res ? ((await res.json().catch(() => null)) as { ok?: boolean; report?: AgentAnalysisReport; error?: string } | null) : null;
@@ -62,12 +74,29 @@ export async function GET(request: NextRequest) {
   // The site's basket link carries stock weights only; the USDC part is kept by buying for less
   const stocksTotal = basket.reduce((s, b) => s + b.sharePct, 0);
   const basketParam = basket.map((b) => `${b.symbol}-${Number(((b.sharePct / stocksTotal) * 100).toFixed(2))}`).join(",");
-  const buyUrl = basket.length ? `${SITE}/?${new URLSearchParams({ basket: basketParam, name: "Agent basket", utm_source: "bankr-skill" })}` : null;
+  // With an amount, the link fills in what goes into stocks; the USDC part simply stays in the wallet
+  const stocksAmount = amountUsd ? Math.round(amountUsd * (stocksTotal / 100) * 100) / 100 : undefined;
+  const linkAmount = stocksAmount && stocksAmount >= MIN_BUY_USD ? stocksAmount : undefined;
+  const buyUrl = basket.length
+    ? `${SITE}/?${new URLSearchParams({ basket: basketParam, name: "Agent basket", ...(linkAmount ? { amount: String(linkAmount) } : {}), utm_source: "bankr-skill" })}`
+    : null;
+  const cashPct = r.cashReservePct;
+  const buyNote = !buyUrl
+    ? undefined
+    : linkAmount && amountUsd
+    ? `The link buys $${linkAmount.toFixed(2)} of stocks${cashPct > 0.05 ? ` and keeps $${(amountUsd - linkAmount).toFixed(2)} (${cashPct.toFixed(0)}%) in USDC` : ""}, out of $${amountUsd.toFixed(2)}.`
+    : cashPct > 0.05
+    ? `The link holds the stock weights; to keep ${cashPct.toFixed(0)}% in USDC, buy for that much less than the total amount.`
+    : undefined;
+  // When live volatility history hasn't loaded yet, the agent falls back to fixed estimates for this run
+  const riskNote = r.assumptions.find((a) => /risk history/i.test(a));
 
   return NextResponse.json(
     {
       ok: true,
       prompt,
+      followUps,
+      amountUsd: amountUsd ?? null,
       riskProfile: r.riskProfile,
       basket,
       cashKeptInUsdcPct: Number(r.cashReservePct.toFixed(2)),
@@ -78,7 +107,8 @@ export async function GET(request: NextRequest) {
       assumptions: r.assumptions,
       cautions: r.cautions ?? [],
       buyUrl,
-      buyNote: r.cashReservePct > 0.05 && buyUrl ? `The link holds the stock weights; to keep ${r.cashReservePct.toFixed(0)}% in USDC, buy for that much less than the total amount.` : undefined,
+      buyNote,
+      riskNote,
       notice: NOTICE,
       generatedAt: r.timestamp,
     },
