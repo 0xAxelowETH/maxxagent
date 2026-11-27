@@ -90,6 +90,12 @@ export async function GET(request: NextRequest) {
     : undefined;
   // When live volatility history hasn't loaded yet, the agent falls back to fixed estimates for this run
   const riskNote = r.assumptions.find((a) => /risk history/i.test(a));
+  // Any part of the request the basket couldn't follow (an unsupported stock, a substitute theme, a cash share
+  // above 90%…): the calling agent must explain it and get new instructions before offering the buy link
+  const notPossible = r.limits.filter((l) => l.status === "not possible");
+  const confirmationReasons = notPossible.map((l) => `${l.label}: ${l.detail}`);
+  if (!basket.length) confirmationReasons.push("No stock could be picked for this request.");
+  const needsConfirmation = confirmationReasons.length > 0;
 
   return NextResponse.json(
     {
@@ -106,6 +112,8 @@ export async function GET(request: NextRequest) {
       facts: r.facts.map((f) => ({ symbol: f.symbol, text: f.text, sources: f.links.map((l) => l.url) })),
       assumptions: r.assumptions,
       cautions: r.cautions ?? [],
+      needsConfirmation,
+      confirmationReasons,
       buyUrl,
       buyNote,
       riskNote,

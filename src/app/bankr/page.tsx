@@ -94,6 +94,10 @@ export default function BankrPage() {
 
         <Step n={2} title="Ask for a basket">
           <p>Write what you want, like you would to a person. A few examples (each one also works in the Agent tab here, no wallet needed):</p>
+          <p className="text-xs text-slate-400">
+            If part of a request can&apos;t be followed (a stock outside the 10, or more than 90% kept in cash), Bankr tells you
+            what and asks how to continue before offering a buy link.
+          </p>
           <ul className="space-y-2.5">
             {EXAMPLES.map((e) => (
               <li key={e.ask} className="rounded-xl border border-slate-800 bg-[#050b18] p-3">

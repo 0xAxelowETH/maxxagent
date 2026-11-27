@@ -539,6 +539,12 @@ export function runAutonomousStockAgent(params: {
       );
   });
   if (askedCashPct) limits.push({ label: `Keep ${askedCashPct}% in USDC`, status: "kept", detail: `${askedCashPct}% of the amount is not invested.` });
+  if (mandate.cashTooHighPct)
+    limits.push({
+      label: `Keep ${mandate.cashTooHighPct}% in USDC`,
+      status: "not possible",
+      detail: `A basket keeps at most 90% in USDC, so this proposal doesn't follow it. To stay ${mandate.cashTooHighPct >= 100 ? "fully" : "mostly"} in cash, don't buy.`,
+    });
   for (const sym of mandate.exclude) {
     if (stocks.some((st) => st.symbol === sym) && pool.every((p) => p.symbol !== sym))
       limits.push({ label: `No ${sym}`, status: "kept", detail: "Left out of the basket." });

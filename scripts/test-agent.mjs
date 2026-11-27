@@ -351,6 +351,15 @@ for (const [phrase, want] of [["cap each at 35%", 35], ["limit each to 25%", 25]
   ok(m.maxWeightPct === want && !Object.keys(m.weightsPct).length, `"${phrase}" -> max=${m.maxWeightPct} w=${JSON.stringify(m.weightsPct)}`);
 }
 ok(parseMandate("five stocks, AI").count === 5, `"five stocks" -> count=${parseMandate("five stocks, AI").count}`);
+// A cash share a basket can't keep (over 90%) is reported, never silently dropped (Bankr skill review, PR #874)
+{
+  const all = parseMandate("Keep 100% in cash");
+  ok(all.cashPct === undefined && all.cashTooHighPct === 100 && all.notes.some((n) => /100% in USDC/.test(n)), `"Keep 100% in cash" -> cash=${all.cashPct} tooHigh=${all.cashTooHighPct}`);
+  const ninety = parseMandate("big tech, keep 90% in cash");
+  ok(ninety.cashPct === 90 && ninety.cashTooHighPct === undefined, `90% cash is still allowed -> cash=${ninety.cashPct} tooHigh=${ninety.cashTooHighPct}`);
+  const fixed = parseMandateSteps(["keep 95% in cash", "keep 20% in cash"]);
+  ok(fixed.cashPct === 20 && fixed.cashTooHighPct === undefined, `a later valid cash share replaces one that was too high -> cash=${fixed.cashPct} tooHigh=${fixed.cashTooHighPct}`);
+}
 
 console.log(fail ?`\n❌ ${fail} check(s) failed` : "\n✅ All mandate checks passed");
 process.exitCode = fail ? 1 : 0;

@@ -29,6 +29,8 @@ export interface ParsedMandate {
   maxWeightPct?: number;
   /** share of the money to keep in USDC, in percent ("keep 20% in cash") */
   cashPct?: number;
+  /** a cash share above what a basket allows (over 90%, e.g. "keep 100% in cash"): reported, never silently dropped */
+  cashTooHighPct?: number;
   /** weights the user set for named stocks, in percent ("60% Apple 40% Microsoft") */
   weightsPct: Record<string, number>;
   /**
@@ -402,9 +404,12 @@ export function parseMandate(input: string): ParsedMandate {
     // "keep 20%" is cash, but "hold 40% nvidia", "keep 60% for Apple", "keep 80% in stocks", or "hold 50% in tech" is not cash
     cashText.match(new RegExp(`(?:keep|hold|leave|reserve|set aside|sisakan|simpan|sisihkan)\\s+${pct}(?!\\s*(?:(?:in|of|on|into|to|for|di|ke|untuk)\\s+)?(?:the\\s+)?(?:${nonCashTargets})(?![a-z0-9]))`)) ||
     cashText.match(new RegExp(`${CASH_WORDS}\\s*(?:reserve\\s*)?(?:of\\s+)?${pct}`));
+  let cashTooHighPct: number | undefined;
   if (cashMatch) {
     const v = Number(cashMatch[1]);
     if (v > 0 && v <= 90) cashPct = v;
+    // A basket always buys something: more than 90% in USDC can't be kept, so it's reported, not ignored
+    else if (v > 90 && v <= 100) cashTooHighPct = v;
   }
   const cashAfterPct = `(?!\\s*(?:(?:in|as|of|di)\\s+(?:(?:the|a)\\s+)?)?${CASH_WORDS})`;
   let maxWeightPct: number | undefined;
@@ -459,6 +464,7 @@ export function parseMandate(input: string): ParsedMandate {
     prefersGrowth,
     maxWeightPct,
     cashPct,
+    cashTooHighPct,
     weightsPct,
     unavailable,
   };
@@ -491,6 +497,8 @@ function buildMandateNotes(m: Omit<ParsedMandate, "notes">, excludedClauses?: st
   if (m.prefersGrowth) notes.push("Prefers fast revenue growth (SEC 10-K, last fiscal year).");
   if (m.maxWeightPct) notes.push(`At most ${m.maxWeightPct}% of your money in any one stock.`);
   if (m.cashPct) notes.push(`Keep ${m.cashPct}% in USDC.`);
+  if (m.cashTooHighPct)
+    notes.push(`You asked to keep ${m.cashTooHighPct}% in USDC: a basket keeps at most 90% in USDC, so this one can't follow that. To stay in cash, don't buy.`);
   if (Object.keys(m.weightsPct).length)
     notes.push(`Weights you set: ${Object.entries(m.weightsPct).map(([s, w]) => `${s} ${w}%`).join(", ")}.`);
   return notes;
@@ -592,6 +600,8 @@ export function applyMandateFollowUp(base: ParsedMandate, followUpInput: string)
     prefersGrowth: clearGrowth ? false : (base.prefersGrowth || follow.prefersGrowth),
     maxWeightPct: clearCap ? undefined : (follow.maxWeightPct ?? base.maxWeightPct),
     cashPct: clearCash ? undefined : (follow.cashPct ?? base.cashPct),
+    // A later valid cash share (or clearing cash) replaces an earlier one that was too high
+    cashTooHighPct: clearCash || follow.cashPct ? follow.cashTooHighPct : (follow.cashTooHighPct ?? base.cashTooHighPct),
     weightsPct,
     unavailable: [...unavailableMap.values()],
   };
