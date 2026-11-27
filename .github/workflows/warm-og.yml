@@ -4,14 +4,15 @@
 name: Warm share cards
 
 on:
-  deployment_status:
+  # Vercel reports each deploy as a commit status ("Vercel"), not as a GitHub deployment
+  status:
   workflow_dispatch:
 
 permissions: {}
 
 jobs:
   warm:
-    if: github.event_name == 'workflow_dispatch' || (github.event.deployment_status.state == 'success' && github.event.deployment.environment == 'Production')
+    if: github.event_name == 'workflow_dispatch' || (github.event.context == 'Vercel' && github.event.state == 'success' && contains(github.event.branches.*.name, 'main'))
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
