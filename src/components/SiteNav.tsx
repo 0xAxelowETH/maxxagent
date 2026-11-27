@@ -3,11 +3,12 @@ import { MaxxAgentLogo } from "./BrandLogo";
 import { ThemeToggle } from "./ThemeToggle";
 
 /** Shared top navigation for the content pages (stats, verify, FAQ, terms, stock and index pages). */
-export function SiteNav({ current }: { current?: "stats" | "verify" | "faq" | "terms" }) {
+export function SiteNav({ current }: { current?: "stats" | "verify" | "faq" | "terms" | "status" }) {
   const links: { href: string; label: string; key: string }[] = [
     { href: "/stats", label: "Live stats", key: "stats" },
     { href: "/verify", label: "Verify", key: "verify" },
     { href: "/faq", label: "FAQ", key: "faq" },
+    { href: "/status", label: "Status", key: "status" },
   ];
   return (
     <nav className="flex flex-wrap items-center justify-between gap-2 sm:gap-3" aria-label="Site">

@@ -72,11 +72,8 @@ export async function GET() {
           })
         ),
         timed(() => fetchOk(`https://api.geckoterminal.com/api/v2/networks/base/tokens/${NVDA}`)),
-        timed(async () => {
-          const r = await checkB20Transfers(client);
-          if (!r.ok) throw new Error(r.problems.slice(0, 3).join("; "));
-          return r;
-        }),
+        // Doesn't throw on a rule problem, so the per-stock rows reach the status page; ok is set below
+        timed(() => checkB20Transfers(client)),
       ]);
 
       const checks = {
@@ -92,7 +89,15 @@ export async function GET() {
         kyberswap: { ok: kyber.ok, ms: kyber.ms, detail: kyber.detail, critical: true },
         geckoterminal: { ok: gecko.ok, ms: gecko.ms, detail: gecko.detail, critical: false },
         // Issuer controls on the 10 B20 stocks still let swaps through (see src/lib/b20Guard.ts)
-        b20Transfers: { ok: b20.ok, ms: b20.ms, detail: b20.detail, policies: b20.value?.policies.NVDAc, critical: true },
+        b20Transfers: {
+          ok: b20.ok && b20.value?.ok === true,
+          ms: b20.ms,
+          detail: b20.detail ?? (b20.value && !b20.value.ok ? b20.value.problems.slice(0, 3).join("; ").slice(0, 300) : undefined),
+          policies: b20.value?.policies.NVDAc,
+          // One row per stock (policies, pause, who may transfer it), shown on /status
+          stocks: b20.value?.stocks,
+          critical: true,
+        },
       };
       const healthy = Object.values(checks).every((c) => c.ok || !c.critical);
       const body = { ok: healthy, checkedAt: new Date().toISOString(), checks };

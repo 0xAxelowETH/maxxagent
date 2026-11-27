@@ -109,6 +109,7 @@ const RESOURCE_LINKS: { href: string; label: string; icon: typeof TrendingUp; is
   { href: "/bankr", label: "Bankr skill", icon: Puzzle, isNew: true },
   { href: "/verify", label: "Verify", icon: ShieldCheck },
   { href: "/stats", label: "Live stats", icon: BarChart3 },
+  { href: "/status", label: "Status", icon: Activity },
   { href: "/faq", label: "FAQ", icon: CircleHelp },
   { href: "/terms", label: "Terms", icon: FileText },
 ];
@@ -3756,6 +3757,9 @@ export default function StockMaxxingDashboard() {
             </a>
             <a href="/bankr" className="hover:text-white underline">
               Bankr skill
+            </a>
+            <a href="/status" className="hover:text-white underline">
+              Status
             </a>
             <a
               href="https://github.com/0xAxelowETH/maxxagent"

@@ -36,6 +36,23 @@ export type B20GuardResult = {
   problems: string[];
   /** policy id per scope, by stock (for the record) */
   policies: Record<string, { sender: string; receiver: string; executor: string }>;
+  /** one row per stock for the status page: its policies, pause, and whether each party can still transfer it */
+  stocks: B20StockStatus[];
+};
+
+export type B20StockStatus = {
+  symbol: string;
+  /** false when the stock's rules couldn't be read */
+  read: boolean;
+  sender?: string;
+  receiver?: string;
+  executor?: string;
+  transfersPaused?: boolean;
+  /** every transfer scope still lets this party through */
+  ordinaryAllowed?: boolean;
+  routerAllowed?: boolean;
+  poolManagerAllowed?: boolean;
+  ok: boolean;
 };
 
 export async function checkB20Transfers(client: MulticallClient): Promise<B20GuardResult> {
@@ -51,6 +68,7 @@ export async function checkB20Transfers(client: MulticallClient): Promise<B20Gua
 
   const problems: string[] = [];
   const policies: B20GuardResult["policies"] = {};
+  const pausedBySymbol = new Map<string, boolean>();
   const per = scopeNames.length + 1;
   stocks.forEach((s, i) => {
     const r = reads.slice(i * per, (i + 1) * per);
@@ -61,6 +79,7 @@ export async function checkB20Transfers(client: MulticallClient): Promise<B20Gua
     const [sender, receiver, executor] = r.slice(0, 3).map((x) => String(x.result));
     policies[s.symbol] = { sender, receiver, executor };
     const paused = (r[3].result as readonly number[]).map(Number);
+    pausedBySymbol.set(s.symbol, paused.includes(TRANSFER_FEATURE));
     if (paused.includes(TRANSFER_FEATURE)) problems.push(`${s.symbol}: transfers are paused by the issuer`);
   });
 
@@ -76,9 +95,11 @@ export async function checkB20Transfers(client: MulticallClient): Promise<B20Gua
     contracts: ids.flatMap((id) => who.map((w) => ({ address: POLICY_REGISTRY, abi: registryAbi, functionName: "isAuthorized" as const, args: [BigInt(id), w.addr] as const }))),
   });
   const refused = new Map<string, string[]>(); // policy id -> who it refuses
+  const allowed = new Map<string, boolean>(); // `${policyId}:${who index}` -> authorized (unreadable counts as not)
   ids.forEach((id, i) => {
     who.forEach((w, j) => {
       const a = auth[i * who.length + j];
+      allowed.set(`${id}:${j}`, a.status === "success" && a.result === true);
       if (a.status !== "success") refused.set(id, [...(refused.get(id) ?? []), `${w.name} (unreadable)`]);
       else if (a.result !== true) refused.set(id, [...(refused.get(id) ?? []), w.name]);
     });
@@ -89,5 +110,21 @@ export async function checkB20Transfers(client: MulticallClient): Promise<B20Gua
       if (no?.length) problems.push(`${sym}: ${scope} policy ${p[scope]} does not authorize ${no.join(", ")}`);
     }
   }
-  return { ok: problems.length === 0, problems, policies };
+  // A party can transfer a stock only if every scope's policy authorizes it
+  const allScopes = (p: { sender: string; receiver: string; executor: string }, j: number) => scopeNames.every((sc) => allowed.get(`${p[sc]}:${j}`) === true);
+  const rows: B20StockStatus[] = stocks.map((s) => {
+    const p = policies[s.symbol];
+    if (!p) return { symbol: s.symbol, read: false, ok: false };
+    const row = {
+      symbol: s.symbol,
+      read: true,
+      ...p,
+      transfersPaused: pausedBySymbol.get(s.symbol) ?? false,
+      ordinaryAllowed: allScopes(p, 0),
+      routerAllowed: allScopes(p, 1),
+      poolManagerAllowed: allScopes(p, 2),
+    };
+    return { ...row, ok: !row.transfersPaused && row.ordinaryAllowed && row.routerAllowed && row.poolManagerAllowed };
+  });
+  return { ok: problems.length === 0, problems, policies, stocks: rows };
 }
