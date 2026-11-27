@@ -18,9 +18,14 @@ export const indexTitleFallback = (id: string | number) => `Onchain stock index 
 export const INDEX_DESCRIPTION_FALLBACK =
   "A tokenized stock index published onchain on Base; buy the whole basket from your own wallet with USDC or ETH. Not financial advice.";
 
+export const BANKR_TITLE = "Use MAXXAGENT in Bankr — a skill for tokenized stock baskets";
+export const BANKR_DESCRIPTION =
+  "Install the MAXXAGENT Baskets skill in your Bankr agent and ask in plain English: get a basket of Coinbase tokenized stocks on Base with the limits it kept and every number's source, then buy it from your own wallet. No API key; the skill never trades. Not financial advice.";
+
 /** Share card paths (see /api/og): 1200x630 for link previews, /tall = 1200x800 for the Farcaster / Base App embed */
 export const ogPaths = {
   home: { card: "/api/og/home", tall: "/api/og/home/tall" },
+  bankr: { card: "/api/og/bankr", tall: "/api/og/bankr/tall" },
   stock: (symbol: string) => ({ card: `/api/og/stock/${symbol}`, tall: `/api/og/stock/${symbol}/tall` }),
   index: (id: string | number) => ({ card: `/api/og/index/${id}`, tall: `/api/og/index/${id}/tall` }),
 };

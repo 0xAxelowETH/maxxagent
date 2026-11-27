@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { miniappEmbedTags } from "@/lib/miniappEmbed";
 import { basketImagePath, cleanIndexName, parseBasketParam } from "@/lib/shareBasket";
 import { BASE_TOKENIZED_STOCKS } from "@/lib/tokenizedStocks";
-import { INDEX_DESCRIPTION_FALLBACK, SITE_DESCRIPTION, SITE_TITLE, indexTitleFallback, ogPaths, stockDescription, stockTitle } from "@/lib/siteMeta";
+import { BANKR_DESCRIPTION, BANKR_TITLE, INDEX_DESCRIPTION_FALLBACK, SITE_DESCRIPTION, SITE_TITLE, indexTitleFallback, ogPaths, stockDescription, stockTitle } from "@/lib/siteMeta";
 
 /**
  * Coinbase tokenized stocks are only available to persons in eligible jurisdictions
@@ -52,7 +52,13 @@ const previewTags = (path: string, searchParams?: URLSearchParams) => {
   let ogImage = `${SITE}${ogPaths.home.card}`;
   let embed: Parameters<typeof miniappEmbedTags>[0] = { siteUrl: SITE };
   let url = SITE + "/";
-  if (stock) {
+  if (path === "/bankr") {
+    title = BANKR_TITLE;
+    description = BANKR_DESCRIPTION;
+    ogImage = `${SITE}${ogPaths.bankr.card}`;
+    embed = { siteUrl: SITE, path: "/bankr", buttonTitle: "Use it in Bankr", imageUrl: `${SITE}${ogPaths.bankr.tall}` };
+    url = `${SITE}/bankr`;
+  } else if (stock) {
     title = stockTitle(stock);
     description = stockDescription(stock);
     const og = ogPaths.stock(stock.symbol);

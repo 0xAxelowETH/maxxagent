@@ -1,13 +1,23 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { SiteNav } from "@/components/SiteNav";
+import { miniappEmbedTags } from "@/lib/miniappEmbed";
+import { BANKR_DESCRIPTION, BANKR_TITLE, SITE_URL, ogPaths } from "@/lib/siteMeta";
 
 export const metadata: Metadata = {
-  title: "Use MAXXAGENT in Bankr — MAXXAGENT",
-  description:
-    "Install the MAXXAGENT Baskets skill in your Bankr agent: ask for a basket of Coinbase tokenized stocks on Base in plain English, get the weights, reasons and sources, and buy it from your own wallet.",
+  title: BANKR_TITLE,
+  description: BANKR_DESCRIPTION,
   alternates: { canonical: "/bankr" },
-  openGraph: { url: "/bankr" },
+  openGraph: {
+    type: "website",
+    siteName: "MAXXAGENT",
+    url: "/bankr",
+    title: BANKR_TITLE,
+    description: BANKR_DESCRIPTION,
+    images: [{ url: ogPaths.bankr.card, width: 1200, height: 630, alt: "Ask Bankr, get a stock basket: the MAXXAGENT Baskets skill" }],
+  },
+  twitter: { card: "summary_large_image", title: BANKR_TITLE, description: BANKR_DESCRIPTION, images: [ogPaths.bankr.card] },
+  other: miniappEmbedTags({ siteUrl: SITE_URL, path: "/bankr", buttonTitle: "Use it in Bankr", imageUrl: `${SITE_URL}${ogPaths.bankr.tall}` }),
 };
 
 const SKILL_URL = "https://github.com/0xAxelowETH/maxxagent/tree/main/bankr-skill/maxxagent-baskets";

@@ -19,7 +19,7 @@ jobs:
       - name: Request every pre-rendered card twice
         run: |
           base=https://maxxagent.xyz/api/og
-          paths="home home/tall"
+          paths="home home/tall bankr bankr/tall"
           for s in NVDAc AAPLc TSLAc MSFTc METAc GOOGLc AMZNc MSTRc SNDKc SPCXc; do paths="$paths stock/$s stock/$s/tall"; done
           # Onchain indexes that exist (ids 1-6; a missing id just answers 404)
           for i in 1 2 3 4 5 6; do paths="$paths index/$i index/$i/tall"; done
