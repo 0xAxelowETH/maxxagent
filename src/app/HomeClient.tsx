@@ -105,8 +105,9 @@ const SECTION_TABS: { id: ActiveTab; label: string; icon: typeof TrendingUp; bad
   { id: "public", label: "Studio", icon: Flame, badge: "Team" },
 ];
 // Pages outside the app: guides, proofs and terms
-const RESOURCE_LINKS: { href: string; label: string; icon: typeof TrendingUp; isNew?: boolean }[] = [
-  { href: "/bankr", label: "Bankr skill", icon: Puzzle, isNew: true },
+// `img`: a partner mark shown as is (Bankr's own logo, unchanged, as a "works with" marker)
+const RESOURCE_LINKS: { href: string; label: string; icon: typeof TrendingUp; img?: string; isNew?: boolean }[] = [
+  { href: "/bankr", label: "Bankr skill", icon: Puzzle, img: "/logos/partners/bankr.svg", isNew: true },
   { href: "/verify", label: "Verify", icon: ShieldCheck },
   { href: "/stats", label: "Live stats", icon: BarChart3 },
   { href: "/status", label: "Status", icon: Activity },
@@ -1950,7 +1951,7 @@ export default function StockMaxxingDashboard() {
                   href={l.href}
                   className="flex items-center gap-2.5 rounded-xl border border-transparent px-3 py-2 text-[13px] font-semibold text-slate-400 transition hover:bg-slate-800/60 hover:text-slate-200"
                 >
-                  <Icon className="h-4 w-4 shrink-0" />
+                  {l.img ? <img src={l.img} alt="" className="h-4 w-4 shrink-0 rounded" /> : <Icon className="h-4 w-4 shrink-0" />}
                   <span className="flex-1">{l.label}</span>
                   {l.isNew && <span className="rounded-full bg-cyan-500/15 px-1.5 py-0.5 font-mono text-[9px] font-bold text-cyan-300">New</span>}
                 </a>
@@ -2298,7 +2299,8 @@ export default function StockMaxxingDashboard() {
               );
             })}
             <span className="ml-auto flex items-center gap-1">
-              <a href="/bankr" className="whitespace-nowrap rounded-xl px-3 py-2 text-xs font-semibold text-cyan-300 hover:bg-slate-800/60 hover:text-cyan-200">
+              <a href="/bankr" className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-xl px-3 py-2 text-xs font-semibold text-cyan-300 hover:bg-slate-800/60 hover:text-cyan-200">
+                <img src="/logos/partners/bankr.svg" alt="" className="h-3.5 w-3.5 rounded-sm" />
                 Bankr skill
               </a>
               <a href="/verify" className="whitespace-nowrap rounded-xl px-3 py-2 text-xs font-semibold text-slate-400 hover:bg-slate-800/60 hover:text-slate-200">
@@ -2315,7 +2317,7 @@ export default function StockMaxxingDashboard() {
         </nav>
         {/* Phones: the bottom bar holds the tabs, so the help links sit under the header */}
         <div className="md:hidden mx-auto flex max-w-7xl justify-center gap-5 px-3 pb-1.5 text-[11px] font-semibold text-slate-400">
-          <a href="/bankr" className="text-cyan-300 hover:text-white">Bankr skill</a>
+          <a href="/bankr" className="inline-flex items-center gap-1 text-cyan-300 hover:text-white"><img src="/logos/partners/bankr.svg" alt="" className="h-3 w-3 rounded-sm" />Bankr skill</a>
           <a href="/verify" className="hover:text-white">Verify</a>
           <a href="/stats" className="hover:text-white">Live stats</a>
           <a href="/faq" className="hover:text-white">FAQ</a>

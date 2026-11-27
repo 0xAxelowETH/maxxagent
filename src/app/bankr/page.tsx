@@ -60,7 +60,10 @@ export default function BankrPage() {
       <div className="mx-auto max-w-3xl space-y-6">
         <SiteNav />
         <div className="space-y-2">
-          <p className="font-mono text-xs uppercase tracking-wider text-cyan-300">Bankr skill · MAXXAGENT Baskets</p>
+          <p className="flex items-center gap-2 font-mono text-xs uppercase tracking-wider text-cyan-300">
+            <img src="/logos/partners/bankr.svg" alt="Bankr" className="h-4 w-4 rounded" />
+            Bankr skill · MAXXAGENT Baskets
+          </p>
           <h1 className="text-2xl font-extrabold text-white">Use MAXXAGENT in Bankr</h1>
           <p className="text-sm leading-relaxed text-slate-400">
             Ask your Bankr agent for a basket of Coinbase tokenized stocks in plain English. The same rule-based agent as the
